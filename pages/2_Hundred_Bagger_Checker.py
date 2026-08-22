@@ -748,6 +748,49 @@ def tag_report(facts: dict, series: dict, sources: dict[str, list[str]]) -> list
     return rows
 
 
+def _cover_shares(facts: dict, nseries: dict) -> dict[int, float]:
+    """Shares outstanding from the 10-K cover page, aligned to fiscal years.
+
+    Every 10-K carries dei:EntityCommonStockSharesOutstanding — a real count of
+    shares outstanding, net of treasury, required on the cover. It is the most
+    reliable share figure in the whole filing and this reader was reaching it
+    third, behind CommonStockSharesIssued, which includes treasury.
+
+    It cannot go through _instant, because that keys a fact by the calendar
+    year of its date. The cover date is the FILING date, weeks or months after
+    the year end: for a December filer that lands in February and would file
+    the whole series one year late, so every share change would be measured
+    between the wrong pair of years. Here each cover figure is matched to the
+    fiscal year whose end date it follows most closely instead.
+    """
+    rows = (facts.get("facts", {}).get("dei", {})
+            .get("EntityCommonStockSharesOutstanding", {}).get("units", {}).get("shares", []))
+    ends = {}
+    for fy, v in nseries.items():
+        try:
+            ends[fy] = dt.date.fromisoformat(v[1])
+        except (ValueError, IndexError):
+            continue
+    out: dict[int, tuple[str, float]] = {}
+    for r in rows:
+        if r.get("form") not in ANNUAL_FORMS or r.get("start") or not r.get("end"):
+            continue
+        try:
+            d = dt.date.fromisoformat(r["end"])
+        except ValueError:
+            continue
+        best = None
+        for fy, e in ends.items():
+            gap = (d - e).days
+            if 0 <= gap <= 150 and (best is None or gap < best[1]):
+                best = (fy, gap)
+        if best:
+            fy, filed = best[0], r.get("filed", "")
+            if fy not in out or filed > out[fy][0]:
+                out[fy] = (filed, float(r.get("val", 0.0)))
+    return {k: v[1] for k, v in out.items() if v[1] > 0}
+
+
 def load(ticker: str, n_years: int = 10):
     """Everything this page needs, in one pass over the filings."""
     cmap = _ticker_map()
@@ -780,62 +823,64 @@ def load(ticker: str, n_years: int = 10):
     shares_out, notes = split_adjust(shares_out)
     # A share count that includes treasury stock is not a share count. AutoZone
     # tags CommonStockSharesIssued: ~25.7M shares, of which ~9M sit in treasury
-    # and only ~16.6M are outstanding. Every per-share figure on the page was
-    # computed against the wrong number, market cap included, and the change
-    # between years read as zero because issued shares barely move.
+    # and only ~16.6M are outstanding. Every per-share figure was computed
+    # against the wrong number, market cap included, and the change between
+    # years read near zero because issued shares barely move.
     #
-    # The static test written for this missed it — issued shares drift a little
-    # each year, so they are never literally constant. The reliable tell is the
-    # weighted-average diluted count, which excludes treasury by construction:
-    # a year-end count materially ABOVE the diluted average means treasury is
-    # being counted, and a count materially BELOW it means a second share class
-    # was missed. Both are caught here.
+    # The tell is the weighted-average diluted count, which excludes treasury by
+    # construction: a year-end count materially ABOVE it means treasury is being
+    # counted, materially BELOW means a second share class was missed.
+    #
+    # Repairs, in order of how exact they are:
+    #   1. issued minus treasury shares — both year-end, and the difference IS
+    #      outstanding by definition
+    #   2. the 10-K cover page count — a real outstanding figure, net of
+    #      treasury, just dated at the filing rather than the year end
+    #   3. the weighted-average diluted count — fixes the LEVEL but not the
+    #      CHANGE, because an average lags the buyback that caused it, so
+    #      V = max(0, T + P·dS) turns into noise
     _wavg_ser = _annual(facts, ["WeightedAverageNumberOfDilutedSharesOutstanding",
                                 "WeightedAverageNumberOfSharesOutstandingDiluted",
                                 "WeightedAverageNumberOfSharesOutstandingBasic"], [],
                         None, True)
     _wv = {fy: v[2] for fy, v in _wavg_ser.items() if v[2] and v[2] > 0}
+    _cover = _cover_shares(facts, series["N"])
+    _c_out = _instant(facts, ["CommonStockSharesOutstanding"], unit="shares")
+    _c_iss = _instant(facts, ["CommonStockSharesIssued"], unit="shares")
+    _treas = _instant(facts, ["TreasuryStockCommonShares", "TreasuryStockShares",
+                              "TreasuryStockNumberOfSharesHeld",
+                              "TreasuryStockCommonSharesHeld"], unit="shares")
+    _share_route = "as tagged"
     if _wv and shares_out:
         _lat, _latw = max(shares_out), max(_wv)
         _static = len({round(v) for v in shares_out.values()}) <= 2
         _treasury = shares_out[_lat] > 1.15 * _wv[_latw]
         if _static or _treasury:
             _was = shares_out[_lat]
-            # Preferred repair: issued shares minus treasury shares. Both are
-            # tagged, both are year-end, and the difference IS shares
-            # outstanding by definition. The weighted-average diluted count
-            # fixes the level but not the change — it is an average, so its
-            # movement lags the buyback, T and dS stop describing the same
-            # period, and V = max(0, T + P·dS) turns into noise. On AutoZone
-            # that printed a true stock-comp cost of 30x the GAAP charge in one
-            # year and zero in the next four.
-            _treas = _instant(facts, ["TreasuryStockCommonShares", "TreasuryStockShares",
-                                      "TreasuryStockNumberOfSharesHeld"], unit="shares")
             _net = {fy: shares_out[fy] - _treas[fy] for fy in shares_out
                     if fy in _treas and shares_out[fy] - _treas[fy] > 0}
-            _exact = len(_net) >= 5
-            shares_out, _extra = split_adjust(_net if _exact else _wv)
+            if len(_net) >= 5:
+                _pick, _share_route = _net, "issued minus treasury shares"
+            elif len(_cover) >= 5:
+                _pick, _share_route = _cover, "the 10-K cover page"
+            else:
+                _pick, _share_route = _wv, "the weighted-average diluted count"
+            shares_out, _extra = split_adjust(_pick)
             notes.extend(_extra)
             notes.append(
                 ("The share count read as {:,.1f}M against a weighted-average diluted count of "
-                 "{:,.1f}M. A year-end count that far above the diluted average is issued "
-                 "shares, with the difference sitting in treasury — the repurchases never show, "
-                 "so the change between years reads near zero and every per-share figure is "
-                 "computed against too many shares. Switched to the diluted average, which "
-                 "excludes treasury."
-                 ).format(_was / 1e6, _wv[_latw] / 1e6)
-                + (" Treasury shares are tagged separately, so the count used here is issued "
-                   "minus treasury — exact, and measured at the year end like the buyback it "
-                   "has to reconcile with." if _exact else
-                   " Treasury shares are not tagged separately, so this falls back to the "
-                   "weighted-average diluted count. That is an average over each year rather "
-                   "than a year-end snapshot, so its change lags the repurchase and the true "
-                   "stock-comp cost below will be erratic — compare it against the GAAP charge "
-                   "before trusting any single year.")
+                 "{:,.1f}M — that far above the average means issued shares, with the difference "
+                 "sitting in treasury, so repurchases never showed and every per-share figure "
+                 "used too many shares. Switched to {}."
+                 ).format(_was / 1e6, _wv[_latw] / 1e6, _share_route)
                 if _treasury else
-                "The share count barely moved across the window while the company was buying "
-                "stock back, so the tag being read is not shares outstanding. Switched to the "
-                "weighted-average diluted count.")
+                ("The share count barely moved while the company was buying stock back, so the "
+                 "tag being read is not shares outstanding. Switched to {}.").format(_share_route))
+            if _share_route.startswith("the weighted"):
+                notes.append(
+                    "That count is an average over each year rather than a year-end snapshot, so "
+                    "its change lags the repurchase and the true stock-comp cost below will be "
+                    "erratic — compare it against the GAAP charge before trusting any year.")
 
     try:
         closes = _monthly_closes(ticker)
@@ -1036,6 +1081,26 @@ def load(ticker: str, n_years: int = 10):
         "form4": _form4_count(subs),
         "cik": str(int(cik)), "fye_month": fye_month,
         "tags": tag_report(facts, series, tag_sources) + [
+            {"Line": "— Shares: outstanding", "Years read": len(_c_out),
+             "XBRL tag": "CommonStockSharesOutstanding",
+             "Status": "used" if _share_route == "as tagged" and _c_out else
+                       "read" if _c_out else "not tagged"},
+            {"Line": "— Shares: issued", "Years read": len(_c_iss),
+             "XBRL tag": "CommonStockSharesIssued",
+             "Status": "includes treasury — only used if nothing better exists"
+                       if _c_iss else "not tagged"},
+            {"Line": "— Shares: cover page", "Years read": len(_cover),
+             "XBRL tag": "dei:EntityCommonStockSharesOutstanding",
+             "Status": "used" if _share_route == "the 10-K cover page" else
+                       "read" if _cover else "not tagged"},
+            {"Line": "— Shares: treasury held", "Years read": len(_treas),
+             "XBRL tag": "TreasuryStockCommonShares",
+             "Status": "used" if _share_route.startswith("issued minus") else
+                       "read" if _treas else "not tagged"},
+            {"Line": "— Shares: diluted average", "Years read": len(_wv),
+             "XBRL tag": "WeightedAverageNumberOfDilutedSharesOutstanding",
+             "Status": "used" if _share_route.startswith("the weighted") else
+                       "read" if _wv else "not tagged"},
             {"Line": "— Shareholders' equity", "Years read": len(eq),
              "XBRL tag": " + ".join(bal["equity"]) or "—",
              "Status": "read" if eq else "no equity tag found — ROIC cannot be built"},
@@ -1420,6 +1485,22 @@ def self_test() -> list[tuple[str, bool, str]]:
     v_real = max(0.0, 3378 - 2.5 * 1311.10)
     out.append(("...and the same year then reconciles with the GAAP charge",
                 v_real / 56 < 5, f"V ${v_real:,.0f}M against $56M of stock comp"))
+
+    # 4k. The cover-page count must land on the right fiscal year. For a
+    #     December filer the cover is dated in February, and keying it by
+    #     calendar year would file the whole series twelve months late — every
+    #     share change measured between the wrong pair of years.
+    nser = {y: ("%d-01-01" % y, "%d-12-31" % y, 0.0) for y in range(2020, 2026)}
+    facts_dec = {"facts": {"dei": {"EntityCommonStockSharesOutstanding": {"units": {"shares": [
+        {"form": "10-K", "end": "%d-02-14" % (y + 1), "filed": "%d-02-14" % (y + 1),
+         "val": 100e6 - (y - 2020) * 2e6} for y in range(2020, 2026)]}}}}}
+    cov = _cover_shares(facts_dec, nser)
+    out.append(("Cover-page count lands on the right fiscal year",
+                cov.get(2020) == 100e6 and cov.get(2024) == 92e6 and 2026 not in cov,
+                f"{len(cov)} years, FY2020 = {cov.get(2020, 0)/1e6:.0f}M"))
+    out.append(("...and the change between years is then real",
+                abs((cov[2024] - cov[2023]) / 1e6 + 2) < 0.01,
+                f"{(cov[2024]-cov[2023])/1e6:+.1f}M shares"))
 
     # 5. The verdict itself.
     v = assess(0.272, 0.075, 0.04, 5_000)
