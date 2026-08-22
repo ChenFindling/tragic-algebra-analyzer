@@ -956,21 +956,28 @@ def load(ticker: str, n_years: int = 10):
         # minus $612M for one of the most profitable retailers in America.
         # A missing yardstick is now a rejection, not a free pass, and a
         # withholding line the size of the buyback line is rejected outright.
+        # Sized against the GAAP charge where there is one, and against net
+        # income where there is not. The earlier version also rejected any
+        # withholding larger than half the buyback line — written for AutoZone,
+        # where the two were the same $1.5B — but that fires on every company
+        # with a SMALL buyback programme. It threw away seven years of real
+        # withholding at IES Holdings and pushed owners' earnings UP, which is
+        # the flattering direction and the one to be most suspicious of.
+        # A repurchase wearing a withholding label is always large next to
+        # earnings; genuine withholding is not.
         capped = 0
         for y in years:
             if not y.Cw:
                 continue
-            too_big_for_payroll = y.G <= 0 or y.Cw > 3 * y.G
-            same_size_as_buyback = y.T > 0 and y.Cw > 0.5 * y.T
-            if too_big_for_payroll or same_size_as_buyback:
+            if (y.Cw > 3 * y.G) if y.G > 0 else (y.Cw > 0.10 * abs(y.N)):
                 y.Cw, capped = 0.0, capped + 1
         capped_any = capped > 0
         if capped:
             notes.append(
                 f"A treasury-stock line was read as tax withholding and rejected in {capped} "
-                "year(s): it was either far larger than the GAAP stock-comp charge, or as large "
-                "as the buyback line, or there was no stock-comp charge to size it against. Any "
-                "of those means it is an ordinary repurchase, and charging it as withholding "
+                "year(s): it was more than three times the GAAP stock-comp charge, or — where "
+                "no charge was tagged to size it against — more than a tenth of net income. "
+                "Either means it is an ordinary repurchase, and charging it as withholding "
                 "would count the same dollars twice — once as cash out, once as the market value "
                 "of shares delivered.")
         else:
