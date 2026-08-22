@@ -859,10 +859,28 @@ def load(ticker: str, n_years: int = 10):
             _was = shares_out[_lat]
             _net = {fy: shares_out[fy] - _treas[fy] for fy in shares_out
                     if fy in _treas and shares_out[fy] - _treas[fy] > 0}
-            if len(_net) >= 5:
-                _pick, _share_route = _net, "issued minus treasury shares"
-            elif len(_cover) >= 5:
-                _pick, _share_route = _cover, "the 10-K cover page"
+            # Rank by COVERAGE of the window first, exactness second. Taking the
+            # most exact series regardless of length was worse than the problem
+            # it solved: H&R Block tags treasury shares for 5 years and carries
+            # a 17-year cover page, and preferring the 5-year series left six of
+            # ten years with no share change at all — so V became the entire
+            # buyback and owners' earnings collapsed. A series that does not
+            # cover the year cannot measure a change in it.
+            _win = sorted(series["N"])[-n_years:]
+            _cands = [(_net, "issued minus treasury shares"),
+                      (_cover, "the 10-K cover page"),
+                      (_wv, "the weighted-average diluted count")]
+            _scored = [(sum(1 for fy in _win if fy in c), -i, c, name)
+                       for i, (c, name) in enumerate(_cands) if len(c) >= 3]
+            if _scored:
+                _best = max(_scored)
+                _pick, _share_route = _best[2], _best[3]
+                if _best[0] < 0.6 * len(_win):
+                    notes.append(
+                        f"Only {_best[0]} of the {len(_win)} years in this window have a share "
+                        "count from any tag this reader knows. Years without one show no share "
+                        "change, so their stock-comp cost is the whole buyback and their owners' "
+                        "earnings are understated. Treat the year-by-year table as partial.")
             else:
                 _pick, _share_route = _wv, "the weighted-average diluted count"
             shares_out, _extra = split_adjust(_pick)
@@ -1501,6 +1519,29 @@ def self_test() -> list[tuple[str, bool, str]]:
     out.append(("...and the change between years is then real",
                 abs((cov[2024] - cov[2023]) / 1e6 + 2) < 0.01,
                 f"{(cov[2024]-cov[2023])/1e6:+.1f}M shares"))
+
+    # 4l. H&R Block. Treasury shares tagged for 5 years, cover page for 17.
+    #     Preferring the exact-but-short series left six of ten years with no
+    #     share change, so V became the whole buyback.
+    win = list(range(2017, 2027))
+    net = {fy: 130e6 for fy in range(2022, 2027)}          # 5 years, exact
+    cover = {fy: 130e6 for fy in range(2010, 2027)}        # 17 years, cover page
+    wv = {fy: 128.9e6 for fy in range(2009, 2027)}
+    cands = [(net, "issued minus treasury shares"), (cover, "the 10-K cover page"),
+             (wv, "the weighted-average diluted count")]
+    scored = [(sum(1 for fy in win if fy in c), -i, c, name)
+              for i, (c, name) in enumerate(cands) if len(c) >= 3]
+    best = max(scored)
+    out.append(("Coverage beats exactness when the exact series is short",
+                best[3] == "the 10-K cover page", f"chose {best[3]} ({best[0]}/10 years)"))
+    # and when both cover the window, the exact one still wins
+    net_full = {fy: 130e6 for fy in range(2010, 2027)}
+    cands2 = [(net_full, "issued minus treasury shares"), (cover, "the 10-K cover page"),
+              (wv, "the weighted-average diluted count")]
+    best2 = max((sum(1 for fy in win if fy in c), -i, c, name)
+                for i, (c, name) in enumerate(cands2) if len(c) >= 3)
+    out.append(("...and exactness still wins on equal coverage",
+                best2[3] == "issued minus treasury shares", f"chose {best2[3]}"))
 
     # 5. The verdict itself.
     v = assess(0.272, 0.075, 0.04, 5_000)
