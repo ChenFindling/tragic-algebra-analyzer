@@ -190,7 +190,7 @@ def _facts(cik: str) -> dict:
 # consolidated, per-plan versus total, ASC 606 versus legacy), and stitching
 # those across years would put a step change in a growth rate and call it
 # history.
-FILL_KEYS = {"T", "Cw", "Ce", "DIV", "INT", "LEASEPAY", "CAPEX", "MA", "OFFER", "CONV"}
+FILL_KEYS = {"T", "Cw", "Ce", "DIV", "INT", "LEASEPAY", "CAPEX", "MA", "OFFER", "CONV", "G"}
 
 
 def _annual(facts: dict, us: list[str], ifrs: list[str],
@@ -778,6 +778,26 @@ def load(ticker: str, n_years: int = 10):
                                   "EntityCommonStockSharesOutstanding"], unit="shares")
     shares_out = {k: v for k, v in shares_out.items() if v and v > 0}
     shares_out, notes = split_adjust(shares_out)
+    # A share count that never moves while the company is retiring stock is not
+    # a share count. AutoZone tags issued shares, which stay constant because
+    # the buyback lands in treasury — so the change read +0.0 for a decade and
+    # the whole market value of the repurchase fell on employees.
+    if len(shares_out) >= 5 and len({round(v) for v in shares_out.values()}) <= 2 \
+            and sum(1 for fy in series.get("T", {}) if series["T"][fy][2]) >= 3:
+        wavg_alt = _annual(facts, ["WeightedAverageNumberOfDilutedSharesOutstanding",
+                                   "WeightedAverageNumberOfSharesOutstandingDiluted",
+                                   "WeightedAverageNumberOfSharesOutstandingBasic"], [],
+                           None, True)
+        if len(wavg_alt) >= 5:
+            shares_out, extra = split_adjust({fy: v[2] for fy, v in wavg_alt.items()})
+            notes.extend(extra)
+            notes.append(
+                "The share count barely moved across the window while the company was buying "
+                "stock back, which means the tag being read is issued shares rather than shares "
+                "outstanding — the repurchase sits in treasury and never shows. Switched to the "
+                "weighted-average diluted count. That is an average over each year rather than a "
+                "year-end snapshot, so the change between years is slightly smoothed.")
+
     try:
         closes = _monthly_closes(ticker)
     except Exception:
@@ -819,17 +839,29 @@ def load(ticker: str, n_years: int = 10):
         notes.append(f"Excluded {non_sbc_total:,.1f}M shares issued for acquisitions, offerings or "
                      "conversions. Those are corporate transactions, not compensation.")
     if "TreasuryStockValueAcquiredCostMethod" in tag_sources.get("Cw", []):
+        # The size test needed a stock-comp charge to test against, and AutoZone
+        # has none in the window — so the test never ran and its entire $1.5B
+        # treasury purchase was charged as employee tax withholding AND again as
+        # the market value of shares delivered. Owners' earnings came out at
+        # minus $612M for one of the most profitable retailers in America.
+        # A missing yardstick is now a rejection, not a free pass, and a
+        # withholding line the size of the buyback line is rejected outright.
         capped = 0
         for y in years:
-            if y.G > 0 and y.Cw > 3 * y.G:
+            if not y.Cw:
+                continue
+            too_big_for_payroll = y.G <= 0 or y.Cw > 3 * y.G
+            same_size_as_buyback = y.T > 0 and y.Cw > 0.5 * y.T
+            if too_big_for_payroll or same_size_as_buyback:
                 y.Cw, capped = 0.0, capped + 1
         if capped:
             notes.append(
-                f"A treasury-stock line was read as tax withholding, but in {capped} year(s) it "
-                "was more than three times the GAAP stock-comp charge — too large to be shares "
-                "surrendered for employee tax, and almost certainly an ordinary repurchase. Those "
-                "years were dropped rather than charged twice, once as withholding and again as "
-                "the market value of shares delivered.")
+                f"A treasury-stock line was read as tax withholding and rejected in {capped} "
+                "year(s): it was either far larger than the GAAP stock-comp charge, or as large "
+                "as the buyback line, or there was no stock-comp charge to size it against. Any "
+                "of those means it is an ordinary repurchase, and charging it as withholding "
+                "would count the same dollars twice — once as cash out, once as the market value "
+                "of shares delivered.")
         else:
             notes.append(
                 "Tax withholding was read from a treasury-stock line rather than the usual "
@@ -1293,6 +1325,27 @@ def self_test() -> list[tuple[str, bool, str]]:
         out.append((f"Placeholder warning fires when net income is {n}",
                     abs(box - float(round(seed, 1))) < 0.05, f"box {box:.2f}"))
 
+    # 4h. AutoZone. The withholding guard needed a stock-comp charge to size
+    #     against; AZO has none tagged in the window, so the test never ran and
+    #     a $1.5B treasury purchase was charged as employee tax withholding on
+    #     top of being charged as a buyback.
+    azo = Year(fy=2025, N=2498, G=0.0, T=1578, Cw=1532, dS=0.0, price=3530.11)
+    unguarded = azo.OE
+    if azo.Cw and (azo.G <= 0 or azo.Cw > 3 * azo.G or (azo.T > 0 and azo.Cw > 0.5 * azo.T)):
+        azo.Cw = 0.0
+    out.append(("AutoZone: treasury purchase no longer charged twice",
+                unguarded < 0 and azo.OE > 0, f"${unguarded:,.0f}M -> ${azo.OE:,.0f}M"))
+    hrb_ok = Year(fy=2026, N=734, G=30.0, T=505, Cw=29, dS=-10.5, price=41.73)
+    keep = not (hrb_ok.G <= 0 or hrb_ok.Cw > 3 * hrb_ok.G
+                or (hrb_ok.T > 0 and hrb_ok.Cw > 0.5 * hrb_ok.T))
+    out.append(("...and a real withholding line is still accepted",
+                keep, f"${hrb_ok.Cw:,.0f}M against ${hrb_ok.G:,.0f}M of stock comp"))
+    azo.dS = -2.5   # the count the diluted-average fallback recovers
+    out.append(("With a real share count the buyback stops falling on employees",
+                azo.V == 0 and abs(azo.OE - 2498) < 1, f"V = ${azo.V:,.0f}M"))
+    out.append(("A negative return on capital yields no ceiling",
+                per_share_ceiling(-1.383, 0.0, 0.0) < 0, "refused in the UI, not printed"))
+
     # 5. The verdict itself.
     v = assess(0.272, 0.075, 0.04, 5_000)
     out.append(("Needs 27%, funds 7.5% → closed by capital",
@@ -1500,7 +1553,7 @@ if years and ticker and st.session_state.get("hb_tk") == ticker:
     payout_assumed = payout is None and roic_med is not None
     payout_eff = 0.0 if payout is None else payout
     fundable = (per_share_ceiling(roic_med, payout_eff, buyback_yield)
-                if roic_med is not None else None)
+                if roic_med is not None and roic_med > 0 else None)
 
     rev_hist = [pre["revenue"][fy] for fy in fys if pre["revenue"].get(fy)]
     rev_cagr = cagr(rev_hist[0], rev_hist[-1], len(rev_hist) - 1) if len(rev_hist) >= 3 else None
@@ -1530,6 +1583,7 @@ if years and ticker and st.session_state.get("hb_tk") == ticker:
                f"ROIC {roic_med:.0%} · retains {max(0.0,1-payout_eff):.0%}"
                if fundable is not None else
                "financial company" if financial else
+               "return on capital is negative" if roic_med is not None and roic_med <= 0 else
                (latest_r.reason or "capital base unread")))
 
     if seed_is_placeholder and abs(OE - float(round(seed_OE, 1))) < 0.05:
