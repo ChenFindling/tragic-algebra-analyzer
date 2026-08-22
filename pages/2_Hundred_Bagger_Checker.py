@@ -1287,6 +1287,12 @@ def self_test() -> list[tuple[str, bool, str]]:
     out.append(("...but a generous ceiling still closes the case",
                 v.why == "capital", f"needs 38.0% vs {ceiling_generous:.1%} funded"))
 
+    # 4g. The placeholder warning must survive the box rounding to one decimal.
+    for n in (5.10, 5.14, 5.149):
+        seed, box = n, float(round(n, 1))
+        out.append((f"Placeholder warning fires when net income is {n}",
+                    abs(box - float(round(seed, 1))) < 0.05, f"box {box:.2f}"))
+
     # 5. The verdict itself.
     v = assess(0.272, 0.075, 0.04, 5_000)
     out.append(("Needs 27%, funds 7.5% → closed by capital",
@@ -1526,7 +1532,7 @@ if years and ticker and st.session_state.get("hb_tk") == ticker:
                "financial company" if financial else
                (latest_r.reason or "capital base unread")))
 
-    if seed_is_placeholder and abs(OE - seed_OE) < 0.01:
+    if seed_is_placeholder and abs(OE - float(round(seed_OE, 1))) < 0.05:
         st.error(
             f"**The owners' earnings above are a placeholder, so every figure on this page "
             f"rests on it.** ΔE came out at {use_dE:.0%} and every recent year was negative, so "
