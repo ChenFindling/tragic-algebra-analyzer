@@ -1255,8 +1255,8 @@ class Payout:
     def warning(self) -> str:
         if not self.used_implied:
             return ""
-        return (f"No repurchase line was found in the filings, but the share count fell by about "
-                f"\\${self.implied:,.0f}M a year at market prices. The payout below uses that "
+        return (f"No repurchase figure was read for these years, but the share count fell by "
+                f"about \\${self.implied:,.0f}M a year at market prices. The payout below uses that "
                 "implied figure instead of zero — it is a floor, since shares issued to "
                 "employees offset some of what was bought.")
 
@@ -1288,7 +1288,12 @@ def pooled_payout(years: list[Year], dividends: dict[int, float], n: int = 5) ->
     # Only step in when the filed figure is not merely lower but absent, and the
     # share count says real money was spent. A company that genuinely does not
     # repurchase has an implied figure of zero and is untouched.
-    if p.implied > 0 and p.buybacks < 0.25 * p.implied:
+    # Materiality matters as much as detection. Progressive's share count moved
+    # by a few hundred thousand shares, implying $32M of repurchases against
+    # $5.6B of owners' earnings — 0.6% — and that was enough to raise two
+    # alarms including "owners' earnings are overstated, and so are tool 1's".
+    # A warning that fires on noise teaches you to ignore it on signal.
+    if p.implied > 0 and p.buybacks < 0.25 * p.implied and p.implied > 0.02 * max(p.oe, 0.0):
         p.used_implied = True
     return p
 
@@ -1564,6 +1569,20 @@ def self_test() -> list[tuple[str, bool, str]]:
     out.append(("A small buyback no longer condemns the withholding beside it",
                 not _reject(121, 0, 1.0), "$1M against $121M of net income"))
 
+    # 4n. Progressive. A trivial share-count move implied $32M of repurchases
+    #     against $5.6B of owners' earnings and set off warnings written for
+    #     H&R Block, where the same signal was worth 73% of earnings.
+    pgr = [Year(fy=f, N=5000, G=100, T=0.0, dS=d, price=200.0)
+           for f, d in zip(range(2021, 2026), (-0.9, 0.5, 0.3, 0.5, -0.3))]
+    pp = pooled_payout(pgr, {f: 1500.0 for f in range(2021, 2026)}, 5)
+    out.append(("A 0.5% share wiggle no longer raises a buyback alarm",
+                not pp.used_implied,
+                f"implied ${pp.implied:,.0f}M = {pp.implied/pp.oe:.1%} of owners' earnings"))
+    hrb = [Year(fy=f, N=600, G=70, T=0.0, dS=-8.0, price=55.0) for f in range(2022, 2027)]
+    hp = pooled_payout(hrb, {f: 190.0 for f in range(2022, 2027)}, 5)
+    out.append(("...and the H&R Block case still does",
+                hp.used_implied, f"implied {hp.implied/hp.oe:.0%} of owners' earnings"))
+
     # 5. The verdict itself.
     v = assess(0.272, 0.075, 0.04, 5_000)
     out.append(("Needs 27%, funds 7.5% → closed by capital",
@@ -1823,7 +1842,7 @@ if years and ticker and st.session_state.get("hb_tk") == ticker:
             f"window, so there is no denominator. The {fundable:.1%} above therefore reinvests "
             f"every dollar at {roic_med:.1%}, which is the most generous reading available. Any "
             "dividend or buyback lowers it.")
-    elif payout is not None:
+    elif payout is not None and fundable is not None:
         st.caption(
             f"**Can fund** is {money(pay.oe)} of owners' earnings a year, less the "
             f"{money(pay.returned)} handed back — {money(pay.dividends)} of dividends and "
@@ -2125,7 +2144,8 @@ if years and ticker and st.session_state.get("hb_tk") == ticker:
         if pay.used_implied:
             st.error(
                 "**Owners' earnings are overstated in this table, and so are tool 1's.** No "
-                "buyback line was read, so the market value of shares delivered to employees "
+                "repurchase figure was read for these years, so the market value of shares "
+                "delivered to employees "
                 "floors at zero: V = max(0, buybacks + price x share change), and with buybacks "
                 "missing and the share count shrinking, that maximum is always zero. Real "
                 "repurchases are gross of the stock issued to employees, so the true cost is "
