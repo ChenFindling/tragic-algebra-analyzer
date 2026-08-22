@@ -780,7 +780,20 @@ def load(ticker: str, n_years: int = 10):
         _treasury = shares_out[_lat] > 1.15 * _wv[_latw]
         if _static or _treasury:
             _was = shares_out[_lat]
-            shares_out, _extra = split_adjust(_wv)
+            # Preferred repair: issued shares minus treasury shares. Both are
+            # tagged, both are year-end, and the difference IS shares
+            # outstanding by definition. The weighted-average diluted count
+            # fixes the level but not the change — it is an average, so its
+            # movement lags the buyback, T and dS stop describing the same
+            # period, and V = max(0, T + P·dS) turns into noise. On AutoZone
+            # that printed a true stock-comp cost of 30x the GAAP charge in one
+            # year and zero in the next four.
+            _treas = _instant(facts, ["TreasuryStockCommonShares", "TreasuryStockShares",
+                                      "TreasuryStockNumberOfSharesHeld"], unit="shares")
+            _net = {fy: shares_out[fy] - _treas[fy] for fy in shares_out
+                    if fy in _treas and shares_out[fy] - _treas[fy] > 0}
+            _exact = len(_net) >= 5
+            shares_out, _extra = split_adjust(_net if _exact else _wv)
             notes.extend(_extra)
             notes.append(
                 ("The share count read as {:,.1f}M against a weighted-average diluted count of "
@@ -788,9 +801,16 @@ def load(ticker: str, n_years: int = 10):
                  "shares, with the difference sitting in treasury — the repurchases never show, "
                  "so the change between years reads near zero and every per-share figure is "
                  "computed against too many shares. Switched to the diluted average, which "
-                 "excludes treasury. It is an average over each year rather than a year-end "
-                 "snapshot, so changes between years are slightly smoothed."
+                 "excludes treasury."
                  ).format(_was / 1e6, _wv[_latw] / 1e6)
+                + (" Treasury shares are tagged separately, so the count used here is issued "
+                   "minus treasury — exact, and measured at the year end like the buyback it "
+                   "has to reconcile with." if _exact else
+                   " Treasury shares are not tagged separately, so this falls back to the "
+                   "weighted-average diluted count. That is an average over each year rather "
+                   "than a year-end snapshot, so its change lags the repurchase and the true "
+                   "stock-comp cost below will be erratic — compare it against the GAAP charge "
+                   "before trusting any single year.")
                 if _treasury else
                 "The share count barely moved across the window while the company was buying "
                 "stock back, so the tag being read is not shares outstanding. Switched to the "
@@ -866,6 +886,7 @@ def load(ticker: str, n_years: int = 10):
             "acquisition or a preferred conversion — are being counted as compensation. Treat ΔE "
             "here as a floor, not a measurement.")
 
+    capped_any = False
     if "TreasuryStockValueAcquiredCostMethod" in tag_sources.get("Cw", []):
         # The size test needed a stock-comp charge to test against, and AutoZone
         # has none in the window — so the test never ran and its entire $1.5B
@@ -882,6 +903,7 @@ def load(ticker: str, n_years: int = 10):
             same_size_as_buyback = y.T > 0 and y.Cw > 0.5 * y.T
             if too_big_for_payroll or same_size_as_buyback:
                 y.Cw, capped = 0.0, capped + 1
+        capped_any = capped > 0
         if capped:
             notes.append(
                 f"A treasury-stock line was read as tax withholding and rejected in {capped} "
@@ -926,7 +948,7 @@ def load(ticker: str, n_years: int = 10):
 
     if any(y.price == 0 for y in years):
         notes.append("No share price for some years — their SBC cost is understated.")
-    if not any(y.Cw for y in years):
+    if not any(y.Cw for y in years) and not capped_any:
         notes.append("No tax-withholding line found. That understates the SBC cost, so "
                      "owners' earnings here are flattering rather than conservative.")
 
