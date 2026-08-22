@@ -757,25 +757,44 @@ def load(ticker: str, n_years: int = 10):
                                   "EntityCommonStockSharesOutstanding"], unit="shares")
     shares_out = {k: v for k, v in shares_out.items() if v and v > 0}
     shares_out, split_notes = split_adjust(shares_out)
-    # A share count that never moves while the company is retiring stock is not
-    # a share count. AutoZone tags issued shares, which stay constant because
-    # the buyback lands in treasury — so the change read +0.0 for a decade and
-    # the whole market value of the repurchase fell on employees.
-    if len(shares_out) >= 5 and len({round(v) for v in shares_out.values()}) <= 2 \
-            and sum(1 for fy in series.get("T", {}) if series["T"][fy][2]) >= 3:
-        wavg_alt = _annual(facts, ["WeightedAverageNumberOfDilutedSharesOutstanding",
-                                   "WeightedAverageNumberOfSharesOutstandingDiluted",
-                                   "WeightedAverageNumberOfSharesOutstandingBasic"], [],
-                           None, True)
-        if len(wavg_alt) >= 5:
-            shares_out, extra = split_adjust({fy: v[2] for fy, v in wavg_alt.items()})
-            notes.extend(extra)
+    # A share count that includes treasury stock is not a share count. AutoZone
+    # tags CommonStockSharesIssued: ~25.7M shares, of which ~9M sit in treasury
+    # and only ~16.6M are outstanding. Every per-share figure on the page was
+    # computed against the wrong number, market cap included, and the change
+    # between years read as zero because issued shares barely move.
+    #
+    # The static test written for this missed it — issued shares drift a little
+    # each year, so they are never literally constant. The reliable tell is the
+    # weighted-average diluted count, which excludes treasury by construction:
+    # a year-end count materially ABOVE the diluted average means treasury is
+    # being counted, and a count materially BELOW it means a second share class
+    # was missed. Both are caught here.
+    _wavg_ser = _annual(facts, ["WeightedAverageNumberOfDilutedSharesOutstanding",
+                                "WeightedAverageNumberOfSharesOutstandingDiluted",
+                                "WeightedAverageNumberOfSharesOutstandingBasic"], [],
+                        None, True)
+    _wv = {fy: v[2] for fy, v in _wavg_ser.items() if v[2] and v[2] > 0}
+    if _wv and shares_out:
+        _lat, _latw = max(shares_out), max(_wv)
+        _static = len({round(v) for v in shares_out.values()}) <= 2
+        _treasury = shares_out[_lat] > 1.15 * _wv[_latw]
+        if _static or _treasury:
+            _was = shares_out[_lat]
+            shares_out, _extra = split_adjust(_wv)
+            notes.extend(_extra)
             notes.append(
+                ("The share count read as {:,.1f}M against a weighted-average diluted count of "
+                 "{:,.1f}M. A year-end count that far above the diluted average is issued "
+                 "shares, with the difference sitting in treasury — the repurchases never show, "
+                 "so the change between years reads near zero and every per-share figure is "
+                 "computed against too many shares. Switched to the diluted average, which "
+                 "excludes treasury. It is an average over each year rather than a year-end "
+                 "snapshot, so changes between years are slightly smoothed."
+                 ).format(_was / 1e6, _wv[_latw] / 1e6)
+                if _treasury else
                 "The share count barely moved across the window while the company was buying "
-                "stock back, which means the tag being read is issued shares rather than shares "
-                "outstanding — the repurchase sits in treasury and never shows. Switched to the "
-                "weighted-average diluted count. That is an average over each year rather than a "
-                "year-end snapshot, so the change between years is slightly smoothed.")
+                "stock back, so the tag being read is not shares outstanding. Switched to the "
+                "weighted-average diluted count.")
 
     try:
         closes = _monthly_closes(ticker)
