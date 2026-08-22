@@ -1275,6 +1275,18 @@ def self_test() -> list[tuple[str, bool, str]]:
     out.append(("Every verdict a missing ceiling can produce is reachable",
                 len({x.why for x in every}) == 6, ", ".join(sorted(x.why for x in every))))
 
+    # 4f. CXDO's real shape: a readable return on capital, but owners' earnings
+    #     that pool below zero so no payout ratio exists. The old code called
+    #     that "no capital base" and printed nothing.
+    cx = [Year(fy=f, N=2, G=3, T=0.0, dS=1.5, price=5.0) for f in range(2021, 2026)]
+    px = pooled_payout(cx, {}, 5)
+    out.append(("Owners' earnings below zero give no payout ratio",
+                px.ratio is None, f"pooled OE ${px.oe:,.1f}M"))
+    ceiling_generous = per_share_ceiling(0.0593, 0.0, 0.0)
+    v = assess(0.38, ceiling_generous, 0.25, 198)
+    out.append(("...but a generous ceiling still closes the case",
+                v.why == "capital", f"needs 38.0% vs {ceiling_generous:.1%} funded"))
+
     # 5. The verdict itself.
     v = assess(0.272, 0.075, 0.04, 5_000)
     out.append(("Needs 27%, funds 7.5% → closed by capital",
@@ -1381,11 +1393,14 @@ if years and ticker and st.session_state.get("hb_tk") == ticker:
     hist_oe = sorted(y.OE for y in years[-5:] if not y.excluded)
     median_OE = hist_oe[len(hist_oe) // 2] if hist_oe else 0.0
     if 0 < use_dE <= 1.25:
-        seed_OE = latest.N * use_dE
+        seed_OE, seed_is_placeholder = latest.N * use_dE, False
     elif median_OE > 0:
-        seed_OE = median_OE
+        seed_OE, seed_is_placeholder = median_OE, False
     else:
-        seed_OE = latest.N
+        # Nothing usable: ΔE is negative or absurd AND every recent year lost
+        # money. Net income is at least a defensible ceiling to revise down
+        # from, but it is not a measurement and must not read as one.
+        seed_OE, seed_is_placeholder = latest.N, True
 
     # ══ inputs ═══════════════════════════════════════════════════════
     st.markdown("---")
@@ -1472,8 +1487,14 @@ if years and ticker and st.session_state.get("hb_tk") == ticker:
     pay = pooled_payout(years, pre["dividends"], 5)
     payout = pay.ratio
     buyback_yield = (pay.implied if pay.used_implied else pay.buybacks) / mcap if mcap > 0 else 0.0
-    fundable = (per_share_ceiling(roic_med, payout, buyback_yield)
-                if roic_med is not None and payout is not None else None)
+    # Owners' earnings that pool to zero or below give no denominator for a
+    # payout ratio. Rather than abandon the ceiling, assume full retention —
+    # the most generous case — and say so. A refusal that survives the kindest
+    # assumption is worth more than a blank.
+    payout_assumed = payout is None and roic_med is not None
+    payout_eff = 0.0 if payout is None else payout
+    fundable = (per_share_ceiling(roic_med, payout_eff, buyback_yield)
+                if roic_med is not None else None)
 
     rev_hist = [pre["revenue"][fy] for fy in fys if pre["revenue"].get(fy)]
     rev_cagr = cagr(rev_hist[0], rev_hist[-1], len(rev_hist) - 1) if len(rev_hist) >= 3 else None
@@ -1499,15 +1520,32 @@ if years and ticker and st.session_state.get("hb_tk") == ticker:
               (f"revenue {rev_cagr:.0%}" if rev_cagr is not None else "revenue n/a")
               + (f" · OE {oe_cagr:.0%}" if oe_cagr is not None else ""))
     m3.metric("Can fund", f"{fundable:.1%}" if fundable is not None else "n/a",
-              (f"ROIC {roic_med:.0%} · retains {max(0.0,1-payout):.0%}"
+              (f"ROIC {roic_med:.0%} · retention assumed" if payout_assumed else
+               f"ROIC {roic_med:.0%} · retains {max(0.0,1-payout_eff):.0%}"
                if fundable is not None else
                "financial company" if financial else
-               "no owners' earnings to divide" if payout is None else
                (latest_r.reason or "capital base unread")))
+
+    if seed_is_placeholder and abs(OE - seed_OE) < 0.01:
+        st.error(
+            f"**The owners' earnings above are a placeholder, so every figure on this page "
+            f"rests on it.** ΔE came out at {use_dE:.0%} and every recent year was negative, so "
+            f"the box holds {plain(latest.N)} of net income as a ceiling — not a measurement of "
+            "what reaches shareholders. On this company stock issuance has been running ahead "
+            "of profit, which is exactly what owners' earnings are meant to capture. Enter what "
+            "you think the business earns in a normal year, and the arithmetic below becomes "
+            "worth reading.")
 
     if pay.warning:
         st.warning("**Check this before trusting the ceiling.** " + pay.warning)
-    if payout is not None:
+    if payout_assumed:
+        st.warning(
+            f"**Can fund assumes this company keeps everything it earns.** Cash returned could "
+            f"not be measured against owners' earnings — they pool to zero or below over this "
+            f"window, so there is no denominator. The {fundable:.1%} above therefore reinvests "
+            f"every dollar at {roic_med:.1%}, which is the most generous reading available. Any "
+            "dividend or buyback lowers it.")
+    elif payout is not None:
         st.caption(
             f"**Can fund** is {money(pay.oe)} of owners' earnings a year, less the "
             f"{money(pay.returned)} handed back — {money(pay.dividends)} of dividends and "
@@ -1538,7 +1576,10 @@ if years and ticker and st.session_state.get("hb_tk") == ticker:
                "to shareholders, so the compounding happens in your dividend and your share of "
                "the company, not in the earnings themselves."
                if payout is not None and payout > 0.6 else
-               f" from a {roic_med:.0%} return on capital with {max(0.0,1-payout):.0%} retained.")
+               f" — that is a {roic_med:.0%} return on capital reinvesting everything, and it "
+               "still is not enough." if payout_assumed else
+               f" from a {roic_med:.0%} return on capital with {max(0.0,1-payout_eff):.0%} "
+               "retained.")
             + " The gap would have to come from outside — debt, which runs out, or stock, which "
               "is the dilution you already set. Raising the exit multiple is the only other "
               "lever, and that is a bet on the market, not on the business.")
@@ -1758,14 +1799,16 @@ if years and ticker and st.session_state.get("hb_tk") == ticker:
         st.caption(
             "The Tragic Algebra Analyzer asks for a growth rate and has no way to sanity-check "
             "it. This is that ceiling, computed.")
-        if roic_med is not None and payout is not None:
-            g_ceiling = sustainable_growth(roic_med, payout)
+        if roic_med is not None:
+            g_ceiling = sustainable_growth(roic_med, payout_eff)
             st.code(
                 f"{tk}\n"
                 f"owners' earnings     {OE:,.0f} M      <- same figure tool 1 seeds\n"
                 f"shares               {shares:,.1f} M\n"
                 f"ROIC, 5y median      {roic_med:.1%}\n"
-                f"cash returned        {payout:.0%} of owners' earnings\n"
+                f"cash returned        "
+                + ("not measurable — full retention assumed" if payout is None
+                   else f"{payout:.0%} of owners' earnings") + "\n"
                 f"growth ceiling       {g_ceiling:.1%}   <- do not exceed this in tool 1\n"
                 f"per-share ceiling    {fundable:.1%}   (adds the buyback effect)",
                 language="text")
