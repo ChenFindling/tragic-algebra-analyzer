@@ -871,9 +871,17 @@ def load(ticker: str, n_years: int = 10):
     _share_route = "as tagged"
     if _wv and shares_out:
         _lat, _latw = max(shares_out), max(_wv)
+        _win0 = sorted(series["N"])[-n_years:]
         _static = len({round(v) for v in shares_out.values()}) <= 2
         _treasury = shares_out[_lat] > 1.15 * _wv[_latw]
-        if _static or _treasury:
+        # A third failure, found on TransDigm: the tagged series is neither
+        # inflated nor static, just SHORT. CommonStockSharesOutstanding covered
+        # 3 of 10 years against a 16-year cover page, so the share change read
+        # +0.0 in every year and the whole buyback fell on employees — the same
+        # damage as the treasury case, arriving by a different door. Coverage is
+        # the thing to test, not the symptom that first made it visible.
+        _sparse = sum(1 for fy in _win0 if fy in shares_out) < 0.6 * len(_win0)
+        if _static or _treasury or _sparse:
             _was = shares_out[_lat]
             _net = {fy: shares_out[fy] - _treas[fy] for fy in shares_out
                     if fy in _treas and shares_out[fy] - _treas[fy] > 0}
@@ -888,6 +896,10 @@ def load(ticker: str, n_years: int = 10):
             _cands = [(_net, "issued minus treasury shares"),
                       (_cover, "the 10-K cover page"),
                       (_wv, "the weighted-average diluted count")]
+            if _sparse and not (_static or _treasury):
+                # nothing wrong with the tagged figures, only with how few of
+                # them there are — so it stays in the running
+                _cands.insert(0, (dict(shares_out), "the tagged share count"))
             _scored = [(sum(1 for fy in _win if fy in c), -i, c, name)
                        for i, (c, name) in enumerate(_cands) if len(c) >= 3]
             if _scored:
