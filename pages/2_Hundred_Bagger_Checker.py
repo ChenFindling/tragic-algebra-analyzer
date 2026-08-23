@@ -894,9 +894,17 @@ def load(ticker: str, n_years: int = 10):
     _share_route = "as tagged"
     if _wv and shares_out:
         _lat, _latw = max(shares_out), max(_wv)
+        _win0 = sorted(series["N"])[-n_years:]
         _static = len({round(v) for v in shares_out.values()}) <= 2
         _treasury = shares_out[_lat] > 1.15 * _wv[_latw]
-        if _static or _treasury:
+        # A third failure, found on TransDigm: the tagged series is neither
+        # inflated nor static, just SHORT. CommonStockSharesOutstanding covered
+        # 3 of 10 years against a 16-year cover page, so the share change read
+        # +0.0 in every year and the whole buyback fell on employees — the same
+        # damage as the treasury case, arriving by a different door. Coverage is
+        # the thing to test, not the symptom that first made it visible.
+        _sparse = sum(1 for fy in _win0 if fy in shares_out) < 0.6 * len(_win0)
+        if _static or _treasury or _sparse:
             _was = shares_out[_lat]
             _net = {fy: shares_out[fy] - _treas[fy] for fy in shares_out
                     if fy in _treas and shares_out[fy] - _treas[fy] > 0}
@@ -911,6 +919,10 @@ def load(ticker: str, n_years: int = 10):
             _cands = [(_net, "issued minus treasury shares"),
                       (_cover, "the 10-K cover page"),
                       (_wv, "the weighted-average diluted count")]
+            if _sparse and not (_static or _treasury):
+                # nothing wrong with the tagged figures, only with how few of
+                # them there are — so it stays in the running
+                _cands.insert(0, (dict(shares_out), "the tagged share count"))
             _scored = [(sum(1 for fy in _win if fy in c), -i, c, name)
                        for i, (c, name) in enumerate(_cands) if len(c) >= 3]
             if _scored:
@@ -1702,6 +1714,26 @@ def self_test() -> list[tuple[str, bool, str]]:
                 not {u: k for u, k in cf2.items() if u != "USD"}, "USD only"))
     out.append(("Two years of history is refused outright",
                 len([2012, 2013]) < 4, "four is the minimum"))
+
+    # 4r. TransDigm. The tagged outstanding count is correct but covers 3 of 10
+    #     years, so the share change read +0.0 everywhere and the buyback fell
+    #     on employees — the AutoZone damage through a different door.
+    win = list(range(2016, 2026))
+    tagged = {fy: 52.2e6 for fy in (2023, 2024, 2025)}
+    cover = {fy: 52.2e6 + (2025 - fy) * 1e5 for fy in range(2010, 2026)}
+    wv = {fy: 57.0e6 for fy in range(2008, 2026)}
+    sparse = sum(1 for fy in win if fy in tagged) < 0.6 * len(win)
+    out.append(("A short-but-correct share count triggers the repair",
+                sparse, f"{sum(1 for fy in win if fy in tagged)} of {len(win)} years"))
+    cands = [(dict(tagged), "the tagged share count"), ({}, "issued minus treasury"),
+             (cover, "the 10-K cover page"), (wv, "the diluted average")]
+    best = max((sum(1 for fy in win if fy in c), -i, name)
+               for i, (c, name) in enumerate(cands) if len(c) >= 3)
+    out.append(("...and coverage picks the cover page over it",
+                best[2] == "the 10-K cover page", f"chose {best[2]} ({best[0]}/10)"))
+    full = {fy: 52.2e6 for fy in range(2014, 2026)}
+    out.append(("A well-covered tagged count is left alone",
+                not (sum(1 for fy in win if fy in full) < 0.6 * len(win)), "10 of 10 years"))
 
     # 5. The verdict itself.
     v = assess(0.272, 0.075, 0.04, 5_000)
