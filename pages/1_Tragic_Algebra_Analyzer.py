@@ -410,7 +410,20 @@ def zone(ratio: float) -> tuple[str, str]:
 # ══════════════════════════════════════════════════════════════════════
 
 CONCEPTS = {
-    "N":  (["NetIncomeLoss", "ProfitLoss"],
+    # Order is priority, and it is a judgement about whose profit this is.
+    # NetIncomeLoss is the parent's share. NetIncomeLossAvailableToCommon-
+    # StockholdersBasic is what is left for common holders after preferred
+    # dividends. ProfitLoss includes what belongs to minority holders of
+    # consolidated subsidiaries, so it is the most generous and goes last.
+    #
+    # The middle one was added after Booking Holdings. BKNG tags NetIncomeLoss
+    # in 10-Ks only through 2012 and ProfitLoss only through 2015; from 2013 on
+    # its bottom line sits in the available-to-common tag. Without it the window
+    # ended at FY2015 and the page valued the company on eleven-year-old
+    # earnings of $2,551M against an actual FY2025 figure of $5,404M — and
+    # printed a full verdict rather than refusing.
+    "N":  (["NetIncomeLoss", "NetIncomeLossAvailableToCommonStockholdersBasic",
+            "ProfitLoss"],
            ["ProfitLoss", "ProfitLossAttributableToOwnersOfParent"]),
     "G":  (["ShareBasedCompensation", "AllocatedShareBasedCompensationExpense"],
            ["ShareBasedPaymentsExpense"]),
@@ -1050,13 +1063,16 @@ def load(ticker: str, n_years: int = 10):
     # one from the other is right when the gap is a tagging change and slightly
     # generous when the filer has real minority interests, so say so rather
     # than let it pass silently — this is the base of every figure on the page.
-    if len(tag_sources.get("N", [])) > 1:
+    _nsrc = tag_sources.get("N", [])
+    if len(_nsrc) > 1:
         notes.append(
-            "Net income was read from more than one tag: the years "
-            "NetIncomeLoss does not cover were filled from ProfitLoss. Where that "
-            "happened the figure includes profit belonging to minority holders of "
-            "consolidated subsidiaries, so it is the whole group's rather than "
-            "shareholders' alone. The tag panel shows which years came from where.")
+            "Net income came from more than one tag: the years "
+            f"{_nsrc[0]} does not cover were filled from {', '.join(_nsrc[1:])}. "
+            + ("ProfitLoss includes profit belonging to minority holders of "
+               "consolidated subsidiaries, so where it filled a year the figure is "
+               "the whole group's rather than shareholders' alone. "
+               if "ProfitLoss" in _nsrc[1:] else "")
+            + "The tag panel shows which tags answered.")
 
     fys = sorted(series["N"])[-n_years:]
     # Below this there is no history to reason about. Toyota returned two years
