@@ -840,7 +840,12 @@ def load(ticker: str, n_years: int = 10):
     shares_out = _instant(facts, ["CommonStockSharesOutstanding", "CommonStockSharesIssued",
                                   "EntityCommonStockSharesOutstanding"], unit="shares")
     shares_out = {k: v for k, v in shares_out.items() if v and v > 0}
-    shares_out, split_notes = split_adjust(shares_out)
+    # Bind `notes` HERE, not further down. The share-count ladder below appends
+    # to it, and Python makes a name local to the whole function the moment it
+    # is assigned anywhere in it — so initialising notes after the ladder threw
+    # UnboundLocalError on every ticker that tripped the ladder (AZO, HRB, TDG)
+    # while leaving every other ticker working. Keep this line above the ladder.
+    shares_out, notes = split_adjust(shares_out)
     # A share count that includes treasury stock is not a share count. AutoZone
     # tags CommonStockSharesIssued: ~25.7M shares, of which ~9M sit in treasury
     # and only ~16.6M are outstanding. Every per-share figure was computed
@@ -865,6 +870,11 @@ def load(ticker: str, n_years: int = 10):
                         None, True)
     _wv = {fy: v[2] for fy, v in _wavg_ser.items() if v[2] and v[2] > 0}
     _cover = _cover_shares(facts, series["N"])
+    # Read separately from shares_out purely so the tag panel can report how many
+    # years each source covers. TDG's bug was invisible until the panel showed
+    # CommonStockSharesOutstanding at 3 years against a 16-year cover page.
+    _c_out = _instant(facts, ["CommonStockSharesOutstanding"], unit="shares")
+    _c_iss = _instant(facts, ["CommonStockSharesIssued"], unit="shares")
     _treas = _instant(facts, ["TreasuryStockCommonShares", "TreasuryStockShares",
                               "TreasuryStockNumberOfSharesHeld",
                               "TreasuryStockCommonSharesHeld"], unit="shares")
@@ -937,17 +947,17 @@ def load(ticker: str, n_years: int = 10):
 
     fys = sorted(series["N"])[-n_years:]
     # Below this there is no history to reason about. Toyota returned two years
-    # and the page rendered a full verdict on them; a hundredfold is a claim
-    # about decades, and four annual figures is the least that can support one.
+    # and the page rendered a full verdict on them. ΔE is pooled over roughly a
+    # decade and IV15 projects fifteen years past it; four annual figures is the
+    # least that can carry either.
     if len(fys) < 4:
         raise ValueError(
             f"Only {len(fys)} year(s) of annual figures could be read for {ticker}"
             + (f" (FY{min(fys)}" + (f"-FY{max(fys)})" if len(fys) > 1 else ")") if fys else "")
-            + ". Everything on this page — the growth a hundredfold requires, what the company "
-              "has delivered, what its capital can fund — is a statement about decades. Four "
-              "years is the minimum this tool will reason from. A recent listing, a filer using "
-              "tags this reader does not know, or a foreign issuer are the usual causes.")
-    notes: list[str] = list(split_notes)
+            + ". ΔE is a pooled figure over roughly ten years and IV15 projects fifteen more, "
+              "so both are statements about a long run of history. Four years is the minimum "
+              "this tool will reason from. A recent listing, a filer using tags this reader "
+              "does not know, or a foreign issuer are the usual causes.")
     non_sbc_total = 0.0
     years: list[Year] = []
 
@@ -1195,6 +1205,27 @@ def load(ticker: str, n_years: int = 10):
     _kept_oe = sorted(y.OE for y in years[-5:] if not y.excluded)
     _med = _kept_oe[len(_kept_oe) // 2] if _kept_oe else 0.0
     tags = tags + [
+        {"Line": "— Shares: outstanding", "Years read": len(_c_out),
+         "XBRL tag": "CommonStockSharesOutstanding",
+         "Status": "used" if _share_route == "as tagged" and _c_out else
+                   "read" if _c_out else "not tagged"},
+        {"Line": "— Shares: issued", "Years read": len(_c_iss),
+         "XBRL tag": "CommonStockSharesIssued",
+         "Status": "includes treasury — only used if nothing better exists"
+                   if _c_iss else "not tagged"},
+        {"Line": "— Shares: cover page", "Years read": len(_cover),
+         "XBRL tag": "dei:EntityCommonStockSharesOutstanding",
+         "Status": "used" if _share_route == "the 10-K cover page" else
+                   "read" if _cover else "not tagged"},
+        {"Line": "— Shares: treasury held", "Years read": len(_treas),
+         "XBRL tag": "TreasuryStockCommonShares",
+         "Status": "used" if _share_route.startswith("issued minus") else
+                   "read" if _treas else "not tagged"},
+        {"Line": "— Shares: diluted average", "Years read": len(_wv),
+         "XBRL tag": "WeightedAverageNumberOfDilutedSharesOutstanding",
+         "Status": "used" if _share_route.startswith("the weighted") else
+                   "read" if _wv else "not tagged"},
+    ] + [
         {"Line": f"— {name}", "Years read": len(_instant(facts, ks)),
          "XBRL tag": " + ".join(_bal.get(ks[0], [])) or "—",
          "Status": "read" if _bal.get(ks[0]) else "none of the tags this reader knows are in "
