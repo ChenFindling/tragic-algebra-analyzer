@@ -1014,6 +1014,23 @@ def load(ticker: str, n_years: int = 10):
               "returned to shareholders is understated, which flatters the growth a company "
               "looks able to fund. The tag panel shows which elements did answer.")
 
+    # Paychex reads net income for 2009-2015 and 2024-2026 and nothing between.
+    # The table draws FY2015 directly above FY2024, ten rows spanning eighteen
+    # calendar years, and every rate computed across them silently blends two
+    # different eras of the company.
+    _span = max(fys) - min(fys) + 1
+    if _span > len(fys):
+        _missing = [y for y in range(min(fys), max(fys) + 1) if y not in fys]
+        notes.append(
+            f"**The filing history has holes.** {len(fys)} annual figures span {_span} calendar "
+            f"years, with nothing read for FY{_missing[0]}"
+            + (f"-FY{_missing[-1]}" if len(_missing) > 1 else "")
+            + ". The year-by-year table draws these rows next to each other as though they were "
+              "consecutive. Growth rates here are measured across the real calendar gap, so they "
+              "are not wrong, but they blend two eras of the company with a hole in the middle — "
+              "and the pooled ΔE weights whichever era has more years. The tag panel shows how "
+              "many years each line actually read.")
+
     if any(y.price == 0 for y in years):
         notes.append("No share price for some years — their SBC cost is understated.")
     if not any(y.Cw for y in years) and not capped_any:
