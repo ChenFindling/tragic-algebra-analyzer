@@ -780,6 +780,27 @@ TAG_LABELS = {
 }
 
 
+def _latest_fy(d) -> str:
+    """The most recent fiscal year a line actually reached.
+
+    A count on its own cannot show staleness. Booking Holdings read eight
+    years of net income and printed a full verdict on them; the panel said
+    "8" and nothing on the page said those eight ended in FY2015. TransDigm
+    reads LongTermDebtNoncurrent for twelve years, and net cash is built from
+    whichever year that series happens to stop at against a cash balance that
+    may run several years later — the panel said "12" and could not tell you
+    whether the twelve reach the balance sheet being priced.
+
+    Both _instant and _annual silently take the latest year they find. This
+    column is the only place that says which year that was, so a series that
+    stops early stops being invisible.
+    """
+    try:
+        return str(max(d)) if d else "—"
+    except (TypeError, ValueError):
+        return "—"
+
+
 def tag_report(facts: dict, series: dict, sources: dict[str, list[str]]) -> list[dict]:
     """Which tags answered for each line, and how many years they covered.
 
@@ -802,6 +823,7 @@ def tag_report(facts: dict, series: dict, sources: dict[str, list[str]]) -> list
         rows.append({
             "Line": TAG_LABELS.get(key, key),
             "Years read": n,
+            "Latest year": _latest_fy(series.get(key, {})),
             "XBRL tag": " + ".join(used) if used else (present or "—"),
             "Status": ("read" if n and len(used) <= 1 else
                        f"read — gaps filled from {len(used)} tags" if n else
@@ -1241,11 +1263,19 @@ def load(ticker: str, n_years: int = 10):
                      "owners' earnings here are flattering rather than conservative.")
 
     _bal: dict[str, list[str]] = {}
+    # Coverage and latest year are captured HERE, from the same read that
+    # feeds net cash, rather than looked up again when the panel is built. A
+    # panel running its own lookup can report a series the page did not use.
+    _bal_n: dict[str, int] = {}
+    _bal_fy: dict[str, str] = {}
 
     def g(ks):
         src: list[str] = []
-        v = (max(_instant(facts, ks, "USD", src).items(), default=(0, 0.0))[1]) / 1e6
+        d = _instant(facts, ks, "USD", src)
+        v = (max(d.items(), default=(0, 0.0))[1]) / 1e6
         _bal[ks[0]] = src
+        _bal_n[ks[0]] = len(d)
+        _bal_fy[ks[0]] = _latest_fy(d)
         return v
 
     cash_total = g(BALANCE["cash"]) + g(BALANCE["sti"]) + g(BALANCE["lti"])
@@ -1337,27 +1367,33 @@ def load(ticker: str, n_years: int = 10):
     _med = _kept_oe[len(_kept_oe) // 2] if _kept_oe else 0.0
     tags = tags + [
         {"Line": "— Shares: outstanding", "Years read": len(_c_out),
+         "Latest year": _latest_fy(_c_out),
          "XBRL tag": "CommonStockSharesOutstanding",
          "Status": "used" if _share_route == "as tagged" and _c_out else
                    "read" if _c_out else "not tagged"},
         {"Line": "— Shares: issued", "Years read": len(_c_iss),
+         "Latest year": _latest_fy(_c_iss),
          "XBRL tag": "CommonStockSharesIssued",
          "Status": "includes treasury — only used if nothing better exists"
                    if _c_iss else "not tagged"},
         {"Line": "— Shares: cover page", "Years read": len(_cover),
+         "Latest year": _latest_fy(_cover),
          "XBRL tag": "dei:EntityCommonStockSharesOutstanding",
          "Status": "used" if _share_route == "the 10-K cover page" else
                    "read" if _cover else "not tagged"},
         {"Line": "— Shares: treasury held", "Years read": len(_treas),
+         "Latest year": _latest_fy(_treas),
          "XBRL tag": "TreasuryStockCommonShares",
          "Status": "used" if _share_route.startswith("issued minus") else
                    "read" if _treas else "not tagged"},
         {"Line": "— Shares: diluted average", "Years read": len(_wv),
+         "Latest year": _latest_fy(_wv),
          "XBRL tag": "WeightedAverageNumberOfDilutedSharesOutstanding",
          "Status": "used" if _share_route.startswith("the weighted") else
                    "read" if _wv else "not tagged"},
     ] + [
-        {"Line": f"— {name}", "Years read": len(_instant(facts, ks)),
+        {"Line": f"— {name}", "Years read": _bal_n.get(ks[0], 0),
+         "Latest year": _bal_fy.get(ks[0], "—"),
          "XBRL tag": " + ".join(_bal.get(ks[0], [])) or "—",
          "Status": "read" if _bal.get(ks[0]) else "none of the tags this reader knows are in "
                                                  "the filing"}
@@ -1406,6 +1442,11 @@ def self_test() -> list[tuple[str, bool, str]]:
     out.append(("Salesforce IVB, his inputs → 8.6%",
                 abs(expected_return(165.84, crm) - 0.086) < 0.005,
                 f"{expected_return(165.84, crm):.1%}"))
+
+    out.append(("Latest year reports the last year read, not how many",
+                _latest_fy({2016: 1, 2020: 1, 2015: 1}) == "2020"
+                and _latest_fy({}) == "—",
+                "2020 from an unsorted series; — when empty"))
     return out
 
 
