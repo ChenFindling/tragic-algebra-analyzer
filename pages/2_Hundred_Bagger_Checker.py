@@ -799,6 +799,27 @@ TAG_LABELS = {
 }
 
 
+def _latest_fy(d) -> str:
+    """The most recent fiscal year a line actually reached.
+
+    A count on its own cannot show staleness. Booking Holdings read eight
+    years of net income and printed a full verdict on them; the panel said
+    "8" and nothing on the page said those eight ended in FY2015. TransDigm
+    reads LongTermDebtNoncurrent for twelve years, and net cash is built from
+    whichever year that series happens to stop at against a cash balance that
+    may run several years later — the panel said "12" and could not tell you
+    whether the twelve reach the balance sheet being priced.
+
+    Both _instant and _annual silently take the latest year they find. This
+    column is the only place that says which year that was, so a series that
+    stops early stops being invisible.
+    """
+    try:
+        return str(max(d)) if d else "—"
+    except (TypeError, ValueError):
+        return "—"
+
+
 def tag_report(facts: dict, series: dict, sources: dict[str, list[str]]) -> list[dict]:
     """Which tags answered for each line, and how many years they covered.
 
@@ -821,6 +842,7 @@ def tag_report(facts: dict, series: dict, sources: dict[str, list[str]]) -> list
         rows.append({
             "Line": TAG_LABELS.get(key, key),
             "Years read": n,
+            "Latest year": _latest_fy(series.get(key, {})),
             "XBRL tag": " + ".join(used) if used else (present or "—"),
             "Status": ("read" if n and len(used) <= 1 else
                        f"read — gaps filled from {len(used)} tags" if n else
@@ -1319,41 +1341,52 @@ def load(ticker: str, n_years: int = 10):
         "cik": str(int(cik)), "fye_month": fye_month,
         "tags": tag_report(facts, series, tag_sources) + [
             {"Line": "— Shares: outstanding", "Years read": len(_c_out),
+             "Latest year": _latest_fy(_c_out),
              "XBRL tag": "CommonStockSharesOutstanding",
              "Status": "used" if _share_route == "as tagged" and _c_out else
                        "read" if _c_out else "not tagged"},
             {"Line": "— Shares: issued", "Years read": len(_c_iss),
+             "Latest year": _latest_fy(_c_iss),
              "XBRL tag": "CommonStockSharesIssued",
              "Status": "includes treasury — only used if nothing better exists"
                        if _c_iss else "not tagged"},
             {"Line": "— Shares: cover page", "Years read": len(_cover),
+             "Latest year": _latest_fy(_cover),
              "XBRL tag": "dei:EntityCommonStockSharesOutstanding",
              "Status": "used" if _share_route == "the 10-K cover page" else
                        "read" if _cover else "not tagged"},
             {"Line": "— Shares: treasury held", "Years read": len(_treas),
+             "Latest year": _latest_fy(_treas),
              "XBRL tag": "TreasuryStockCommonShares",
              "Status": "used" if _share_route.startswith("issued minus") else
                        "read" if _treas else "not tagged"},
             {"Line": "— Shares: diluted average", "Years read": len(_wv),
+             "Latest year": _latest_fy(_wv),
              "XBRL tag": "WeightedAverageNumberOfDilutedSharesOutstanding",
              "Status": "used" if _share_route.startswith("the weighted") else
                        "read" if _wv else "not tagged"},
             {"Line": "— Shareholders' equity", "Years read": len(eq),
+             "Latest year": _latest_fy(eq),
              "XBRL tag": " + ".join(bal["equity"]) or "—",
              "Status": "read" if eq else "no equity tag found — ROIC cannot be built"},
             {"Line": "— Borrowings", "Years read": len(debt),
+             "Latest year": _latest_fy(debt),
              "XBRL tag": " + ".join(bal["debt"]) or "—",
              "Status": "read" if debt else "none found (many companies genuinely have none)"},
             {"Line": "— Leases", "Years read": len(op_lease) + len(fin_lease),
+             "Latest year": _latest_fy({**op_lease, **fin_lease}),
              "XBRL tag": " + ".join(bal["leases"]) or "—",
              "Status": "read" if (op_lease or fin_lease) else "none found"},
             {"Line": "— Cash", "Years read": len(cash_ser),
+             "Latest year": _latest_fy(cash_ser),
              "XBRL tag": " + ".join(bal["cash"]) or "—",
              "Status": "read" if cash_ser else "no cash tag found"},
             {"Line": "— Investments", "Years read": len(invest),
+             "Latest year": _latest_fy(invest),
              "XBRL tag": " + ".join(bal["investments"]) or "—",
              "Status": "read" if invest else "none found"},
             {"Line": "— Goodwill & intangibles", "Years read": len(goodwill) + len(intang),
+             "Latest year": _latest_fy({**goodwill, **intang}),
              "XBRL tag": " + ".join(bal["goodwill"]) or "—",
              "Status": "read" if (goodwill or intang) else "none found"},
         ],
@@ -1879,6 +1912,11 @@ def self_test() -> list[tuple[str, bool, str]]:
     v = assess(0.15, 0.90, 0.60, 4_000_000)
     out.append(("Size closes it even when everything else passes",
                 v.why == "size", f"{v.label} ({v.why})"))
+
+    out.append(("Latest year reports the last year read, not how many",
+                _latest_fy({2016: 1, 2020: 1, 2015: 1}) == "2020"
+                and _latest_fy({}) == "—",
+                "2020 from an unsorted series; — when empty"))
     return out
 
 
