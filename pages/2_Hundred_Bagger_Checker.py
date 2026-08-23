@@ -998,6 +998,23 @@ def load(ticker: str, n_years: int = 10):
               "returned to shareholders is understated, which flatters the growth a company "
               "looks able to fund. The tag panel shows which elements did answer.")
 
+    # Paychex reads net income for 2009-2015 and 2024-2026 and nothing between.
+    # The table draws FY2015 directly above FY2024, ten rows spanning eighteen
+    # calendar years, and every rate computed across them silently blends two
+    # different eras of the company.
+    _span = max(fys) - min(fys) + 1
+    if _span > len(fys):
+        _missing = [y for y in range(min(fys), max(fys) + 1) if y not in fys]
+        notes.append(
+            f"**The filing history has holes.** {len(fys)} annual figures span {_span} calendar "
+            f"years, with nothing read for FY{_missing[0]}"
+            + (f"-FY{_missing[-1]}" if len(_missing) > 1 else "")
+            + ". The year-by-year table draws these rows next to each other as though they were "
+              "consecutive. Growth rates here are measured across the real calendar gap, so they "
+              "are not wrong, but they blend two eras of the company with a hole in the middle — "
+              "and the pooled ΔE weights whichever era has more years. The tag panel shows how "
+              "many years each line actually read.")
+
     if any(y.price == 0 for y in years):
         notes.append("No share price for some years — their stock-comp cost is understated, so "
                      "owners' earnings and ROIC read high for those years.")
@@ -1583,6 +1600,23 @@ def self_test() -> list[tuple[str, bool, str]]:
     out.append(("...and the H&R Block case still does",
                 hp.used_implied, f"implied {hp.implied/hp.oe:.0%} of owners' earnings"))
 
+    # 4o. Paychex. Ten rows spanning eighteen calendar years, with FY2016-2023
+    #     missing. Revenue growth counted rows while owners' earnings counted
+    #     calendar years, so the same company read 11%/yr and 7%/yr at once —
+    #     and "has delivered" takes the higher of the two.
+    fys_gap = [2009, 2010, 2011, 2012, 2013, 2014, 2015, 2024, 2025, 2026]
+    by_rows = cagr(2082.0, 5900.0, len(fys_gap) - 1)
+    by_years = cagr(2082.0, 5900.0, fys_gap[-1] - fys_gap[0])
+    out.append(("Growth is measured in calendar years, not table rows",
+                by_years is not None and abs(by_years - 0.0634) < 0.001,
+                f"{by_rows:.1%} by rows vs {by_years:.1%} by years"))
+    out.append(("A hole in the filing history is detected",
+                (max(fys_gap) - min(fys_gap) + 1) > len(fys_gap),
+                f"{len(fys_gap)} rows across {max(fys_gap)-min(fys_gap)+1} years"))
+    solid = list(range(2017, 2027))
+    out.append(("...and a complete history is not flagged",
+                (max(solid) - min(solid) + 1) == len(solid), "10 rows, 10 years"))
+
     # 5. The verdict itself.
     v = assess(0.272, 0.075, 0.04, 5_000)
     out.append(("Needs 27%, funds 7.5% → closed by capital",
@@ -1792,8 +1826,10 @@ if years and ticker and st.session_state.get("hb_tk") == ticker:
     fundable = (per_share_ceiling(roic_med, payout_eff, buyback_yield)
                 if roic_med is not None and roic_med > 0 else None)
 
-    rev_hist = [pre["revenue"][fy] for fy in fys if pre["revenue"].get(fy)]
-    rev_cagr = cagr(rev_hist[0], rev_hist[-1], len(rev_hist) - 1) if len(rev_hist) >= 3 else None
+    rev_years = [fy for fy in fys if pre["revenue"].get(fy)]
+    rev_hist = [pre["revenue"][fy] for fy in rev_years]
+    rev_cagr = (cagr(rev_hist[0], rev_hist[-1], rev_years[-1] - rev_years[0])
+                if len(rev_hist) >= 3 else None)
     oe_clean = [y for y in years if not y.excluded]
     oe_cagr = (cagr(oe_clean[0].OE, oe_clean[-1].OE, oe_clean[-1].fy - oe_clean[0].fy)
                if len(oe_clean) >= 3 else None)
@@ -1946,7 +1982,8 @@ if years and ticker and st.session_state.get("hb_tk") == ticker:
                      " years above 15%" if readable and not financial else "n/a"),
          "Reading": "the year-by-year table is the evidence"},
         {"Criterion": "Durable growth",
-         "Filings": (f"revenue {rev_cagr:.1%}/yr, up in {up_years} of {len(rev_hist)-1}"
+         "Filings": (f"revenue {rev_cagr:.1%}/yr over "
+                     f"{rev_years[-1]-rev_years[0]} years, up in {up_years} of {len(rev_hist)-1}"
                      if rev_cagr is not None else "too few years of revenue"),
          "Reading": (f"owners' earnings {oe_cagr:.1%}/yr" if oe_cagr is not None
                      else "owners' earnings growth n/a — negative at one end")},
