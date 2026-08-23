@@ -624,11 +624,21 @@ def _instant(facts: dict, concepts: list[str], unit: str = "USD",
 
 
 @st.cache_data(ttl=86400, show_spinner=False)
-def _monthly_closes(ticker: str) -> dict[str, float]:
-    """Monthly closes for ~11 years, keyed 'YYYY-MM'."""
+def _monthly_closes(ticker: str) -> tuple[dict[str, float], dict[str, float]]:
+    """Monthly closes for ~11 years keyed 'YYYY-MM', plus split events.
+
+    The splits come back on the SAME request, which is why they are returned
+    here rather than fetched separately: one round trip, one cache entry, and
+    no possibility of the prices and the splits being read at different times.
+
+    Every price in this series is already restated for any split, including
+    one that happened yesterday. The share counts in this file come from
+    filings and are not. See the reconciliation in load().
+    """
     r = requests.get(
         f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
-        "?interval=1mo&range=11y", headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
+        "?interval=1mo&range=11y&events=split",
+        headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
     res = r.json()["chart"]["result"][0]
     closes = res["indicators"]["quote"][0]["close"]
     out = {}
@@ -636,7 +646,31 @@ def _monthly_closes(ticker: str) -> dict[str, float]:
         if c:
             d = dt.datetime.utcfromtimestamp(ts)
             out[f"{d.year:04d}-{d.month:02d}"] = float(c)
-    return out
+
+    # Yahoo has used both {"numerator": 2, "denominator": 1} and
+    # {"splitRatio": "2:1"} over the years, and returns the block under
+    # different keys depending on the endpoint version. Parse defensively:
+    # a split this reader cannot read must leave the factor at 1.0 rather
+    # than throw, because the whole price series is riding on this call.
+    splits: dict[str, float] = {}
+    for s in ((res.get("events") or {}).get("splits") or {}).values():
+        try:
+            day = dt.datetime.utcfromtimestamp(int(s["date"])).date().isoformat()
+        except (KeyError, TypeError, ValueError, OSError):
+            continue
+        num, den = s.get("numerator"), s.get("denominator")
+        if not (num and den):
+            try:
+                num, den = str(s.get("splitRatio", "")).split(":")
+            except ValueError:
+                continue
+        try:
+            ratio = float(num) / float(den)
+        except (TypeError, ValueError, ZeroDivisionError):
+            continue
+        if ratio > 0:
+            splits[day] = ratio
+    return out, splits
 
 
 def _avg_price(closes: dict[str, float], start: str, end: str) -> float | None:
@@ -796,6 +830,25 @@ def _cover_shares(facts: dict, nseries: dict) -> dict[int, float]:
     return {k: v[1] for k, v in out.items() if v[1] > 0}
 
 
+def _cover_asof(facts: dict) -> str:
+    """Filing date of the most recent 10-K cover page, as 'YYYY-MM-DD'.
+
+    The cover count is dated at the FILING, months after the year end, so when
+    that is the series in use it is the later date a split has to beat before
+    it counts as unreflected. Using the fiscal year end for a cover-page filer
+    would re-apply a split the cover page had already absorbed.
+    """
+    rows = (facts.get("facts", {}).get("dei", {})
+            .get("EntityCommonStockSharesOutstanding", {}).get("units", {}).get("shares", []))
+    best = ""
+    for r in rows:
+        if r.get("form") in ANNUAL_FORMS and not r.get("start"):
+            filed = str(r.get("filed", ""))
+            if filed > best:
+                best = filed
+    return best
+
+
 def load(ticker: str, n_years: int = 10):
     cmap = _ticker_map()
     if ticker not in cmap:
@@ -941,9 +994,45 @@ def load(ticker: str, n_years: int = 10):
                     "erratic — compare it against the GAAP charge before trusting any year.")
 
     try:
-        closes = _monthly_closes(ticker)
+        closes, splits = _monthly_closes(ticker)
     except Exception:
-        closes = {}
+        closes, splits = {}, {}
+
+    # A split reaches the price series within a day and the share counts here
+    # not until the next 10-K, up to a year later. In between, every share
+    # change was being priced at a market price on the other basis, market cap
+    # was wrong by the split factor, and IV15 — a per-share figure built on the
+    # filed count — was being compared against a price that was not.
+    #
+    # Found on IES Holdings, which split 2-for-1 effective 24 August 2026 with a
+    # September year end: the two pages disagreed by exactly 2x because one had
+    # cached prices from before Yahoo restated them and the other after.
+    #
+    # split_adjust() cannot see this. It restates history onto the latest FILED
+    # basis by spotting jumps in the filed series, and a split that has not
+    # reached a filing yet leaves no jump to spot.
+    #
+    # Scaling the share counts rather than the prices is deliberate: it leaves
+    # the price on screen matching the price in the market, and every ratio
+    # (dilution, P/IV15, market cap) comes out invariant.
+    _asof = max((v[1] for v in series["N"].values()), default="")
+    if _share_route == "the 10-K cover page":
+        _asof = max(_asof, _cover_asof(facts))
+    _split_factor, _split_seen = 1.0, []
+    for _day, _ratio in sorted(splits.items()):
+        if _asof and _day > _asof:
+            _split_factor *= _ratio
+            _split_seen.append(f"{_day} ({_ratio:g}-for-1)")
+    if abs(_split_factor - 1.0) > 0.01 and shares_out:
+        shares_out = {fy: v * _split_factor for fy, v in shares_out.items()}
+        notes.append(
+            f"{ticker} split after the share counts in this window were filed — "
+            + ", ".join(_split_seen)
+            + f". The price history is already restated for it and the filings are not, so every "
+              f"share count here has been multiplied by {_split_factor:g} to put the two on the "
+              f"same basis. Without this the market cap would be wrong by that factor and IV15 "
+              f"would be measured against a price it does not match. The next annual filing "
+              f"makes the adjustment unnecessary and it will stop being applied.")
 
     fys = sorted(series["N"])[-n_years:]
     # Below this there is no history to reason about. Toyota returned two years
@@ -1150,7 +1239,9 @@ def load(ticker: str, n_years: int = 10):
     # buyback could explain, trust the diluted figure.
     sh = series.get("SHD", {})
     outstanding = shares_out[max(shares_out)] / 1e6 if shares_out else 0.0
-    wavg = sh[max(sh)][2] / 1e6 if sh else 0.0
+    # Scaled too, or the dual-class test below compares a post-split count
+    # against a pre-split one and fires on a company with one share class.
+    wavg = sh[max(sh)][2] / 1e6 * _split_factor if sh else 0.0
     diluted = outstanding or wavg
     if outstanding > 0 and wavg > 0:
         if outstanding / wavg < 0.65:
