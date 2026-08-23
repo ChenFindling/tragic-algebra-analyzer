@@ -1617,6 +1617,20 @@ def self_test() -> list[tuple[str, bool, str]]:
     out.append(("...and a complete history is not flagged",
                 (max(solid) - min(solid) + 1) == len(solid), "10 rows, 10 years"))
 
+    # 4p. Paychex again. The revenue tag overlapped the net-income window in
+    #     only 2024-2026, so "has delivered" was a two-year rate across the
+    #     Paycor acquisition — and it outranked the seventeen-year owners'
+    #     earnings figure because the metric takes the higher of the two.
+    two_year = cagr(5300.0, 6500.0, 2)
+    seventeen = cagr(559.0, 1807.0, 17)
+    out.append(("A two-year rate no longer counts as a track record",
+                two_year is not None and 2 < 5,
+                f"{two_year:.1%} over 2y discarded; {seventeen:.1%} over 17y kept"))
+    out.append(("...and the longer rate is what 'has delivered' reports",
+                abs(seventeen - 0.0718) < 0.002, f"{seventeen:.1%}"))
+    out.append(("A five-year run is still accepted",
+                cagr(100.0, 200.0, 5) is not None and 5 >= 5, "at the boundary"))
+
     # 5. The verdict itself.
     v = assess(0.272, 0.075, 0.04, 5_000)
     out.append(("Needs 27%, funds 7.5% → closed by capital",
@@ -1826,16 +1840,29 @@ if years and ticker and st.session_state.get("hb_tk") == ticker:
     fundable = (per_share_ceiling(roic_med, payout_eff, buyback_yield)
                 if roic_med is not None and roic_med > 0 else None)
 
+    # A growth rate needs a run of years behind it, not just three data points.
+    # Paychex's revenue tag overlapped the net-income window in only 2024-2026,
+    # so "has delivered 11%" was a two-year rate spanning the Paycor
+    # acquisition — and because "has delivered" takes the HIGHER of the two
+    # rates, that two-year number beat the seventeen-year owners'-earnings
+    # figure of 7% and became the company's track record.
+    MIN_SPAN = 5
+
     rev_years = [fy for fy in fys if pre["revenue"].get(fy)]
     rev_hist = [pre["revenue"][fy] for fy in rev_years]
-    rev_cagr = (cagr(rev_hist[0], rev_hist[-1], rev_years[-1] - rev_years[0])
-                if len(rev_hist) >= 3 else None)
+    rev_span = rev_years[-1] - rev_years[0] if len(rev_years) >= 2 else 0
+    rev_cagr = (cagr(rev_hist[0], rev_hist[-1], rev_span)
+                if len(rev_hist) >= 3 and rev_span >= MIN_SPAN else None)
     oe_clean = [y for y in years if not y.excluded]
-    oe_cagr = (cagr(oe_clean[0].OE, oe_clean[-1].OE, oe_clean[-1].fy - oe_clean[0].fy)
-               if len(oe_clean) >= 3 else None)
+    oe_span = oe_clean[-1].fy - oe_clean[0].fy if len(oe_clean) >= 2 else 0
+    oe_cagr = (cagr(oe_clean[0].OE, oe_clean[-1].OE, oe_span)
+               if len(oe_clean) >= 3 and oe_span >= MIN_SPAN else None)
     # Deliberately generous: the better of the two. A refusal that survives the
     # kindest reading of the history is a refusal worth trusting.
     delivered = max([g for g in (rev_cagr, oe_cagr) if g is not None], default=None)
+    short_spans = [f"{n} ({s}y)" for n, s, g in
+                   (("revenue", rev_span, rev_cagr), ("owners' earnings", oe_span, oe_cagr))
+                   if g is None and s > 0]
 
     required = (required_growth(mcap / OE, exit_mult, horizon, 100.0, dilution)
                 if OE > 0 and mcap > 0 else None)
@@ -1849,8 +1876,9 @@ if years and ticker and st.session_state.get("hb_tk") == ticker:
     m1.metric("Needs", f"{required:.1%}" if required is not None else "—",
               f"100x in {horizon}y at {exit_mult:g}x")
     m2.metric("Has delivered", f"{delivered:.1%}" if delivered is not None else "n/a",
-              (f"revenue {rev_cagr:.0%}" if rev_cagr is not None else "revenue n/a")
-              + (f" · OE {oe_cagr:.0%}" if oe_cagr is not None else ""))
+              (f"revenue {rev_cagr:.0%} over {rev_span}y" if rev_cagr is not None
+               else "revenue n/a")
+              + (f" · OE {oe_cagr:.0%} over {oe_span}y" if oe_cagr is not None else ""))
     m3.metric("Can fund", f"{fundable:.1%}" if fundable is not None else "n/a",
               (f"ROIC {roic_med:.0%} · retention assumed" if payout_assumed else
                f"ROIC {roic_med:.0%} · retains {max(0.0,1-payout_eff):.0%}"
@@ -1868,6 +1896,15 @@ if years and ticker and st.session_state.get("hb_tk") == ticker:
             "of profit, which is exactly what owners' earnings are meant to capture. Enter what "
             "you think the business earns in a normal year, and the arithmetic below becomes "
             "worth reading.")
+
+    if short_spans:
+        st.info(
+            "**" + " and ".join(short_spans).capitalize()
+            + " covered too few years to be a growth rate**, so it is not counted in *has "
+              "delivered*. Three points spanning two years is a recent trend, not a record, and "
+              "an acquisition inside that window would read as organic growth. Five years is the "
+              "minimum here. Where a line reads fewer years than net income, the tag panel says "
+              "so.")
 
     if pay.warning:
         st.warning("**Check this before trusting the ceiling.** " + pay.warning)
