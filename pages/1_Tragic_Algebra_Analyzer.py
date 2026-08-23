@@ -547,6 +547,7 @@ def _annual(facts: dict, us: list[str], ifrs: list[str],
     out: dict[int, tuple[str, str, str, float]] = {}
     for taxonomy, concepts in (("us-gaap", us), ("ifrs-full", ifrs)):
         tax = facts.get("facts", {}).get(taxonomy, {})
+        cands: list[tuple[str, dict[int, tuple[str, str, str, float]]]] = []
         for concept in concepts:
             if concept not in tax:
                 continue
@@ -564,13 +565,31 @@ def _annual(facts: dict, us: list[str], ifrs: list[str],
                 fy, filed = int(end[:4]), row.get("filed", "")
                 if fy not in got or filed > got[fy][0]:
                     got[fy] = (filed, start, end, float(row.get("val", 0.0)))
-            fresh = {fy: v for fy, v in got.items() if fy not in out}
-            if fresh:
-                out.update(fresh)
-                if sources is not None:
-                    sources.append(concept)
-            if out and not fill:
-                return {k: (v[1], v[2], v[3]) for k, v in out.items()}
+            if not got:
+                continue
+            if fill:
+                fresh = {fy: v for fy, v in got.items() if fy not in out}
+                if fresh:
+                    out.update(fresh)
+                    if sources is not None:
+                        sources.append(concept)
+            else:
+                cands.append((concept, got))
+        # Without fill, ONE concept answers for the whole line, so choosing the
+        # first with any data was the same staleness bug _instant had.
+        # TransDigm's revenue came from RevenueFromContractWithCustomer... for
+        # five years ending FY2024, with Revenues never tried, so the revenue
+        # leg of "has delivered" was dropped for being too short — while a
+        # longer, current series sat behind it. Picking the concept that
+        # reaches the latest year keeps one definition across all years, which
+        # filling across these tags would not.
+        if cands and not fill:
+            latest = max(max(g) for _, g in cands)
+            for concept, got in cands:
+                if max(got) == latest:
+                    if sources is not None:
+                        sources.append(concept)
+                    return {k: (v[1], v[2], v[3]) for k, v in got.items()}
     return {k: (v[1], v[2], v[3]) for k, v in out.items()}
 
 
@@ -618,16 +637,45 @@ def reporting_currency(facts: dict, concepts: list[str]) -> str | None:
 
 
 def _instant(facts: dict, concepts: list[str], unit: str = "USD",
-             sources: list[str] | None = None) -> dict[int, float]:
+             sources: list[str] | None = None,
+             skipped: list[tuple[str, int, str, int]] | None = None) -> dict[int, float]:
     """Latest balance-sheet value per fiscal year.
 
-    Concepts are tried in order and the FIRST one with data wins. Merging them
-    silently mixes incompatible definitions — CashAndCashEquivalents and
+    ONE concept answers for the whole line. Merging them silently mixes
+    incompatible definitions — CashAndCashEquivalents and
     CashCashEquivalentsRestrictedCash differ by the restricted balance, which
-    is not shareholder money.
+    is not shareholder money. That has not changed.
+
+    What has changed is WHICH one. The first concept with any data used to win
+    outright, however old that data was, and the alternates behind it were
+    never tried. Every figure on the page then took the latest year of a series
+    that had stopped:
+
+        AutoZone   LongTermDebtCurrent          1 year,  ending 2014
+        TransDigm  LongTermDebtNoncurrent      12 years, ending 2020
+        Salesforce MarketableSecuritiesCurrent  6 years, ending 2014
+        Progressive LongTermDebt                8 years, ending 2015
+        Paychex    MarketableSecuritiesNoncurrent 3 years, ending 2011
+
+    None of it showed. The year-by-year table ran to the current year, every
+    other line was current, and net cash quietly mixed a 2025 cash balance with
+    a 2014 debt figure. Five of the seven baseline tickers.
+
+    So: gather every concept in the group that has data, and take the first one
+    — in the caller's preference order — that reaches the latest year any of
+    them reach. Preference still decides between equals; recency only breaks
+    the tie when one series has stopped. A group of one behaves exactly as
+    before.
+
+    When the first-preference concept exists and is passed over, the loser and
+    the winner are recorded in `skipped` so the caller can say so. A silent
+    switch between CashAndCashEquivalents and the restricted-inclusive tag is
+    the one case where this rule could change a definition rather than repair a
+    gap, and the caller must be able to disclose it.
     """
     for taxonomy in ("us-gaap", "dei", "ifrs-full"):
         tax = facts.get("facts", {}).get(taxonomy, {})
+        cands: list[tuple[str, dict[int, float]]] = []
         for concept in concepts:
             if concept not in tax:
                 continue
@@ -641,9 +689,17 @@ def _instant(facts: dict, concepts: list[str], unit: str = "USD",
                 if fy not in out or filed > out[fy][0]:
                     out[fy] = (filed, float(row["val"]))
             if out:
+                cands.append((concept, {k: v[1] for k, v in out.items()}))
+        if not cands:
+            continue
+        latest = max(max(s) for _, s in cands)
+        for concept, s in cands:
+            if max(s) == latest:
                 if sources is not None:
                     sources.append(concept)
-                return {k: v[1] for k, v in out.items()}
+                if skipped is not None and concept != cands[0][0]:
+                    skipped.append((cands[0][0], max(cands[0][1]), concept, latest))
+                return s
     return {}
 
 
@@ -1269,9 +1325,11 @@ def load(ticker: str, n_years: int = 10):
     _bal_n: dict[str, int] = {}
     _bal_fy: dict[str, str] = {}
 
+    _skips: list[tuple[str, int, str, int]] = []
+
     def g(ks):
         src: list[str] = []
-        d = _instant(facts, ks, "USD", src)
+        d = _instant(facts, ks, "USD", src, _skips)
         v = (max(d.items(), default=(0, 0.0))[1]) / 1e6
         _bal[ks[0]] = src
         _bal_n[ks[0]] = len(d)
@@ -1282,6 +1340,21 @@ def load(ticker: str, n_years: int = 10):
     debt_total = g(BALANCE["ltd"]) + g(BALANCE["std"])
     lease_total = g(BALANCE["lease"])
     net_cash = cash_total - debt_total
+    # Say so when a first-preference tag was passed over for a fresher one.
+    # Usually the switch just repairs a gap between two names for the same
+    # line. Once it does not: Progressive's cash comes from the
+    # restricted-inclusive tag, which is a different definition, and a silent
+    # swap there would move net cash without a word on the page.
+    if _skips:
+        notes.append(
+            "Some balance-sheet lines were read from a fallback tag because the "
+            "preferred one had stopped: "
+            + "; ".join(f"{_w} to FY{_wy} instead of {_l}, which ends at FY{_ly}"
+                        for _l, _ly, _w, _wy in _skips)
+            + ". Where the two tags are alternate names for the same line this "
+              "simply repairs a gap. Where they are not — cash including "
+              "restricted balances is not cash — the figure has changed "
+              "definition, so check the line before trusting it.")
     if debt_total == 0 and lease_total > 0:
         notes.append(f"No funded debt found, which for many companies is simply true — plenty "
                      f"fund themselves entirely from operations. It does carry "
@@ -1443,6 +1516,36 @@ def self_test() -> list[tuple[str, bool, str]]:
                 abs(expected_return(165.84, crm) - 0.086) < 0.005,
                 f"{expected_return(165.84, crm):.1%}"))
 
+    stale = {"facts": {"us-gaap": {
+        "LongTermDebtNoncurrent": {"units": {"USD": [
+            {"form": "10-K", "end": f"{y}-09-30", "filed": f"{y}-11-15", "val": 1.0}
+            for y in range(2009, 2021)]}},
+        "LongTermDebt": {"units": {"USD": [
+            {"form": "10-K", "end": f"{y}-09-30", "filed": f"{y}-11-15", "val": 2.0}
+            for y in range(2009, 2026)]}}}}}
+    _src, _skip = [], []
+    _picked = _instant(stale, ["LongTermDebtNoncurrent", "LongTermDebt"], "USD", _src, _skip)
+    out.append(("A debt tag that stopped in 2020 loses to one reaching 2025",
+                max(_picked) == 2025 and _src == ["LongTermDebt"] and _skip[0][1] == 2020,
+                f"chose {_src[0]} to {max(_picked)}, skipped {_skip[0][0]} at {_skip[0][1]}"))
+    _src2, _skip2 = [], []
+    _both = _instant(stale, ["LongTermDebt", "LongTermDebtNoncurrent"], "USD", _src2, _skip2)
+    out.append(("...and preference still decides when neither has stopped",
+                _src2 == ["LongTermDebt"] and not _skip2 and max(_both) == 2025,
+                "no switch recorded"))
+    _rev = {"facts": {"us-gaap": {
+        "RevenueFromContractWithCustomerExcludingAssessedTax": {"units": {"USD": [
+            {"form": "10-K", "start": f"{y}-10-01", "end": f"{y+1}-09-30",
+             "filed": f"{y+1}-11-15", "val": 1.0} for y in range(2019, 2024)]}},
+        "Revenues": {"units": {"USD": [
+            {"form": "10-K", "start": f"{y}-10-01", "end": f"{y+1}-09-30",
+             "filed": f"{y+1}-11-15", "val": 2.0} for y in range(2006, 2025)]}}}}}
+    _rs: list[str] = []
+    _rr = _annual(_rev, ["RevenueFromContractWithCustomerExcludingAssessedTax", "Revenues"],
+                  [], _rs, False)
+    out.append(("A revenue tag ending FY2024 loses to a longer one reaching FY2025",
+                max(_rr) == 2025 and _rs == ["Revenues"] and len(_rr) == 19,
+                f"{_rs[0]}, {len(_rr)} years to {max(_rr)}"))
     out.append(("Latest year reports the last year read, not how many",
                 _latest_fy({2016: 1, 2020: 1, 2015: 1}) == "2020"
                 and _latest_fy({}) == "—",
