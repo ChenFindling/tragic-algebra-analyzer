@@ -190,7 +190,18 @@ def _facts(cik: str) -> dict:
 # consolidated, per-plan versus total, ASC 606 versus legacy), and stitching
 # those across years would put a step change in a growth rate and call it
 # history.
-FILL_KEYS = {"T", "Cw", "Ce", "DIV", "INT", "LEASEPAY", "CAPEX", "MA", "OFFER", "CONV", "G"}
+# Lines whose concepts are alternates for the same thing, so a later one may
+# fill the years an earlier one left empty rather than being ignored outright.
+#
+# "N" was added after Booking Holdings returned FY2008-FY2010 and nothing else.
+# BKNG tagged NetIncomeLoss in three old filings and has used ProfitLoss since;
+# three years was enough to stop the search, so sixteen years of perfectly good
+# net income were never looked at and the page refused to load at all. This is
+# the H&R Block failure in the _annual docstring, still live on the one line
+# every other figure is built from. Paychex is very likely the same fault
+# showing up quietly instead of loudly: an eight-year hole rather than a
+# refusal, with the pooled figures spanning a gap nobody could see.
+FILL_KEYS = {"T", "Cw", "Ce", "DIV", "INT", "LEASEPAY", "CAPEX", "MA", "OFFER", "CONV", "G", "N"}
 
 
 def _annual(facts: dict, us: list[str], ifrs: list[str],
@@ -1046,6 +1057,19 @@ def load(ticker: str, n_years: int = 10):
               f"same basis. Without this the market cap would be wrong by that factor, and market "
               f"cap is what the size verdict is decided on. The next annual filing makes the "
               f"adjustment unnecessary and it will stop being applied.")
+
+    # NetIncomeLoss is profit attributable to the parent; ProfitLoss includes
+    # what belongs to minority holders of consolidated subsidiaries. Filling
+    # one from the other is right when the gap is a tagging change and slightly
+    # generous when the filer has real minority interests, so say so rather
+    # than let it pass silently — this is the base of every figure on the page.
+    if len(tag_sources.get("N", [])) > 1:
+        notes.append(
+            "Net income was read from more than one tag: the years "
+            "NetIncomeLoss does not cover were filled from ProfitLoss. Where that "
+            "happened the figure includes profit belonging to minority holders of "
+            "consolidated subsidiaries, so it is the whole group's rather than "
+            "shareholders' alone. The tag panel shows which years came from where.")
 
     fys = sorted(series["N"])[-n_years:]
     # Below this there is no history to reason about. Toyota returned two years
