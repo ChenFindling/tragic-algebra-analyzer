@@ -550,6 +550,29 @@ def _annual(facts: dict, us: list[str], ifrs: list[str],
     return {k: (v[1], v[2], v[3]) for k, v in out.items()}
 
 
+def currency_facts(facts: dict, concepts: list[str]) -> dict[str, int]:
+    """How many annual-report facts each currency unit carries, for one line.
+
+    reporting_currency() answers "which unit exists, preferring USD", which is
+    the wrong question. Toyota tags two years of USD convenience translations
+    from old 20-F filings alongside a full history in yen; asking whether USD
+    exists gets a yes, and the page then runs on two stale years while
+    multiplying an ADR price by an ordinary share count. Counting the facts in
+    each unit shows which currency the company actually reports in.
+    """
+    out: dict[str, int] = {}
+    for taxonomy in ("us-gaap", "ifrs-full"):
+        tax = facts.get("facts", {}).get(taxonomy, {})
+        for concept in concepts:
+            for unit, rows in tax.get(concept, {}).get("units", {}).items():
+                if unit == "shares":
+                    continue
+                n = sum(1 for r in rows if r.get("form") in ANNUAL_FORMS)
+                if n:
+                    out[unit] = out.get(unit, 0) + n
+    return out
+
+
 def reporting_currency(facts: dict, concepts: list[str]) -> str | None:
     """Currency this filer actually reports in.
 
@@ -783,6 +806,24 @@ def load(ticker: str, n_years: int = 10):
     tag_sources: dict[str, list[str]] = {k: [] for k in CONCEPTS}
     series = {k: _annual(facts, us, ifrs, tag_sources[k], k in FILL_KEYS)
               for k, (us, ifrs) in CONCEPTS.items()}
+    # Ask the currency question ALWAYS, not only when nothing was found. A
+    # foreign filer with a couple of USD convenience translations used to sail
+    # straight past this and out the other side with two years of data, an
+    # ADR price and an ordinary share count multiplied together.
+    _ccy = currency_facts(facts, CONCEPTS["N"][0] + CONCEPTS["N"][1])
+    _foreign = {u: n for u, n in _ccy.items() if u != "USD"}
+    if _foreign:
+        _main, _n = max(_foreign.items(), key=lambda kv: kv[1])
+        if _n >= _ccy.get("USD", 0):
+            raise ValueError(
+                f"{ticker} reports in {_main}, not US dollars — {_n} annual figures in {_main} "
+                f"against {_ccy.get('USD', 0)} in USD. Every figure here assumes one currency "
+                "throughout, and the few USD facts a foreign issuer tags are usually convenience "
+                "translations for one or two old years. Worse, the share count in the filing is "
+                "ordinary shares while the price you see is an ADR, and one ADR is rarely one "
+                "share — multiplying them gives a market cap that is wrong by whatever the ADR "
+                "ratio happens to be. Foreign private issuers are not supported.")
+
     if not series["N"]:
         ccy = reporting_currency(facts, CONCEPTS["N"][0] + CONCEPTS["N"][1])
         if ccy and ccy != "USD":
@@ -883,6 +924,17 @@ def load(ticker: str, n_years: int = 10):
         closes = {}
 
     fys = sorted(series["N"])[-n_years:]
+    # Below this there is no history to reason about. Toyota returned two years
+    # and the page rendered a full verdict on them; a hundredfold is a claim
+    # about decades, and four annual figures is the least that can support one.
+    if len(fys) < 4:
+        raise ValueError(
+            f"Only {len(fys)} year(s) of annual figures could be read for {ticker}"
+            + (f" (FY{min(fys)}" + (f"-FY{max(fys)})" if len(fys) > 1 else ")") if fys else "")
+            + ". Everything on this page — the growth a hundredfold requires, what the company "
+              "has delivered, what its capital can fund — is a statement about decades. Four "
+              "years is the minimum this tool will reason from. A recent listing, a filer using "
+              "tags this reader does not know, or a foreign issuer are the usual causes.")
     notes: list[str] = list(split_notes)
     non_sbc_total = 0.0
     years: list[Year] = []
