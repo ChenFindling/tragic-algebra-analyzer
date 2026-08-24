@@ -171,6 +171,7 @@ class Year:
     Cw: float = 0.0           # tax withheld on vesting
     Ce: float = 0.0           # option / ESPP proceeds
     price: float = 0.0        # average share price for the year
+    A: float = 0.0            # stock issued as acquisition consideration, $M
     cash_settled_sbc: bool = False   # MELI-style: no equity gap to close
     excluded: str = ""        # non-empty means capital formation, not pay
 
@@ -180,11 +181,26 @@ class Year:
 
     @property
     def V(self) -> float:
-        """Market value of shares delivered to employees.
-        Floored at zero: you cannot deliver a negative number of shares."""
+        """Market value of shares delivered to EMPLOYEES.
+
+        Floored at zero: you cannot deliver a negative number of shares.
+
+        `A` is stock issued to buy a company, and it is netted out here rather
+        than through dS. The protocol has always excluded M&A issuance — it is
+        a corporate transaction, not pay — but the exclusion was routed through
+        the share count, which meant finding a tagged number of SHARES. Filers
+        mostly do not publish one. Salesforce publishes the dollar
+        consideration instead, and a tagged value is better than a count in any
+        case, because the count has to be priced at the year's average while
+        the value is what the deal actually cost.
+
+        Untreated, Slack put $11.3B and Tableau $15.6B into Salesforce's
+        stock-comp column. Pooled dE read 19.7% against Burry's published
+        54.7%, and four separate years printed dE below -200%.
+        """
         if self.cash_settled_sbc:
             return 0.0
-        return max(0.0, self.T + self.price * self.dS)
+        return max(0.0, self.T + self.price * self.dS - self.A)
 
     @property
     def omega(self) -> float:
@@ -461,6 +477,12 @@ CONCEPTS = {
                "SaleOfStockNumberOfSharesIssuedInTransaction"], []),
     "CONV": (["StockIssuedDuringPeriodSharesConversionOfConvertibleSecurities",
               "StockIssuedDuringPeriodSharesConversionOfUnits"], []),
+    # The same event in dollars. Most filers tag this and not the share count —
+    # Salesforce tags only this — so it is the line that actually catches
+    # all-stock acquisitions. Read in USD, netted out of V directly.
+    "MAV": (["StockIssuedDuringPeriodValueAcquisitions",
+             "StockIssuedDuringPeriodValueBusinessAcquisition",
+             "BusinessCombinationConsiderationTransferredEquityInterestsIssuedAndIssuable"], []),
 }
 
 BALANCE = {
@@ -872,11 +894,13 @@ TAG_LABELS = {
     "DIV": "Dividends paid", "CAPEX": "Capital expenditure",
     "MA": "Shares issued for acquisitions", "OFFER": "Shares issued in offerings",
     "CONV": "Shares from conversions",
+    "MAV": "Value of stock issued for acquisitions",
 }
 
 
 def _issuance(facts: dict, concepts: list[str], n_series: dict,
-              sources: list[str] | None = None) -> dict[int, tuple[str, str, float]]:
+              sources: list[str] | None = None,
+              unit: str = "shares") -> dict[int, tuple[str, str, float]]:
     """Shares issued in corporate transactions, which _annual cannot read.
 
     _annual demands a period of 330-400 days, because a compensation or an
@@ -918,7 +942,7 @@ def _issuance(facts: dict, concepts: list[str], n_series: dict,
             if concept not in tax:
                 continue
             seen: dict[tuple[int, str, str], tuple[str, float]] = {}
-            for row in tax[concept].get("units", {}).get("shares", []):
+            for row in tax[concept].get("units", {}).get(unit, []):
                 if row.get("form") not in ANNUAL_FORMS:
                     continue
                 end = row.get("end")
@@ -1107,6 +1131,9 @@ def load(ticker: str, n_years: int = 10):
     for _k in ("MA", "OFFER", "CONV"):
         tag_sources[_k].clear()
         series[_k] = _issuance(facts, CONCEPTS[_k][0], series["N"], tag_sources[_k])
+    tag_sources["MAV"].clear()
+    series["MAV"] = _issuance(facts, CONCEPTS["MAV"][0], series["N"],
+                              tag_sources["MAV"], "USD")
 
     if not series["N"]:
         ccy = reporting_currency(facts, CONCEPTS["N"][0] + CONCEPTS["N"][1])
@@ -1311,7 +1338,7 @@ def load(ticker: str, n_years: int = 10):
         price = _avg_price(closes, start, end) or 0.0
 
         years.append(Year(fy=fy, N=N / 1e6, G=get("G"), T=get("T"), dS=dS,
-                          Cw=get("Cw"), Ce=get("Ce"), price=price))
+                          Cw=get("Cw"), Ce=get("Ce"), price=price, A=get("MAV")))
 
     # An IPO converts preferred to common and sells new stock in one go. Valuing
     # that at the market price treats a capital raise as compensation, which is
@@ -1655,6 +1682,13 @@ def self_test() -> list[tuple[str, bool, str]]:
     _src, _skip = [], []
     _picked = _instant(stale, ["LongTermDebtNoncurrent", "LongTermDebt"], "USD", _src,
                        _skip, True)
+    _y = Year(fy=2022, N=1444.0, G=2779.0, T=0.0, dS=70.0, price=249.24, A=11269.0)
+    out.append(("Acquisition consideration is netted out of V, not charged to staff",
+                _y.V == 0.0 and _y.OE > 0,
+                f"V ${_y.V:,.0f}M, OE ${_y.OE:,.0f}M — Slack no longer counts as pay"))
+    _y2 = Year(fy=2022, N=1444.0, G=2779.0, T=0.0, dS=70.0, price=249.24)
+    out.append(("...and a year with no acquisition is untouched",
+                abs(_y2.V - 249.24 * 70.0) < 1e-6, f"V ${_y2.V:,.0f}M"))
     _iss = {"facts": {"us-gaap": {
         "BusinessAcquisitionEquityInterestsIssuedOrIssuableNumberOfSharesIssued": {
             "units": {"shares": [
