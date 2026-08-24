@@ -201,12 +201,20 @@ def _facts(cik: str) -> dict:
 # every other figure is built from. Paychex is very likely the same fault
 # showing up quietly instead of loudly: an eight-year hole rather than a
 # refusal, with the pooled figures spanning a gap nobody could see.
+# Lines where the alternates are names for ONE figure, so the freshest series
+# is always the right one. Everything else in CONCEPTS is either filled or has
+# an ordering that carries meaning. See _instant's docstring for what happens
+# when this distinction is ignored.
+RECENCY_KEYS = {"REV", "SHD"}
+
+
 FILL_KEYS = {"T", "Cw", "Ce", "DIV", "INT", "LEASEPAY", "CAPEX", "MA", "OFFER", "CONV", "G", "N"}
 
 
 def _annual(facts: dict, us: list[str], ifrs: list[str],
             sources: list[str] | None = None,
-            fill: bool = False) -> dict[int, tuple[str, str, float]]:
+            fill: bool = False,
+            prefer_recent: bool = False) -> dict[int, tuple[str, str, float]]:
     """{fy: (start, end, value)} for full-year facts from annual reports only.
 
     Three filters that matter: the period must be roughly a year (so quarterly
@@ -268,7 +276,11 @@ def _annual(facts: dict, us: list[str], ifrs: list[str],
         # reaches the latest year keeps one definition across all years, which
         # filling across these tags would not.
         if cands and not fill:
-            latest = max(max(g) for _, g in cands)
+            # Same opt-in as _instant, and for the same reason. The only two
+            # lines that reach here are REV and SHD, both of which are lists of
+            # alternate names for one figure. Everything else is filled.
+            latest = (max(max(g) for _, g in cands) if prefer_recent
+                      else max(cands[0][1]))
             for concept, got in cands:
                 if max(got) == latest:
                     if sources is not None:
@@ -314,7 +326,8 @@ def reporting_currency(facts: dict, concepts: list[str]) -> str | None:
 
 def _instant(facts: dict, concepts: list[str], unit: str = "USD",
              sources: list[str] | None = None,
-             skipped: list[tuple[str, int, str, int]] | None = None) -> dict[int, float]:
+             skipped: list[tuple[str, int, str, int]] | None = None,
+             prefer_recent: bool = False) -> dict[int, float]:
     """Latest balance-sheet value per fiscal year.
 
     ONE concept answers for the whole line. Merging them silently mixes
@@ -337,17 +350,33 @@ def _instant(facts: dict, concepts: list[str], unit: str = "USD",
     other line was current, and net cash quietly mixed a 2025 cash balance with
     a 2014 debt figure. Five of the seven baseline tickers.
 
-    So: gather every concept in the group that has data, and take the first one
-    — in the caller's preference order — that reaches the latest year any of
-    them reach. Preference still decides between equals; recency only breaks
-    the tie when one series has stopped. A group of one behaves exactly as
-    before.
+    So with prefer_recent: gather every concept in the group that has data and
+    take the first one — in the caller's preference order — that reaches the
+    latest year any of them reach. Preference still decides between equals;
+    recency only breaks the tie when one series has stopped.
+
+    WHY THIS IS OPT-IN, AND MUST STAY OPT-IN. It is only safe where the tags in
+    a group are alternate NAMES for one line, so that any of them would be an
+    acceptable answer and the ordering is mere convenience. It is wrong wherever
+    the ordering IS the definition.
+
+    TransDigm proved that the expensive way. The share-count ladder reads
+    ["CommonStockSharesOutstanding", "CommonStockSharesIssued",
+    "EntityCommonStockSharesOutstanding"], and those are three different things
+    in order of correctness — issued shares include treasury stock. TDG tags
+    outstanding for 3 years ending 2012 and issued for 17 ending 2025, so
+    recency promoted issued, the count read 62.5M instead of 56.3M, the share
+    change turned positive in every year because issued shares grow while
+    outstanding shrinks, the entire buyback was charged to employees, and
+    pooled dE fell from 78.4% to 56.5%. This is the AutoZone treasury bug,
+    re-entering by the door built to catch it: the guard needs issued to exceed
+    1.15x the diluted average and 62.5/58.2 is 1.07, so nothing fired.
+
+    Default False, so every caller that has not thought about this question
+    keeps the old first-with-data behaviour.
 
     When the first-preference concept exists and is passed over, the loser and
-    the winner are recorded in `skipped` so the caller can say so. A silent
-    switch between CashAndCashEquivalents and the restricted-inclusive tag is
-    the one case where this rule could change a definition rather than repair a
-    gap, and the caller must be able to disclose it.
+    the winner are recorded in `skipped` so the caller can say so.
     """
     for taxonomy in ("us-gaap", "dei", "ifrs-full"):
         tax = facts.get("facts", {}).get(taxonomy, {})
@@ -368,7 +397,7 @@ def _instant(facts: dict, concepts: list[str], unit: str = "USD",
                 cands.append((concept, {k: v[1] for k, v in out.items()}))
         if not cands:
             continue
-        latest = max(max(s) for _, s in cands)
+        latest = max(max(s) for _, s in cands) if prefer_recent else max(cands[0][1])
         for concept, s in cands:
             if max(s) == latest:
                 if sources is not None:
@@ -381,7 +410,8 @@ def _instant(facts: dict, concepts: list[str], unit: str = "USD",
 
 def _instant_first(facts: dict, groups: list[list[str]],
                    unit: str = "USD",
-                   skipped: list | None = None) -> tuple[dict[int, float], int]:
+                   skipped: list | None = None,
+                   prefer_recent: bool = False) -> tuple[dict[int, float], int]:
     """Like _instant across several concept groups, returning which group won.
 
     Needed for cash: CashAndCashEquivalentsAtCarryingValue excludes restricted
@@ -390,7 +420,7 @@ def _instant_first(facts: dict, groups: list[list[str]],
     taken back out only when it was actually included.
     """
     for i, g in enumerate(groups):
-        s = _instant(facts, g, unit, None, skipped)
+        s = _instant(facts, g, unit, None, skipped, prefer_recent)
         if s:
             return s, i
     return {}, -1
@@ -398,7 +428,8 @@ def _instant_first(facts: dict, groups: list[list[str]],
 
 def _instant_sum(facts: dict, groups: list[list[str]],
                  sources: list[str] | None = None,
-                 skipped: list | None = None) -> dict[int, float]:
+                 skipped: list | None = None,
+                 prefer_recent: bool = False) -> dict[int, float]:
     """Sum of several independent balance-sheet lines, per year.
 
     A missing component is treated as zero, which is right far more often than
@@ -408,7 +439,7 @@ def _instant_sum(facts: dict, groups: list[list[str]],
     """
     out: dict[int, float] = {}
     for g in groups:
-        for fy, v in _instant(facts, g, "USD", sources, skipped).items():
+        for fy, v in _instant(facts, g, "USD", sources, skipped, prefer_recent).items():
             out[fy] = out.get(fy, 0.0) + v
     return out
 
@@ -872,7 +903,7 @@ def _sum_latest(facts: dict, groups: list[list[str]]) -> str:
     year after 2011 is current investments alone. The earliest component is
     the honest answer, and the line-by-line rows in tool 1 show the rest.
     """
-    yrs = [max(s) for s in (_instant(facts, g) for g in groups) if s]
+    yrs = [max(s) for s in (_instant(facts, g, prefer_recent=True) for g in groups) if s]
     return str(min(yrs)) if yrs else "—"
 
 
@@ -1002,7 +1033,8 @@ def load(ticker: str, n_years: int = 10):
     sic, sic_desc = str(subs.get("sic", "")), str(subs.get("sicDescription", ""))
 
     tag_sources: dict[str, list[str]] = {k: [] for k in CONCEPTS}
-    series = {k: _annual(facts, us, ifrs, tag_sources[k], k in FILL_KEYS)
+    series = {k: _annual(facts, us, ifrs, tag_sources[k], k in FILL_KEYS,
+                         k in RECENCY_KEYS)
               for k, (us, ifrs) in CONCEPTS.items()}
     # Ask the currency question ALWAYS, not only when nothing was found. A
     # foreign filer with a couple of USD convenience translations used to sail
@@ -1321,19 +1353,20 @@ def load(ticker: str, n_years: int = 10):
     bal: dict[str, list[str]] = {k: [] for k in
                                  ("equity", "debt", "leases", "cash", "investments", "goodwill")}
     _skips: list[tuple[str, int, str, int]] = []
-    eq = _instant(facts, EQUITY[0], "USD", bal["equity"], _skips) or \
-        _instant(facts, EQUITY[1], "USD", bal["equity"], _skips)
-    minority = _instant_sum(facts, MINORITY)
-    debt = _instant_sum(facts, DEBT, bal["debt"], _skips)
-    fin_lease = _instant_sum(facts, FIN_LEASE, bal["leases"], _skips)
-    op_lease = _instant_sum(facts, OP_LEASE, bal["leases"], _skips)
-    restricted = _instant_sum(facts, RESTRICTED)
-    cash_ser, which = _instant_first(facts, [CASH_PLAIN, CASH_WITH_RESTRICTED], "USD", _skips)
+    eq = _instant(facts, EQUITY[0], "USD", bal["equity"], _skips, True) or \
+        _instant(facts, EQUITY[1], "USD", bal["equity"], _skips, True)
+    minority = _instant_sum(facts, MINORITY, None, None, True)
+    debt = _instant_sum(facts, DEBT, bal["debt"], _skips, True)
+    fin_lease = _instant_sum(facts, FIN_LEASE, bal["leases"], _skips, True)
+    op_lease = _instant_sum(facts, OP_LEASE, bal["leases"], _skips, True)
+    restricted = _instant_sum(facts, RESTRICTED, None, None, True)
+    cash_ser, which = _instant_first(facts, [CASH_PLAIN, CASH_WITH_RESTRICTED], "USD",
+                                     _skips, True)
     if cash_ser:
         bal["cash"].append(CASH_PLAIN[0] if which == 0 else CASH_WITH_RESTRICTED[0])
-    invest = _instant_sum(facts, INVESTMENTS, bal["investments"])
-    goodwill = _instant_sum(facts, GOODWILL, bal["goodwill"])
-    intang = _instant_sum(facts, INTANGIBLES, bal["goodwill"])
+    invest = _instant_sum(facts, INVESTMENTS, bal["investments"], _skips, True)
+    goodwill = _instant_sum(facts, GOODWILL, bal["goodwill"], _skips, True)
+    intang = _instant_sum(facts, INTANGIBLES, bal["goodwill"], _skips, True)
     rev = series.get("REV", {})
 
     # Say so when a first-preference tag was passed over for a fresher one.
@@ -2015,12 +2048,27 @@ def self_test() -> list[tuple[str, bool, str]]:
             {"form": "10-K", "end": f"{y}-09-30", "filed": f"{y}-11-15", "val": 2.0}
             for y in range(2009, 2026)]}}}}}
     _src, _skip = [], []
-    _picked = _instant(stale, ["LongTermDebtNoncurrent", "LongTermDebt"], "USD", _src, _skip)
+    _picked = _instant(stale, ["LongTermDebtNoncurrent", "LongTermDebt"], "USD", _src,
+                       _skip, True)
+    _tdg = {"facts": {"us-gaap": {
+        "CommonStockSharesOutstanding": {"units": {"shares": [
+            {"form": "10-K", "end": f"{y}-09-30", "filed": f"{y}-11-15", "val": 56.3e6}
+            for y in range(2010, 2013)]}},
+        "CommonStockSharesIssued": {"units": {"shares": [
+            {"form": "10-K", "end": f"{y}-09-30", "filed": f"{y}-11-15", "val": 62.5e6}
+            for y in range(2009, 2026)]}}}}}
+    _ts: list[str] = []
+    _tr = _instant(_tdg, ["CommonStockSharesOutstanding", "CommonStockSharesIssued",
+                          "EntityCommonStockSharesOutstanding"], "shares", _ts)
+    out.append(("Recency never overrides the share ladder: outstanding beats issued",
+                _ts == ["CommonStockSharesOutstanding"] and max(_tr) == 2012,
+                f"{_ts[0]} to {max(_tr)} — a 17-year issued series did not win"))
     out.append(("A debt tag that stopped in 2020 loses to one reaching 2025",
                 max(_picked) == 2025 and _src == ["LongTermDebt"] and _skip[0][1] == 2020,
                 f"chose {_src[0]} to {max(_picked)}, skipped {_skip[0][0]} at {_skip[0][1]}"))
     _src2, _skip2 = [], []
-    _both = _instant(stale, ["LongTermDebt", "LongTermDebtNoncurrent"], "USD", _src2, _skip2)
+    _both = _instant(stale, ["LongTermDebt", "LongTermDebtNoncurrent"], "USD", _src2,
+                     _skip2, True)
     out.append(("...and preference still decides when neither has stopped",
                 _src2 == ["LongTermDebt"] and not _skip2 and max(_both) == 2025,
                 "no switch recorded"))
@@ -2033,7 +2081,7 @@ def self_test() -> list[tuple[str, bool, str]]:
              "filed": f"{y+1}-11-15", "val": 2.0} for y in range(2006, 2025)]}}}}}
     _rs: list[str] = []
     _rr = _annual(_rev, ["RevenueFromContractWithCustomerExcludingAssessedTax", "Revenues"],
-                  [], _rs, False)
+                  [], _rs, False, True)
     out.append(("A revenue tag ending FY2024 loses to a longer one reaching FY2025",
                 max(_rr) == 2025 and _rs == ["Revenues"] and len(_rr) == 19,
                 f"{_rs[0]}, {len(_rr)} years to {max(_rr)}"))
