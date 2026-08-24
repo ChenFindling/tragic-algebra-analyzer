@@ -906,8 +906,19 @@ CASH_PLAIN = ["CashAndCashEquivalentsAtCarryingValue"]
 CASH_WITH_RESTRICTED = ["CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents"]
 INVESTMENTS = [["ShortTermInvestments", "MarketableSecuritiesCurrent",
                 "AvailableForSaleSecuritiesDebtSecuritiesCurrent"],
+               # LongTermInvestments is LAST because it is broader, not a synonym.
+               # The two ahead of it are debt securities — cash-like, and safe to
+               # subtract from the capital base. LongTermInvestments is total
+               # long-term investments and can hold strategic equity stakes in
+               # other companies, which are not deployable cash.
+               # Booking Holdings, 24 Aug 2026: it tagged AvailableForSale...
+               # Noncurrent for the last time in 2010 and has used
+               # LongTermInvestments since 2017, so the capital base ignored the
+               # line entirely from 2011 on. Keeping the narrower tag preferred
+               # is what makes the fallback note fire and name the swap.
                ["MarketableSecuritiesNoncurrent",
-                "AvailableForSaleSecuritiesDebtSecuritiesNoncurrent"]]
+                "AvailableForSaleSecuritiesDebtSecuritiesNoncurrent",
+                "LongTermInvestments"]]
 RESTRICTED = [["RestrictedCashAndCashEquivalentsNoncurrent", "RestrictedCashNoncurrent"],
               ["RestrictedCashAndCashEquivalentsCurrent", "RestrictedCashCurrent"]]
 GOODWILL = [["Goodwill"]]
