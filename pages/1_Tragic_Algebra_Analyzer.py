@@ -490,8 +490,18 @@ BALANCE = {
              "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents"],
     "sti":  ["ShortTermInvestments", "MarketableSecuritiesCurrent",
              "AvailableForSaleSecuritiesDebtSecuritiesCurrent"],
+    # LongTermInvestments is LAST because it is broader, not a synonym. The two
+    # ahead of it are debt securities — cash-like, and safe to add to net cash.
+    # LongTermInvestments is total long-term investments and can hold strategic
+    # equity stakes in other companies, which are not deployable cash.
+    # Booking Holdings, 24 Aug 2026: it tagged AvailableForSale...Noncurrent for
+    # the last time in 2010 and has used LongTermInvestments since 2017, so the
+    # page carried a fifteen-year-old balance into today's net cash with no note.
+    # The recency rule promotes the fresher tag and the fallback note names the
+    # swap — which is the point of keeping the narrower one preferred.
     "lti":  ["MarketableSecuritiesNoncurrent",
-             "AvailableForSaleSecuritiesDebtSecuritiesNoncurrent"],
+             "AvailableForSaleSecuritiesDebtSecuritiesNoncurrent",
+             "LongTermInvestments"],
     "ltd":  ["LongTermDebtNoncurrent", "LongTermDebt"],
     "std":  ["LongTermDebtCurrent", "DebtCurrent", "ShortTermBorrowings", "CommercialPaper"],
     # Not debt in Burry's sense — his ROIC formula subtracts long-term operating
