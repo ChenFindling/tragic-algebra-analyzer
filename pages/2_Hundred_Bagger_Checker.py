@@ -842,8 +842,18 @@ CONCEPTS = {
             "ProceedsFromEmployeeStockPurchasePlan", "ProceedsFromIssuanceOfCommonStock"], []),
     "REV": (["RevenueFromContractWithCustomerExcludingAssessedTax", "Revenues",
              "RevenueFromContractWithCustomerIncludingAssessedTax"], ["Revenue"]),
-    "MA":   (["StockIssuedDuringPeriodSharesAcquisitions"], []),
-    "OFFER": (["StockIssuedDuringPeriodSharesNewIssues"], []),
+    #
+    # Read by _issuance(), NOT _annual() — see that function for why. The tag
+    # lists are longer than they look because filers put the same event in
+    # different places: the equity rollforward, or the business-combination
+    # note. Salesforce uses only the second, which is why "shares issued for
+    # acquisitions" read 0 years on CRM while Slack, Tableau and MuleSoft sat
+    # in the filings.
+    "MA":   (["StockIssuedDuringPeriodSharesAcquisitions",
+              "BusinessAcquisitionEquityInterestsIssuedOrIssuableNumberOfSharesIssued",
+              "StockIssuedDuringPeriodSharesBusinessAcquisition"], []),
+    "OFFER": (["StockIssuedDuringPeriodSharesNewIssues",
+               "SaleOfStockNumberOfSharesIssuedInTransaction"], []),
     "CONV": (["StockIssuedDuringPeriodSharesConversionOfConvertibleSecurities",
               "StockIssuedDuringPeriodSharesConversionOfUnits"], []),
     # Interest earned on the cash pile. It comes OUT of the numerator because
@@ -905,6 +915,88 @@ def _sum_latest(facts: dict, groups: list[list[str]]) -> str:
     """
     yrs = [max(s) for s in (_instant(facts, g, prefer_recent=True) for g in groups) if s]
     return str(min(yrs)) if yrs else "—"
+
+
+def _issuance(facts: dict, concepts: list[str], n_series: dict,
+              sources: list[str] | None = None) -> dict[int, tuple[str, str, float]]:
+    """Shares issued in corporate transactions, which _annual cannot read.
+
+    _annual demands a period of 330-400 days, because a compensation or an
+    earnings line is a full-year flow and a quarterly row tagged fp='FY' must
+    not slip through. An acquisition is not a flow. It happens on a date, and
+    filers tag it over the period the deal closed in — a quarter, a month,
+    sometimes an instant with no start at all. Every one of those facts failed
+    the duration test, so the line read zero years on almost every filer and
+    the shares landed in the stock-comp column instead.
+
+    Salesforce is the case that matters. Slack at 7.7% of the share count,
+    MuleSoft at 5.3%, FY2017 at 5.2% — none large enough to trip the 15%
+    capital-event guard, all of them charged to employees at the market price.
+    Roughly $17.4B of phantom stock-comp cost from Slack alone. Pooled dE read
+    19.7% against Burry's published 54.7%.
+
+    So: take any fact whose period ENDS inside a fiscal year and attribute it
+    to that year. A company can buy more than one business in a year, so the
+    facts are summed rather than replaced — but a full-year fact, where one
+    exists, is used ALONE, because summing it with the sub-periods it already
+    contains would double-count the same deal.
+
+    Facts longer than 400 days are cumulative "since acquisition" disclosures
+    and are dropped. Within a year, (start, end) identifies a fact and the
+    latest filing wins, so a 10-K restating last year as a comparative does not
+    count it twice.
+
+    Concepts are tried in order and the FIRST with any data wins outright. Do
+    NOT merge or fall through here: a filer that tags the same deal in both the
+    equity rollforward and the business-combination note would have it counted
+    twice, and a doubled subtraction from dS is worse than a missed one.
+    """
+    windows = {fy: (v[0], v[1]) for fy, v in n_series.items()}
+    if not windows:
+        return {}
+    for taxonomy in ("us-gaap", "dei", "ifrs-full"):
+        tax = facts.get("facts", {}).get(taxonomy, {})
+        for concept in concepts:
+            if concept not in tax:
+                continue
+            seen: dict[tuple[int, str, str], tuple[str, float]] = {}
+            for row in tax[concept].get("units", {}).get("shares", []):
+                if row.get("form") not in ANNUAL_FORMS:
+                    continue
+                end = row.get("end")
+                if not end:
+                    continue
+                start = row.get("start") or end
+                try:
+                    days = (dt.date.fromisoformat(end)
+                            - dt.date.fromisoformat(start)).days
+                except ValueError:
+                    continue
+                if days > 400:
+                    continue
+                fy = next((f for f, (ws, we) in windows.items() if ws <= end <= we), None)
+                if fy is None:
+                    continue
+                key, filed = (fy, start, end), row.get("filed", "")
+                if key not in seen or filed > seen[key][0]:
+                    seen[key] = (filed, abs(float(row.get("val", 0.0))))
+            if not seen:
+                continue
+            out: dict[int, tuple[str, str, float]] = {}
+            for fy, (ws, we) in windows.items():
+                rows = [(s, e, v) for (f, s, e), (_, v) in seen.items() if f == fy]
+                if not rows:
+                    continue
+                full = [r for r in rows
+                        if 330 <= (dt.date.fromisoformat(r[1])
+                                   - dt.date.fromisoformat(r[0])).days <= 400]
+                use = full if full else rows
+                out[fy] = (ws, we, sum(v for _, _, v in use))
+            if out:
+                if sources is not None:
+                    sources.append(concept)
+                return out
+    return {}
 
 
 def _latest_fy(d) -> str:
@@ -1053,6 +1145,13 @@ def load(ticker: str, n_years: int = 10):
                 "ordinary shares while the price you see is an ADR, and one ADR is rarely one "
                 "share — multiplying them gives a market cap that is wrong by whatever the ADR "
                 "ratio happens to be. Foreign private issuers are not supported.")
+
+    # MA / OFFER / CONV are corporate transactions, not flows, so _annual's
+    # duration filter throws their facts away. Re-read them with _issuance,
+    # which is built for dated events. See item 3 in the brief.
+    for _k in ("MA", "OFFER", "CONV"):
+        tag_sources[_k].clear()
+        series[_k] = _issuance(facts, CONCEPTS[_k][0], series["N"], tag_sources[_k])
 
     if not series["N"]:
         ccy = reporting_currency(facts, CONCEPTS["N"][0] + CONCEPTS["N"][1])
@@ -2050,6 +2149,29 @@ def self_test() -> list[tuple[str, bool, str]]:
     _src, _skip = [], []
     _picked = _instant(stale, ["LongTermDebtNoncurrent", "LongTermDebt"], "USD", _src,
                        _skip, True)
+    _iss = {"facts": {"us-gaap": {
+        "BusinessAcquisitionEquityInterestsIssuedOrIssuableNumberOfSharesIssued": {
+            "units": {"shares": [
+                {"form": "10-K", "start": "2020-08-01", "end": "2020-10-31",
+                 "filed": "2021-03-01", "val": 39_000_000.0},
+                {"form": "10-K", "start": "2020-11-01", "end": "2021-01-31",
+                 "filed": "2021-03-01", "val": 1_000_000.0}]}}}}}
+    _nser = {2021: ("2020-02-01", "2021-01-31", 4.0e9)}
+    _isrc: list[str] = []
+    _got = _issuance(_iss, CONCEPTS["MA"][0], _nser, _isrc)
+    out.append(("Acquisition shares are read from dated facts and summed in the year",
+                _got.get(2021, (None, None, 0.0))[2] == 40_000_000.0
+                and _isrc == ["BusinessAcquisitionEquityInterestsIssuedOrIssuableNumberOfSharesIssued"],
+                f"{_got.get(2021, (None, None, 0))[2]:,.0f} shares from two closings"))
+    _iss2 = {"facts": {"us-gaap": {"StockIssuedDuringPeriodSharesAcquisitions": {
+        "units": {"shares": [
+            {"form": "10-K", "start": "2020-02-01", "end": "2021-01-31",
+             "filed": "2021-03-01", "val": 40_000_000.0},
+            {"form": "10-K", "start": "2020-08-01", "end": "2020-10-31",
+             "filed": "2021-03-01", "val": 39_000_000.0}]}}}}}
+    _got2 = _issuance(_iss2, CONCEPTS["MA"][0], _nser)
+    out.append(("...and a full-year fact is used alone, never added to its own quarters",
+                _got2[2021][2] == 40_000_000.0, f"{_got2[2021][2]:,.0f}, not 79,000,000"))
     _tdg = {"facts": {"us-gaap": {
         "CommonStockSharesOutstanding": {"units": {"shares": [
             {"form": "10-K", "end": f"{y}-09-30", "filed": f"{y}-11-15", "val": 56.3e6}
