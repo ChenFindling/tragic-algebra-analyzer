@@ -2009,6 +2009,10 @@ def self_test() -> list[tuple[str, bool, str]]:
                           Year(fy=2025, N=10.0, G=0.0, T=0.0, dS=0.0, price=0.0)]).dE
                     - 1.0) < 1e-12,
                 "pooling sums before dividing, so the small year still counts in full"))
+    out.append(("A blanked ΔE cell renders as an em dash, never the word None",
+                (lambda f: f(None) == "\u2014" and f(0.871) == "87.1%")(
+                    lambda v: "\u2014" if v is None else f"{v:.1%}"),
+                "st.dataframe ignores the styler's na_rep, so the cell is built as text"))
     return out
 
 
@@ -2567,6 +2571,7 @@ if years and ticker and st.session_state.get("tk") == ticker:
         # A year whose net income is a rounding error against the rest of the
         # window cannot carry a ratio; the pooled figures below still weight it
         # in full. See the per-year cell block near the top of the file.
+        _dE_text = lambda v: "—" if v is None else f"{v:.1%}"
         _med_N = median_positive_N([y.N for y in years])
         _blank_dE = [y.fy for y in years if dE_cell(y.N, y.dE, _med_N) is None]
         st.dataframe(pd.DataFrame([{
@@ -2574,10 +2579,13 @@ if years and ticker and st.session_state.get("tk") == ticker:
             "Net income": y.N, "GAAP SBC": y.G, "Buybacks": y.T,
             "Share change": y.dS, "Avg price": y.price, "True SBC cost": y.omega,
             "Owners' earnings": y.OE,
-            "ΔE": dE_cell(y.N, y.dE, _med_N)} for y in years]).style.format({
+            # Formatted here rather than left to the styler: st.dataframe does
+            # not honour na_rep and prints a bare "None" into the cell, which
+            # reads like a failure rather than a deliberate blank.
+            "ΔE": _dE_text(dE_cell(y.N, y.dE, _med_N))} for y in years]).style.format({
                 "Net income": "{:,.0f}", "GAAP SBC": "{:,.0f}", "Buybacks": "{:,.0f}",
                 "Share change": "{:+,.1f}", "Avg price": "${:,.2f}", "True SBC cost": "{:,.0f}",
-                "Owners' earnings": "{:,.0f}", "ΔE": "{:.1%}"}, na_rep="—"),
+                "Owners' earnings": "{:,.0f}"}, na_rep="—"),
             width='stretch', hide_index=True)
         if _blank_dE:
             st.caption(
