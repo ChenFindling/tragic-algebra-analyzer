@@ -600,6 +600,49 @@ STALE_VS_TODAY = 3       # years net income may trail the calendar year
 MIN_PRICED_SHARE = 0.5   # more than half the window must carry a share price
 
 
+# ══════════════════════════════════════════════════════════════════════
+#  ΔE CEILING — a measurement above 100% is real; a projection is not
+# ══════════════════════════════════════════════════════════════════════
+#
+# dE above 100% says shareholders kept more than the company reported
+# earning. For a single year that is often true and is the whole point of
+# the method: Adobe charged $1,942M of GAAP stock comp in FY2025 while the
+# measured cost was $370M, because $11,281M of buybacks retired more stock
+# than the year issued. So the POOLED FIGURE IS LEFT ALONE — it is a
+# measurement of what happened and it stays on the page as filed.
+#
+# What cannot stand is seeding forward owners' earnings above forward net
+# income. That projects a company handing owners more than it earns, every
+# year, for the fifteen years IV15 runs. Adobe's 3-year 107.4% seeded
+# 7,656 against 7,130 of profit and put roughly 17 dollars a share into
+# IV15 that no year of trading produced.
+#
+# Capping each YEAR at 100% before pooling was the alternative and it is
+# wrong: pooling exists so a good year offsets a bad one, and clipping the
+# good years while keeping every bad one can only drag the pool down. A
+# company alternating 120% and 80% honestly pools to 100%; cap the years
+# and it reads 90%, a penalty invented out of nothing. Adobe would read
+# 97.0% for exactly that reason.
+#
+# Above 125% nothing is capped, because that is no longer a company with a
+# heavy buyback — it is issuance the reader failed to capture, and quietly
+# projecting it at 100% would turn a broken read into a plausible number.
+# That band still refuses and asks for owners' earnings by hand.
+
+DE_SEED_CEILING = 1.00    # highest dE that may be projected forward
+DE_UNUSABLE_ABOVE = 1.25  # above this, refuse rather than cap
+
+
+def seed_dE(measured: float) -> float:
+    """The dE to project forward. Never above 100%; the measurement is untouched."""
+    return min(measured, DE_SEED_CEILING)
+
+
+def dE_was_capped(measured: float) -> bool:
+    """True when the projection is being held below what the filings measured."""
+    return DE_SEED_CEILING < measured <= DE_UNUSABLE_ABOVE
+
+
 def stale_window_refusal(fys: list[int], rev_fys: list[int], today_year: int) -> str:
     """Reason to refuse a stale earnings window, or '' when it is usable.
 
@@ -1883,6 +1926,27 @@ def self_test() -> list[tuple[str, bool, str]]:
                 "temporary failure" in price_coverage_refusal(10, 10, False)
                 and "eleven years" in price_coverage_refusal(10, 10, True),
                 "two causes, two messages — one is worth retrying, the other is not"))
+    out.append(("A dE at or below 100% is projected exactly as measured",
+                seed_dE(0.925) == 0.925 and not dE_was_capped(0.925)
+                and seed_dE(1.0) == 1.0 and not dE_was_capped(1.0),
+                "BKNG 92.5% and a clean 100% both pass through untouched"))
+    out.append(("...and above 100% the projection is capped, not the measurement",
+                abs(seed_dE(1.0738) - 1.0) < 1e-12 and dE_was_capped(1.0738),
+                "ADBE 107.4% seeds at 100.0%, the 107.4% stays on the page"))
+    out.append(("...and above 125% it still refuses rather than quietly capping",
+                not dE_was_capped(3.0),
+                "a broken read is not turned into a plausible number"))
+    _alt = [Year(fy=2024, N=100.0, G=0.0, T=0.0, dS=0.0, price=0.0, Cw=-20.0),
+            Year(fy=2025, N=100.0, G=0.0, T=0.0, dS=0.0, price=0.0, Cw=20.0)]
+    _pooled_alt = pool(_alt).dE
+    _capped_alt = sum(min(y.OE, y.N) for y in _alt) / sum(y.N for y in _alt)
+    out.append(("Pooling lets a good year offset a bad one — 120/80 pools to 100%",
+                abs(_pooled_alt - 1.0) < 1e-9 and abs(_capped_alt - 0.9) < 1e-9,
+                f"pooled {_pooled_alt:.1%}; capping each year first would read "
+                f"{_capped_alt:.1%} — the penalty this design refuses to invent"))
+    out.append(("Adobe's seed falls to forward net income, not below it",
+                abs(7130.0 * seed_dE(1.0738) - 7130.0) < 1e-9,
+                "OE 7,656 → 7,130; per-year capping would have given 6,918"))
     return out
 
 
@@ -2113,7 +2177,11 @@ if years and ticker and st.session_state.get("tk") == ticker:
              "window is the diagnostic; where capital policy has changed, the recent one is "
              "what will apply going forward.") == "Last 3 years"
     use_dE = recent.dE if use_recent else pooled.dE
-    dE_ok = 0.0 < use_dE <= 1.25
+    dE_ok = 0.0 < use_dE <= DE_UNUSABLE_ABOVE
+    # The measurement above is left as filed; only what gets projected is held
+    # to 100%. See the dE ceiling block near the top of the file.
+    applied_dE = seed_dE(use_dE) if dE_ok else use_dE
+    dE_capped = dE_was_capped(use_dE)
 
     hist = sorted(y.OE for y in years[-5:])
     median_OE = hist[len(hist) // 2] if hist else 0.0
@@ -2122,7 +2190,7 @@ if years and ticker and st.session_state.get("tk") == ticker:
     fwd_N = c1.number_input("Forward net income ($M)", value=float(round(years[-1].N, 1)), step=10.0,
                             help="Next year's expected GAAP net income.")
     if dE_ok:
-        derived = fwd_N * use_dE
+        derived = fwd_N * applied_dE
     elif median_OE > 0:
         derived = median_OE
     else:
@@ -2248,6 +2316,15 @@ if years and ticker and st.session_state.get("tk") == ticker:
                 f"ΔE of {use_dE:.1%} is above 100%, which means share issuance is not being "
                 "fully captured — a company cannot keep more than every reported dollar. It "
                 "cannot be projected forward. Set owners' earnings by hand."))
+    elif dE_capped:
+        alerts.append(("warning",
+            f"ΔE measured {use_dE:.1%} over this window — shareholders kept more than the "
+            "company reported earning, which happens when buybacks retire more stock than the "
+            "year issues. That is a real reading of what happened and the figures above are "
+            f"left as filed. But it is not projectable: owners' earnings are seeded at "
+            f"{DE_SEED_CEILING:.0%} of forward net income rather than {use_dE:.1%}, because "
+            "fifteen years of handing owners more than the company earns is not a business "
+            "model. Raise the box by hand if you believe the buyback pace continues."))
     elif median_OE > 0 and derived > 2 * median_OE:
         alerts.append(("warning",
             f"Derived owners' earnings of {d(derived,0)}M are {derived/median_OE:.1f}x the "
@@ -2447,7 +2524,9 @@ if years and ticker and st.session_state.get("tk") == ticker:
             f"{tk}   price {price:,.2f}   shares {shares:,.1f}M   "
             f"mkt cap ${shares*price/1000:,.2f}B\n"
             f"forward net income  {fwd_N:,.0f}\n"
-            f"ΔE applied          {use_dE:.1%}   (full {pooled.dE:.1%} / 3y {recent.dE:.1%})\n"
+            f"ΔE applied          {applied_dE:.1%}"
+            + (f" (capped from {use_dE:.1%})" if dE_capped else "   ")
+            + f"   (full {pooled.dE:.1%} / 3y {recent.dE:.1%})\n"
             f"median OE, 5y       {median_OE:,.0f}\n"
             f"owners' earnings    {OE:,.0f}   ({OE/shares:,.2f}/share)\n"
             f"net cash            {net_cash:,.0f}   ({net_cash/shares:,.2f}/share)\n"
