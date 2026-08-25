@@ -2503,6 +2503,10 @@ def self_test() -> list[tuple[str, bool, str]]:
                           Year(fy=2025, N=10.0, G=0.0, T=0.0, dS=0.0, price=0.0)]).dE
                     - 1.0) < 1e-12,
                 "pooling sums before dividing, so the small year still counts in full"))
+    out.append(("A blanked ΔE cell renders as an em dash, never the word None",
+                (lambda f: f(None) == "\u2014" and f(0.871) == "87.1%")(
+                    lambda v: "\u2014" if v is None else f"{v:.1%}"),
+                "st.dataframe ignores the styler's na_rep, so the cell is built as text"))
     return out
 
 
