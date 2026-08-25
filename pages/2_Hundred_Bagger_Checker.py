@@ -1930,7 +1930,8 @@ class Verdict:
 
 
 def assess(required: float | None, fundable: float | None,
-           delivered: float | None, mcap_m: float) -> Verdict:
+           delivered: float | None, mcap_m: float,
+           trend: float | None = None) -> Verdict:
     """The whole tool, in one function, so it can be tested without a browser."""
     if mcap_m > 0 and mcap_m * 100 > WORLD_GDP_M * 0.05:
         return Verdict("Closed on size", "error", "size")
@@ -1948,6 +1949,17 @@ def assess(required: float | None, fundable: float | None,
             return Verdict("Unprecedented, and no ceiling to check it against",
                            "warning", "history only")
         return Verdict("Fundable, but unprecedented", "warning", "history")
+    # The asymmetry that matters on this page. `delivered` is a two-point rate
+    # between the first and last year of the window, so it is decided by which
+    # years happen to sit at the ends. The kindest reading of a history is the
+    # right one to REFUSE on — a refusal that survives it is worth trusting —
+    # and exactly the wrong one to PASS on, because a false green is the only
+    # error here that costs money. So nothing reaches "open" unless the
+    # trend through every year clears the requirement too.
+    # Progressive, 25 Aug 2026: endpoints 31.8%, trend 20.6%, needed 26.0%.
+    if trend is not None and required > trend:
+        return Verdict("Open only on the kindest reading of history",
+                       "warning", "growth measure")
     if fundable is None:
         return Verdict("Open, on history alone", "info", "no capital base")
     if delivered is None:
@@ -2577,6 +2589,27 @@ def self_test() -> list[tuple[str, bool, str]]:
                 trend_growth([100.0, 200.0, 400.0]) is not None
                 and trend_growth([400.0, 200.0, 100.0]) < 0,
                 f"{trend_growth([400.0, 200.0, 100.0]):.1%} on a declining series"))
+
+    # 4i. The pass-side gate. Same three rates, opposite treatment depending on
+    #     which way the verdict is about to fall.
+    out.append(("PGR's shape at a small-cap size does not reach open on endpoints",
+                assess(0.2600, None, 0.3178, 1_980, 0.2055).why == "growth measure",
+                assess(0.2600, None, 0.3178, 1_980, 0.2055).label))
+    out.append(("...and PGR's own size still settles it before growth is read",
+                assess(0.2600, None, 0.3178, 129_730, 0.2055).why == "size",
+                "the size gate is checked first and nothing below rescues it"))
+    out.append(("A trend that clears the requirement still reaches open",
+                assess(0.2600, None, 0.3178, 1_980, 0.2900).why == "no capital base"
+                and assess(0.2000, 0.3000, 0.2500, 1_980, 0.2400).why == "both",
+                "both readings above the requirement, so nothing is withheld"))
+    out.append(("A capital refusal is not overridden by the growth measure",
+                assess(0.2600, 0.0683, 0.3178, 1_980, 0.2055).why == "capital",
+                "the capital check runs first and is the stronger objection"))
+    out.append(("Omitting the trend leaves every old verdict exactly as it was",
+                assess(0.2600, None, 0.3178, 1_980).why == "no capital base"
+                and assess(0.3800, None, 0.2500, 198).why == "history only"
+                and assess(0.2000, 0.3000, 0.2500, 1_980).why == "both",
+                "the parameter defaults to None, so the six original paths are untouched"))
     return out
 
 
@@ -2810,7 +2843,7 @@ if years and ticker and st.session_state.get("hb_tk") == ticker:
 
     required = (required_growth(mcap / OE, exit_mult, horizon, 100.0, dilution)
                 if OE > 0 and mcap > 0 else None)
-    v = assess(required, fundable, delivered, mcap)
+    v = assess(required, fundable, delivered, mcap, trend)
 
     # ══ verdict ══════════════════════════════════════════════════════
     st.markdown("---")
@@ -2841,16 +2874,19 @@ if years and ticker and st.session_state.get("hb_tk") == ticker:
             "you think the business earns in a normal year, and the arithmetic below becomes "
             "worth reading.")
 
-    if (required is not None and delivered is not None and trend is not None
-            and trend < required <= delivered):
+    # Fires only on the verdict the growth measure actually decided. When the
+    # size gate or the capital check already settled the page, saying "the
+    # verdict depends on which growth measure you read" is simply false.
+    if v.why == "growth measure":
         st.warning(
-            f"**The verdict here depends on which growth measure you read.** *Has delivered* "
-            f"is {delivered:.1%}, the rate between the first and last year of the window. "
-            f"Fitted through every year instead of just the ends, the same history gives "
-            f"{trend:.1%} — and this price needs {required:.1%}. One clears it and the other "
-            "does not. A two-point rate is flattered by a weak first year and by a strong "
-            "last one, and this window has at least one of those. Treat the higher figure as "
-            "the ceiling it is, not as the company's growth rate.")
+            f"**This price is open on one reading of the history and not the other.** *Has "
+            f"delivered* is {delivered:.1%} — the rate between the first and last year of the "
+            f"window, which is decided by whichever two years sit at the ends. Fitted through "
+            f"every year instead, the same history gives {trend:.1%}. This price needs "
+            f"{required:.1%} a year, which the trend does not reach. Nothing here is called "
+            "open on an endpoint rate alone: a refusal that survives the kindest reading is "
+            "worth trusting, but a pass that only survives it is the one error on this page "
+            "that costs money. Both figures are in the assumptions block.")
 
     if short_spans:
         st.info(
