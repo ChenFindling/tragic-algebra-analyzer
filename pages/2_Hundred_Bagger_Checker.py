@@ -1056,7 +1056,17 @@ CONCEPTS = {
 EQUITY = [["StockholdersEquity"],
           ["StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"]]
 MINORITY = [["MinorityInterest"]]
-DEBT = [["LongTermDebtNoncurrent", "LongTermDebt"],
+# DebtLongtermAndShorttermCombinedAmount is LAST because it is broader,
+# not a synonym: it is the whole debt balance, long-term and current
+# together. Progressive, 25 Aug 2026: it does not tag
+# LongTermDebtNoncurrent at all and stopped tagging LongTermDebt after
+# 2015, so invested capital of 21,933M carried no borrowings — $6,897M
+# missing at FY2025. Its LongTermDebtCurrent is tagged and reads exactly
+# zero every year, so the current group below double-counts nothing.
+# Keeping the two narrower tags preferred confines this to filers where
+# they have gone stale, and makes the fallback note name the swap.
+DEBT = [["LongTermDebtNoncurrent", "LongTermDebt",
+         "DebtLongtermAndShorttermCombinedAmount"],
         ["LongTermDebtCurrent", "DebtCurrent", "ShortTermBorrowings"],
         ["CommercialPaper"]]
 FIN_LEASE = [["FinanceLeaseLiabilityNoncurrent", "CapitalLeaseObligationsNoncurrent"],
