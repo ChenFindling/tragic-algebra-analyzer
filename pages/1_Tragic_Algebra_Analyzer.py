@@ -502,7 +502,17 @@ BALANCE = {
     "lti":  ["MarketableSecuritiesNoncurrent",
              "AvailableForSaleSecuritiesDebtSecuritiesNoncurrent",
              "LongTermInvestments"],
-    "ltd":  ["LongTermDebtNoncurrent", "LongTermDebt"],
+    # DebtLongtermAndShorttermCombinedAmount is LAST because it is broader, not
+    # a synonym: it is the whole debt balance, long-term and current together.
+    # Progressive, 25 Aug 2026: it does not tag LongTermDebtNoncurrent at all
+    # and stopped tagging LongTermDebt after 2015, so the capital base carried
+    # no borrowings from 2016 on — $6,897M missing at FY2025 with nothing on the
+    # page to show it. Its LongTermDebtCurrent is tagged and reads exactly zero
+    # every year, so the combined figure double-counts nothing here.
+    # Keeping the two narrower tags preferred is what confines this to filers
+    # where they have gone stale, and makes the fallback note name the swap.
+    "ltd":  ["LongTermDebtNoncurrent", "LongTermDebt",
+             "DebtLongtermAndShorttermCombinedAmount"],
     "std":  ["LongTermDebtCurrent", "DebtCurrent", "ShortTermBorrowings", "CommercialPaper"],
     # Not debt in Burry's sense — his ROIC formula subtracts long-term operating
     # leases from capital rather than treating them as borrowings. Shown so a
