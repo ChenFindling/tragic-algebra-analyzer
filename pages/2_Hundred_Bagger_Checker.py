@@ -50,6 +50,7 @@ Run:  streamlit run Home.py   (this file lives in pages/)
 from __future__ import annotations
 
 import datetime as dt
+import math
 import os
 import statistics
 import threading
@@ -960,6 +961,39 @@ def cagr(first: float, last: float, years: int) -> float | None:
     if years <= 0 or first <= 0 or last <= 0:
         return None
     return (last / first) ** (1.0 / years) - 1.0
+
+
+def trend_growth(values: list[float]) -> float | None:
+    """Growth rate from a least-squares fit through log(values), not endpoints.
+
+    `cagr` above reads two numbers and ignores everything between them, so the
+    figure it returns is a slope between whichever years happen to sit at the
+    ends of the window. Progressive, 25 Aug 2026: owners' earnings ran
+    954 (FY2016, a weak underwriting year) to 11,440 (FY2025, its best ever),
+    and the two-point rate came out at 31.8% a year against a required 26.0%.
+    The same ten numbers fitted log-linearly give 20.6%. The verdict was
+    decided by the choice of measure, not by the company.
+
+    The generous reading is the right one for a REFUSAL — a refusal that
+    survives the kindest reading of the history is worth trusting. It is
+    backwards for a PASS, and a false green is the only error on this page
+    that costs money. So both figures are computed and both are shown.
+
+    Returns None on fewer than three points or any non-positive value; a
+    company that lost money cannot have a log fitted through it.
+    """
+    if len(values) < 3 or any(v <= 0 for v in values):
+        return None
+    n = len(values)
+    xs = list(range(n))
+    ys = [math.log(v) for v in values]
+    mx = sum(xs) / n
+    my = sum(ys) / n
+    denom = sum((x - mx) ** 2 for x in xs)
+    if denom <= 0:
+        return None
+    slope = sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / denom
+    return math.exp(slope) - 1.0
 
 
 # Bands for the starting size, stated as this tool's own convention rather than
@@ -2517,6 +2551,32 @@ def self_test() -> list[tuple[str, bool, str]]:
                 (lambda f: f(None) == "\u2014" and f(0.871) == "87.1%")(
                     lambda v: "\u2014" if v is None else f"{v:.1%}"),
                 "st.dataframe ignores the styler's na_rep, so the cell is built as text"))
+
+    # 4h. The endpoint trap. `delivered` is a two-point rate, so it is decided
+    #     by whichever years sit at the ends of the window. Progressive's real
+    #     owners' earnings, 25 Aug 2026, are the fixture: a weak FY2016 and a
+    #     record FY2025 put the two readings on opposite sides of what the
+    #     price required.
+    _pgr_oe = [954.0, 1526.0, 2517.0, 3870.0, 5670.0,
+               3351.0, 664.0, 3976.0, 8484.0, 11440.0]
+    out.append(("Trend growth fits a clean exponential exactly",
+                abs(trend_growth([100.0 * 1.2 ** k for k in range(8)]) - 0.20) < 1e-9,
+                f"{trend_growth([100.0 * 1.2 ** k for k in range(8)]):.4%}"))
+    out.append(("PGR: endpoints say 31.8%/yr, the trend says 20.6%",
+                abs(cagr(_pgr_oe[0], _pgr_oe[-1], 9) - 0.3179) < 0.001
+                and abs(trend_growth(_pgr_oe) - 0.2055) < 0.001,
+                f"{cagr(_pgr_oe[0], _pgr_oe[-1], 9):.2%} vs {trend_growth(_pgr_oe):.2%}"))
+    out.append(("...and 26.0% needed sits between them, so the measure decides",
+                trend_growth(_pgr_oe) < 0.2600 <= cagr(_pgr_oe[0], _pgr_oe[-1], 9),
+                "which is exactly when the note fires"))
+    out.append(("A loss anywhere in the window gives no trend",
+                trend_growth([100.0, -5.0, 200.0]) is None
+                and trend_growth([100.0, 120.0]) is None,
+                "a log needs positive values and at least three of them"))
+    out.append(("Trend growth ignores the order-free scale, not the order",
+                trend_growth([100.0, 200.0, 400.0]) is not None
+                and trend_growth([400.0, 200.0, 100.0]) < 0,
+                f"{trend_growth([400.0, 200.0, 100.0]):.1%} on a declining series"))
     return out
 
 
@@ -2736,6 +2796,14 @@ if years and ticker and st.session_state.get("hb_tk") == ticker:
     # Deliberately generous: the better of the two. A refusal that survives the
     # kindest reading of the history is a refusal worth trusting.
     delivered = max([g for g in (rev_cagr, oe_cagr) if g is not None], default=None)
+    # The same two series read as a trend rather than as endpoints. Same
+    # generosity about WHICH series describes the business, none about which
+    # two years happen to sit at the ends of it. See trend_growth's docstring.
+    rev_trend = (trend_growth(rev_hist)
+                 if len(rev_hist) >= 3 and rev_span >= MIN_SPAN else None)
+    oe_trend = (trend_growth([y.OE for y in oe_clean])
+                if len(oe_clean) >= 3 and oe_span >= MIN_SPAN else None)
+    trend = max([g for g in (rev_trend, oe_trend) if g is not None], default=None)
     short_spans = [f"{n} ({s}y)" for n, s, g in
                    (("revenue", rev_span, rev_cagr), ("owners' earnings", oe_span, oe_cagr))
                    if g is None and s > 0]
@@ -2772,6 +2840,17 @@ if years and ticker and st.session_state.get("hb_tk") == ticker:
             "of profit, which is exactly what owners' earnings are meant to capture. Enter what "
             "you think the business earns in a normal year, and the arithmetic below becomes "
             "worth reading.")
+
+    if (required is not None and delivered is not None and trend is not None
+            and trend < required <= delivered):
+        st.warning(
+            f"**The verdict here depends on which growth measure you read.** *Has delivered* "
+            f"is {delivered:.1%}, the rate between the first and last year of the window. "
+            f"Fitted through every year instead of just the ends, the same history gives "
+            f"{trend:.1%} — and this price needs {required:.1%}. One clears it and the other "
+            "does not. A two-point rate is flattered by a weak first year and by a strong "
+            "last one, and this window has at least one of those. Treat the higher figure as "
+            "the ceiling it is, not as the company's growth rate.")
 
     if short_spans:
         st.info(
@@ -3122,6 +3201,9 @@ if years and ticker and st.session_state.get("hb_tk") == ticker:
             + (f"{fundable:.2%}/yr" if fundable is not None else "n/a") + "\n"
             f"has delivered       "
             + (f"{delivered:.2%}/yr" if delivered is not None else "n/a") + "\n"
+            f"  trend basis       "
+            + (f"{trend:.2%}/yr" if trend is not None else "n/a")
+            + "   (log-linear, all years)\n"
             f"ROIC 5y median      "
             + (f"{roic_med:.2%}" if roic_med is not None else "n/a") + "\n"
             f"invested capital    {latest_r.cap.invested:,.0f} M\n"
