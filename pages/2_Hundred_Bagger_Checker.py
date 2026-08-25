@@ -243,6 +243,46 @@ MIN_PRICED_SHARE = 0.5   # more than half the window must carry a share price
 
 
 # ══════════════════════════════════════════════════════════════════════
+#  PER-YEAR ΔE CELL — a ratio needs a denominator worth dividing by
+# ══════════════════════════════════════════════════════════════════════
+#
+# Booking Holdings FY2020: net income 59, owners' earnings -979, and the
+# year-by-year column printed -1659.5%. Nothing was wrong with either
+# figure — covid took net income to almost nothing while $1,303M of
+# buybacks against a share count that barely moved left a real cost
+# behind. The ratio between them is the problem: divide anything by 59
+# and you get a number that looks like a measurement and is only an
+# artifact of the denominator.
+#
+# The POOLED figures already handle this correctly, because they sum
+# before dividing — BKNG reads 92.2% and 92.5% with that year fully
+# weighted inside them. So nothing about the arithmetic changes here.
+# Only the cell changes, and only for a year that cannot carry a ratio.
+#
+# Two ways a denominator fails: it is not positive at all, or it is so
+# small against the rest of the window that the ratio says more about the
+# denominator than about the company. A tenth of the window's median
+# separates BKNG's FY2020 (1.7%) from every ordinary bad year in the set
+# — Adobe's weakest is 24% of its median, Paychex's 66%.
+
+DE_CELL_MIN_SHARE = 0.10   # of the window's median net income
+
+
+def dE_cell(N: float, dE: float | None, median_N: float) -> float | None:
+    """The per-year dE to display, or None where the denominator cannot carry it."""
+    if dE is None or N <= 0:
+        return None
+    if median_N > 0 and N < median_N * DE_CELL_MIN_SHARE:
+        return None
+    return dE
+
+
+def median_positive_N(values: list[float]) -> float:
+    """Median of the positive net income figures in a window; 0.0 when there are none."""
+    pos = sorted(v for v in values if v > 0)
+    return pos[len(pos) // 2] if pos else 0.0
+
+# ══════════════════════════════════════════════════════════════════════
 #  ΔE CEILING — a measurement above 100% is real; a projection is not
 # ══════════════════════════════════════════════════════════════════════
 #
@@ -2441,6 +2481,28 @@ def self_test() -> list[tuple[str, bool, str]]:
     out.append(("Adobe's seed falls to forward net income, not below it",
                 abs(7130.0 * seed_dE(1.0738) - 7130.0) < 1e-9,
                 "OE 7,656 → 7,130; per-year capping would have given 6,918"))
+    _bk = [2135.0, 2341.0, 3998.0, 4865.0, 59.0, 1165.0, 3058.0, 4289.0, 5882.0, 5404.0]
+    _bk_med = median_positive_N(_bk)
+    out.append(("A year of near-zero profit carries no per-year ΔE — BKNG FY2020",
+                dE_cell(59.0, -979.0 / 59.0, _bk_med) is None,
+                f"59 against a {_bk_med:,.0f} median is {59.0/_bk_med:.1%} — the -1659.5% cell "
+                "was the denominator talking"))
+    out.append(("...and every other year in that window keeps its ΔE",
+                all(dE_cell(n, 1.0, _bk_med) is not None for n in _bk if n != 59.0),
+                "nine of ten cells unchanged"))
+    out.append(("...and an ordinary bad year is still a year — ADBE's weakest",
+                dE_cell(1169.0, 0.80, median_positive_N(
+                    [1169.0, 1694.0, 2591.0, 2951.0, 5260.0, 4822.0, 4756.0, 5428.0,
+                     5560.0, 7130.0])) is not None,
+                "24% of Adobe's median clears a 10% floor comfortably"))
+    out.append(("A loss carries no per-year ΔE either",
+                dE_cell(-500.0, 2.0, 3000.0) is None,
+                "a ratio to a loss inverts its own sign"))
+    out.append(("Suppressing the cell changes no pooled figure",
+                abs(pool([Year(fy=2024, N=1000.0, G=0.0, T=0.0, dS=0.0, price=0.0),
+                          Year(fy=2025, N=10.0, G=0.0, T=0.0, dS=0.0, price=0.0)]).dE
+                    - 1.0) < 1e-12,
+                "pooling sums before dividing, so the small year still counts in full"))
     return out
 
 
