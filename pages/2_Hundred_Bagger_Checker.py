@@ -211,6 +211,83 @@ RECENCY_KEYS = {"REV", "SHD"}
 FILL_KEYS = {"T", "Cw", "Ce", "DIV", "INT", "LEASEPAY", "CAPEX", "MA", "OFFER", "CONV", "G", "N"}
 
 
+# ══════════════════════════════════════════════════════════════════════
+#  WINDOW GUARDS — refuse when the window is not usable
+# ══════════════════════════════════════════════════════════════════════
+#
+# The four-year minimum inside load() asks whether there is enough history.
+# These two ask whether it is the RIGHT history. Both were exposed by one
+# Booking Holdings run on 23 Aug 2026, before the net income tag list was
+# repaired: eight years of net income ending FY2015 cleared the minimum and
+# the page printed a full verdict on eleven-year-old earnings — forward net
+# income 2,551 against an actual 5,404. The page carried its own proof, a
+# note dividing a 2015 profit by 2025 revenue and calling owners' earnings
+# 6.4% of revenue. Seven of those eight years also showed an average price
+# of $0.00, because the window ended before the eleven-year price history
+# begins: V floors at zero, the true SBC cost collapses to withholding minus
+# option proceeds — negative in one year — and ΔE measures nothing.
+#
+# Both thresholds are deliberately loose, because the cost of a false
+# refusal is a page that will not load for a healthy company. A December
+# filer read in January sits two calendar years behind its own newest 10-K,
+# since FY2025 stays the latest until the FY2026 report lands in February.
+# Two is ordinary reporting lag. Three is a hole.
+#
+# Neither of these has a live ticker that reproduces it any more — the net
+# income tag work closed both shapes — so they are pinned by the self-tests
+# below and verified by construction rather than by a run.
+
+STALE_VS_REVENUE = 3     # years net income may trail revenue before refusing
+STALE_VS_TODAY = 3       # years net income may trail the calendar year
+MIN_PRICED_SHARE = 0.5   # more than half the window must carry a share price
+
+
+def stale_window_refusal(fys: list[int], rev_fys: list[int], today_year: int) -> str:
+    """Reason to refuse a stale earnings window, or '' when it is usable.
+
+    Revenue is the better reference than the calendar where it exists: both
+    series come from the same filings, so a gap between them is the reader
+    losing a tag rather than the company being slow to file.
+    """
+    if not fys:
+        return ""
+    last_n = max(fys)
+    if rev_fys and max(rev_fys) - last_n >= STALE_VS_REVENUE:
+        return (
+            f"net income was read only to FY{last_n} while revenue reaches FY{max(rev_fys)}, "
+            f"a gap of {max(rev_fys) - last_n} years. Every figure on this page is built from "
+            "net income, so the verdict would describe the company as it was, priced against "
+            "the company as it is — and nothing on the page would say so. The usual cause is "
+            "the filer moving to a tag this reader does not know, not a company that stopped "
+            "reporting. Send the tag panel and it can be fixed.")
+    if today_year - last_n >= STALE_VS_TODAY:
+        return (
+            f"the most recent annual figure read is FY{last_n}, {today_year - last_n} years "
+            "behind the calendar. A late filer runs one year behind, and a December filer read "
+            "early in the year runs two; three is a hole rather than a lag. Owners' earnings, "
+            "ΔE and IV15 would all describe a company that no longer exists.")
+    return ""
+
+
+def price_coverage_refusal(n_years: int, unpriced: int, have_history: bool) -> str:
+    """Reason to refuse for missing prices, or '' when enough years carry one."""
+    if n_years <= 0 or unpriced <= n_years * MIN_PRICED_SHARE:
+        return ""
+    if not have_history:
+        return (
+            "no price history could be fetched, so every year's average price is zero. The "
+            "market value of shares handed to employees is the whole of the stock-comp cost, "
+            "and without a price it floors at zero — ΔE would read near 100% for any company "
+            "at all. This is usually a temporary failure at the price source rather than "
+            "anything about the filer, so it is worth trying again in a minute.")
+    return (
+        f"{unpriced} of the {n_years} years in this window have no share price. The price "
+        "history runs about eleven years, so a window reaching further back leaves its early "
+        "years unpriced. The market value of shares delivered floors at zero in those years, "
+        "the true stock-comp cost becomes withholding minus option proceeds — negative where "
+        "options were exercised — and ΔE stops being a measurement of anything.")
+
+
 def _annual(facts: dict, us: list[str], ifrs: list[str],
             sources: list[str] | None = None,
             fill: bool = False,
@@ -1366,6 +1443,14 @@ def load(ticker: str, n_years: int = 10):
               "has delivered, what its capital can fund — is a statement about decades. Four "
               "years is the minimum this tool will reason from. A recent listing, a filer using "
               "tags this reader does not know, or a foreign issuer are the usual causes.")
+
+    # Enough history is not the same as the right history — see the window
+    # guards above. Revenue first, because both series come from the same
+    # filings; the calendar as a backstop for a filer with no revenue read.
+    _stale = stale_window_refusal(fys, list(series.get("REV", {})), dt.date.today().year)
+    if _stale:
+        raise ValueError(f"{ticker} cannot be valued from these filings — " + _stale)
+
     years: list[Year] = []
     non_sbc_total = 0.0
     for fy in fys:
@@ -1381,6 +1466,13 @@ def load(ticker: str, n_years: int = 10):
         years.append(Year(fy=fy, N=N / 1e6, G=get("G"), T=get("T"), dS=dS,
                           Cw=get("Cw"), Ce=get("Ce"), A=get("MAV"),
                           price=_avg_price(closes, start, end) or 0.0))
+
+    # V is priced at the year's average, so a year with no price contributes
+    # nothing to the stock-comp cost however many shares moved.
+    _unpriced = sum(1 for y in years if y.price <= 0)
+    _pc = price_coverage_refusal(len(years), _unpriced, bool(closes))
+    if _pc:
+        raise ValueError(f"{ticker} cannot be valued from these filings — " + _pc)
 
     # Capital events. A listing converts preferred to common and sells new
     # stock; an all-stock acquisition issues a year's payroll many times over.
@@ -2187,10 +2279,19 @@ def self_test() -> list[tuple[str, bool, str]]:
     _picked = _instant(stale, ["LongTermDebtNoncurrent", "LongTermDebt"], "USD", _src,
                        _skip, True)
     _y = Year(fy=2022, N=1444.0, G=2779.0, T=0.0, dS=70.0, price=249.24, A=11269.0)
-    out.append(("Acquisition consideration is netted out of V, not charged to staff",
-                _y.V == 0.0 and _y.omega < 100.0,
-                f"V ${_y.V:,.0f}M — Slack no longer counts as pay"))
     _y2 = Year(fy=2022, N=1444.0, G=2779.0, T=0.0, dS=70.0, price=249.24)
+    # Netted, NOT zeroed. This assertion shipped on 24 Aug 2026 reading
+    # "V == 0.0" and was RED on both pages from the moment it landed —
+    # caught 24 Aug when the expander was finally read line by line rather
+    # than counted. The engine was never wrong: $11.269B of Slack
+    # consideration against $17.447B of stock delivered leaves $6.178B that
+    # really was pay, and Salesforce's FY2022 owners' earnings are genuinely
+    # negative — the live run reads dE -46.1%, not a positive number. What
+    # is worth pinning is that V falls by exactly the tagged consideration
+    # and by nothing else, which is the claim the fix actually makes.
+    out.append(("Acquisition consideration is netted out of V, not charged to staff",
+                abs((_y2.V - _y.V) - 11269.0) < 1e-6 and _y.V > 0,
+                f"V ${_y2.V:,.0f}M → ${_y.V:,.0f}M, down by exactly the $11,269M tagged"))
     out.append(("...and a year with no acquisition is untouched",
                 abs(_y2.V - 249.24 * 70.0) < 1e-6, f"V ${_y2.V:,.0f}M"))
     _iss = {"facts": {"us-gaap": {
@@ -2255,6 +2356,27 @@ def self_test() -> list[tuple[str, bool, str]]:
                 _latest_fy({2016: 1, 2020: 1, 2015: 1}) == "2020"
                 and _latest_fy({}) == "—",
                 "2020 from an unsorted series; — when empty"))
+    _rev_now = list(range(2008, 2026))
+    out.append(("A window ending FY2015 against revenue to FY2025 is refused",
+                "gap of 10 years" in stale_window_refusal(list(range(2008, 2016)), _rev_now, 2026),
+                "the Booking Holdings window that printed a verdict on FY2015 earnings"))
+    out.append(("...but a December filer read in January is not",
+                stale_window_refusal(list(range(2016, 2026)), list(range(2016, 2026)), 2027) == "",
+                "FY2025 latest in calendar 2027 is reporting lag, not a hole"))
+    out.append(("...and a current window against current revenue is not",
+                stale_window_refusal(list(range(2016, 2026)), _rev_now, 2026) == "",
+                "FY2025 net income against FY2025 revenue"))
+    out.append(("Seven unpriced years out of eight is refused",
+                "7 of the 8 years" in price_coverage_refusal(8, 7, True),
+                "the same Booking Holdings window, where V floored at zero"))
+    out.append(("...but a fully priced window passes, and exactly half still passes",
+                price_coverage_refusal(10, 0, True) == ""
+                and price_coverage_refusal(10, 5, True) == "",
+                "the threshold is MORE than half, not half"))
+    out.append(("A price-source failure refuses differently from a window that predates history",
+                "temporary failure" in price_coverage_refusal(10, 10, False)
+                and "eleven years" in price_coverage_refusal(10, 10, True),
+                "two causes, two messages — one is worth retrying, the other is not"))
     return out
 
 
