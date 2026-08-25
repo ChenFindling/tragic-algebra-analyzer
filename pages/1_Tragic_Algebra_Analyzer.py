@@ -522,6 +522,19 @@ BALANCE = {
 
 ANNUAL_FORMS = ("10-K", "10-K/A", "20-F", "40-F")
 
+# The display name for each balance-sheet line, in panel order. Hoisted out of
+# the panel builder so the staleness guard below reads the same list: a guard
+# that keeps its own copy is one edit away from checking a line the panel does
+# not show, or missing one it does.
+BALANCE_ROWS = (
+    ("Cash", BALANCE["cash"]),
+    ("Short-term investments", BALANCE["sti"]),
+    ("Long-term investments", BALANCE["lti"]),
+    ("Long-term debt", BALANCE["ltd"]),
+    ("Short-term debt", BALANCE["std"]),
+    ("Operating leases", BALANCE["lease"]),
+)
+
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def _ticker_map() -> dict[str, str]:
@@ -691,6 +704,50 @@ def seed_dE(measured: float) -> float:
 def dE_was_capped(measured: float) -> bool:
     """True when the projection is being held below what the filings measured."""
     return DE_SEED_CEILING < measured <= DE_UNUSABLE_ABOVE
+
+
+def stale_instant_lines(bal_fy: dict[str, str], ni_fy: int,
+                        rows=BALANCE_ROWS) -> list[tuple[str, int, int]]:
+    """Balance-sheet lines whose latest year trails net income's. ITEM 9.
+
+    Item 1a refuses when NET INCOME is old. The same disease turned up on
+    lines that have nothing to do with earnings, and with no symptom at all:
+    AutoZone's short-term debt ends FY2014, Adobe's old debt tag ended FY2009,
+    Progressive's goodwill ends FY2022. The year-by-year table ran to the
+    current year and every other line was current. A wrong number, silently.
+
+    INSTANTS ONLY, and that restriction is the whole design. A flow line can
+    legitimately stop: Booking's acquisitions ended in 2018, and Progressive
+    genuinely stopped repurchasing stock after 2016 — its share count rose in
+    seven of the nine years since. A guard that does not draw that distinction
+    fires on every healthy company. A BALANCE SHEET cannot stop. Every 10-K
+    reports the position at fiscal year end, so if net income reached FY2025
+    and a balance line stops at FY2014, one of two things is true and both are
+    wrong on the page:
+
+      - the balance is still there under a tag this reader does not know, or
+      - the company no longer has that line and the figure should be zero.
+
+    `g()` takes max(d.items()) per line independently, so either way the last
+    figure found is carried into today's net cash as though it were current.
+
+    Any gap at all counts. No threshold is invented here: unlike item 1a,
+    which tolerates two years because a December filer read in January sits
+    behind its own newest 10-K, both years compared here come out of the SAME
+    filings, so a gap of one is already a gap.
+
+    Lines with no data at all are excluded — the panel already says "none of
+    the tags this reader knows are in the filing", which is a different
+    finding with a different fix.
+    """
+    out = []
+    for name, ks in rows:
+        fy = bal_fy.get(ks[0], "—")
+        if not fy.isdigit():
+            continue
+        if int(fy) < ni_fy:
+            out.append((name, int(fy), ni_fy - int(fy)))
+    return out
 
 
 def stale_window_refusal(fys: list[int], rev_fys: list[int], today_year: int) -> str:
@@ -1706,6 +1763,18 @@ def load(ticker: str, n_years: int = 10):
               "simply repairs a gap. Where they are not — cash including "
               "restricted balances is not cash — the figure has changed "
               "definition, so check the line before trusting it.")
+    _stale_bal = stale_instant_lines(_bal_fy, years[-1].fy if years else 0)
+    if _stale_bal:
+        notes.append(
+            "**A balance-sheet line here stops before net income does.** "
+            + "; ".join(f"{_n.lower()} ends at FY{_y}, {_g} year{'s' if _g > 1 else ''} behind"
+                        for _n, _y, _g in _stale_bal)
+            + f". Net income reaches FY{years[-1].fy if years else 0}, and a balance sheet is "
+              "reported at every year end, so this is not the company having a quiet year — "
+              "either the balance moved to a tag this reader does not know, or the line ended "
+              "and the figure should now be zero. Net cash above carries the last figure found "
+              "forward as though it were current, so it is wrong in one direction or the other. "
+              "The tag panel names the tag; that name is usually the whole fix.")
     if debt_total == 0 and lease_total > 0:
         notes.append(f"No funded debt found, which for many companies is simply true — plenty "
                      f"fund themselves entirely from operations. It does carry "
@@ -1821,10 +1890,7 @@ def load(ticker: str, n_years: int = 10):
          "XBRL tag": " + ".join(_bal.get(ks[0], [])) or "—",
          "Status": "read" if _bal.get(ks[0]) else "none of the tags this reader knows are in "
                                                  "the filing"}
-        for name, ks in (("Cash", BALANCE["cash"]), ("Short-term investments", BALANCE["sti"]),
-                         ("Long-term investments", BALANCE["lti"]),
-                         ("Long-term debt", BALANCE["ltd"]), ("Short-term debt", BALANCE["std"]),
-                         ("Operating leases", BALANCE["lease"]))]
+        for name, ks in BALANCE_ROWS]
     return years, notes, {"tags": tags, "net_cash": net_cash, "cash": cash_total, "debt": debt_total,
                           "median_OE": _med, "revenue": latest_rev, "cagr3": cagr3,
                           "leases": lease_total,
@@ -2023,6 +2089,31 @@ def self_test() -> list[tuple[str, bool, str]]:
                 (lambda f: f(None) == "\u2014" and f(0.871) == "87.1%")(
                     lambda v: "\u2014" if v is None else f"{v:.1%}"),
                 "st.dataframe ignores the styler's na_rep, so the cell is built as text"))
+
+    # 9. Item 9 — a balance-sheet line that stops before net income does.
+    #    Fixtures are the real shapes: AutoZone's short-term debt, Progressive's
+    #    goodwill, Booking's short-term investments, and a clean Adobe.
+    _rows = (("Cash", ["A"]), ("Short-term investments", ["B"]),
+             ("Long-term debt", ["C"]), ("Short-term debt", ["D"]))
+    _azo = stale_instant_lines({"A": "2025", "B": "\u2014", "C": "2025", "D": "2014"},
+                               2025, _rows)
+    out.append(("AZO's FY2014 short-term debt is caught, 11 years behind",
+                _azo == [("Short-term debt", 2014, 11)], f"{_azo}"))
+    out.append(("A line with no data at all is not called stale",
+                all(n != "Short-term investments" for n, _, _ in _azo),
+                "no tags in the filing is a different finding with a different fix"))
+    _bkng = stale_instant_lines({"A": "2025", "B": "2024", "C": "2025", "D": "2025"},
+                                2025, _rows)
+    out.append(("A one-year gap counts — both years come from the same filings",
+                _bkng == [("Short-term investments", 2024, 1)], f"{_bkng}"))
+    out.append(("A fully current balance sheet fires nothing",
+                stale_instant_lines({"A": "2025", "B": "2025", "C": "2025", "D": "2025"},
+                                    2025, _rows) == [],
+                "Adobe's shape after the debt repair"))
+    out.append(("A line AHEAD of net income is not stale either",
+                stale_instant_lines({"A": "2026", "B": "2025", "C": "2025", "D": "2025"},
+                                    2025, _rows) == [],
+                "only trailing years are a finding"))
     return out
 
 
