@@ -2714,6 +2714,25 @@ def self_test() -> list[tuple[str, bool, str]]:
                 and assess(0.2000, 0.3000, 0.2500, 1_980).why == "both",
                 "the parameter defaults to None, so the six original paths are untouched"))
 
+    # 4k. The median that survives a refusal. `median_roic` drops refused years
+    #     rather than zeroing them, so a five-year median can rest on one year
+    #     and read exactly like a five-year one.
+    class _R:
+        def __init__(self, roic, reason=""):
+            self.roic, self.reason = roic, reason
+    _five = [_R(0.10), _R(None, "negative capital"), _R(None, "negative capital"),
+             _R(0.50), _R(None, "negative capital")]
+    out.append(("A median over five years can rest on two of them",
+                abs(median_roic(_five) - 0.30) < 1e-9
+                and len([r for r in _five if not r.reason]) == 2,
+                "0.30 is the mean of the two survivors, not a five-year figure"))
+    out.append(("...and BKNG's shape — a refused latest year keeps the median",
+                median_roic(_five + [_R(None, "negative capital")]) is not None,
+                "which is why the refusal branch has to print it"))
+    out.append(("No readable year gives no median at all",
+                median_roic([_R(None, "negative capital")] * 5) is None,
+                "and `can fund` then has no capital ceiling"))
+
     # 4j. Item 9 on this page. Same disease as tool 1, opposite arithmetic: a
     #     missing component is added as zero, so the direction of the error
     #     depends on which side of the capital base the line sits.
@@ -3207,6 +3226,10 @@ if years and ticker and st.session_state.get("hb_tk") == ticker:
         else:
             st.caption("Needs a positive owners' earnings figure.")
 
+    # Counted once, outside the branches, because BOTH need it: the refusal
+    # branch never printed it at all and the assumptions block printed a median
+    # with no indication of how many years went into it.
+    _roic_readable = len([r for r in rows[-5:] if not r.reason])
     with st.expander("Return on invested capital — Burry's formula, line by line"):
         if financial:
             st.error(
@@ -3231,11 +3254,31 @@ if years and ticker and st.session_state.get("hb_tk") == ticker:
                         "deployable rather than earmarked, and raise the operating-cash "
                         "percentage if the business needs more of it."
                         if w.deployable_cash > w.total_capital and w.equity_found else ""))
+            # The median is computed, printed in the assumptions block, and fed
+            # to `can fund` — but this branch used to render the red box and
+            # nothing else, so the one place that explains the figure was the
+            # one place that stayed silent about it. BKNG, 24 Aug 2026: ROIC
+            # moved 58.09% to 45.21% when cash entered the base. A shrinking
+            # denominator should RAISE a return; it fell because years crossed
+            # into negative capital and were refused, leaving the median to the
+            # lower survivors. Nothing on the page could show that.
+            st.caption(
+                (f"The five-year median still reads **{roic_med:.1%}**, from "
+                 f"**{_roic_readable} of {len(rows[-5:])}** readable years — the refused years "
+                 "are dropped, not counted as zero, so the median describes only the years that "
+                 "computed. That is the figure `can fund` is built on and the one the "
+                 "assumptions block prints."
+                 if roic_med is not None else
+                 "No year in the last five produced a readable return, so there is no median "
+                 "and `can fund` has no capital ceiling to work from.")
+                + (f" On {_roic_readable} year{'' if _roic_readable == 1 else 's'} that is a "
+                   "thin base for a ceiling — read it as one year's return, not a trend."
+                   if roic_med is not None and _roic_readable <= 2 else ""))
         else:
             k1, k2, k3 = st.columns(3)
             k1.metric("ROIC", f"{latest_r.roic:.1%}", f"FY{latest_r.fy}")
             k2.metric("Median, 5 years", f"{roic_med:.1%}" if roic_med is not None else "—",
-                      f"{len([r for r in rows[-5:] if not r.reason])} of {len(rows[-5:])} readable")
+                      f"{_roic_readable} of {len(rows[-5:])} readable")
             tang = latest_r.tangible_roic
             k3.metric("Ex-goodwill", f"{tang:.1%}" if tang is not None else "n/a",
                       "return on tangible capital")
@@ -3373,7 +3416,8 @@ if years and ticker and st.session_state.get("hb_tk") == ticker:
             + (f"{trend:.2%}/yr" if trend is not None else "n/a")
             + "   (log-linear, all years)\n"
             f"ROIC 5y median      "
-            + (f"{roic_med:.2%}" if roic_med is not None else "n/a") + "\n"
+            + (f"{roic_med:.2%}   ({_roic_readable} of {len(rows[-5:])} years readable)"
+               if roic_med is not None else "n/a") + "\n"
             f"invested capital    {latest_r.cap.invested:,.0f} M\n"
             f"payout              "
             + (f"{payout:.1%}" if payout is not None else "n/a") + "\n"
