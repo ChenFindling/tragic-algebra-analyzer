@@ -2166,6 +2166,66 @@ def roic_caveat(r: RoicYear, fye_month: int) -> str:
 #  SELF-TEST
 # ══════════════════════════════════════════════════════════════════════
 
+def fund_badge_caption(roic_med: float | None, payout_eff: float, buyback_yield: float,
+                       fundable: float | None, payout_assumed: bool, financial: bool,
+                       reason: str | None) -> str:
+    """The line under `can fund`, saying where that figure actually came from.
+
+    Booking read "ROIC 45% · retains 0%" beside a `can fund` of 3.69% — two
+    numbers whose product is zero, printed next to a number that is not zero.
+    It caused a real misreading during the session that shipped Drop 18, which
+    fixed the same sentence one level down in the ROIC expander and left this
+    one alone. Where payout is at or above 100%, `per_share_ceiling` reduces to
+    the buyback term and the return on capital contributes nothing at all, so
+    the badge names the buyback yield instead of a ROIC it is not using.
+    """
+    if payout_assumed:
+        return f"ROIC {roic_med:.0%} · retention assumed"
+    if fundable is not None:
+        if payout_eff >= 1.0:
+            return (f"buyback yield {buyback_yield:.1%} · payout {payout_eff:.0%} leaves nothing "
+                    "retained" if buyback_yield > 0 else
+                    f"payout {payout_eff:.0%} leaves nothing retained, and no buybacks either")
+        return f"ROIC {roic_med:.0%} · retains {max(0.0, 1 - payout_eff):.0%}"
+    if financial:
+        return "financial company"
+    if roic_med is not None and roic_med <= 0:
+        return "return on capital is negative"
+    return reason or "capital base unread"
+
+
+def interest_gap_note(interest_years: int, cash: float, invested: float, fy: int) -> str | None:
+    """Say so when nothing was subtracted for interest, and by how much it bites.
+
+    Interest income is removed from the ROIC numerator because the cash that
+    earned it was removed from the denominator. Where the tag is absent the
+    subtraction silently does not happen and the return reads high, with
+    nothing on the page to show it.
+
+    Paychex is the case this was written for: none of InvestmentIncomeInterest,
+    InvestmentIncomeInterestAndDividend, InterestIncomeOther or
+    InterestAndDividendIncomeOperating is in its filing, and it earns interest
+    on roughly $4.8B of client funds tagged FundsHeldForClients — a tag this
+    reader does not read at all. Its ROIC is worth about 47% against 42%.
+    TransDigm reads zero years too.
+
+    The conversion offered is arithmetic on the company's own capital base and
+    nothing else: no interest rate is assumed, because assuming one would be
+    inventing the very number that is missing. A line that reads SOME years and
+    then stops is a different finding — that is the staleness family, and a
+    flow line, which the instants-only guard deliberately does not cover.
+    """
+    if interest_years or cash <= 0 or invested <= 0:
+        return None
+    return (f"Interest income reads no years, so nothing was subtracted on that line above. "
+            f"FY{fy} carried {money(cash)} of cash and investments and whatever it earned is "
+            f"still inside this return, which therefore reads high. Every {money(100.0)} of "
+            f"interest sitting in the numerator is {100.0 / invested:.1%} of ROIC on this "
+            f"capital base. On a filer that holds customer or client money — a payroll "
+            f"processor, a broker, a title insurer — the balance earning it can be several "
+            f"times the cash line above and none of it is visible here.")
+
+
 def self_test() -> list[tuple[str, bool, str]]:
     out = []
 
@@ -2732,6 +2792,32 @@ def self_test() -> list[tuple[str, bool, str]]:
     out.append(("No readable year gives no median at all",
                 median_roic([_R(None, "negative capital")] * 5) is None,
                 "and `can fund` then has no capital ceiling"))
+    # 4m. The badge under `can fund` names the figure it is actually built on.
+    _b_hi = fund_badge_caption(0.4521, 1.704, 0.03557, 0.03688, False, False, None)
+    out.append(("Booking's can-fund badge names the buyback yield, not a ROIC it never uses",
+                "3.6%" in _b_hi and "ROIC" not in _b_hi and "nothing retained" in _b_hi,
+                _b_hi))
+    _b_lo = fund_badge_caption(0.4685, 0.959, 0.0, 0.0192, False, False, None)
+    out.append(("...and a company that does retain earnings still shows ROIC and retention",
+                "ROIC 47%" in _b_lo and "retains 4%" in _b_lo, _b_lo))
+    _b_none = fund_badge_caption(None, 0.0, 0.0, None, False, True, None)
+    out.append(("...and an insurer still says why there is no figure at all",
+                _b_none == "financial company", _b_none))
+    _b_nobb = fund_badge_caption(0.30, 1.20, 0.0, 0.0, False, False, None)
+    out.append(("A payout above 100% with no buyback says so rather than printing a yield",
+                "no buybacks" in _b_nobb, _b_nobb))
+
+    # 4n. Interest income that reads nothing at all is a silent overstatement.
+    _ig = interest_gap_note(0, 4900.0, 7293.0, 2026)
+    out.append(("A ROIC with no interest line at all says the return reads high",
+                _ig is not None and "reads high" in _ig and "1.4%" in _ig,
+                "every $100M of interest is 1.4% of ROIC on a 7,293M base"))
+    out.append(("...and a filer whose interest income IS read stays silent",
+                interest_gap_note(18, 4900.0, 7293.0, 2026) is None,
+                "18 years read, no note"))
+    out.append(("...and so does one with no cash to earn any",
+                interest_gap_note(0, 0.0, 7293.0, 2026) is None, "nothing to earn on"))
+
     out.append(("A payout above 100% leaves can fund as buyback yield alone",
                 abs(per_share_ceiling(0.4521, 1.704, 0.03557) - 0.03688) < 1e-4
                 and abs(per_share_ceiling(0.0, 1.704, 0.03557)
@@ -3013,12 +3099,8 @@ if years and ticker and st.session_state.get("hb_tk") == ticker:
                else "revenue n/a")
               + (f" · OE {oe_cagr:.0%} over {oe_span}y" if oe_cagr is not None else ""))
     m3.metric("Can fund", f"{fundable:.1%}" if fundable is not None else "n/a",
-              (f"ROIC {roic_med:.0%} · retention assumed" if payout_assumed else
-               f"ROIC {roic_med:.0%} · retains {max(0.0,1-payout_eff):.0%}"
-               if fundable is not None else
-               "financial company" if financial else
-               "return on capital is negative" if roic_med is not None and roic_med <= 0 else
-               (latest_r.reason or "capital base unread")))
+              fund_badge_caption(roic_med, payout_eff, buyback_yield, fundable,
+                                 payout_assumed, financial, latest_r.reason))
 
     if seed_is_placeholder and abs(OE - float(round(seed_OE, 1))) < 0.05:
         st.error(
@@ -3327,6 +3409,12 @@ if years and ticker and st.session_state.get("hb_tk") == ticker:
                 "which never did, so subtracting again would count them twice. Restricted cash "
                 f"of {money(w.restricted)} stays in for the reason it always should — it funds "
                 "the business and you cannot have it.")
+            # Directly under the "less interest income" row it is about, which
+            # reads 0 on exactly the filers where the money is largest.
+            _int_gap = interest_gap_note(len(pre.get("interest", {})), w.cash,
+                                         w.invested, latest_r.fy)
+            if _int_gap:
+                st.info(_int_gap)
 
             st.write("**Year by year** — the trend matters more than the level")
             st.dataframe(pd.DataFrame([{
