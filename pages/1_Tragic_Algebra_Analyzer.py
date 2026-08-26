@@ -1396,6 +1396,35 @@ def _cover_asof(facts: dict) -> str:
     return best
 
 
+def split_asof(share_fys, fy_ends: dict, cover_asof: str = "",
+               use_cover: bool = False) -> str:
+    """The date the share counts in use were filed as of. BRIEF ITEM 1c.
+
+    A post-filing split is detected by comparing split dates against this
+    anchor: anything AFTER it has not reached the filings, so the counts need
+    scaling. The anchor was taken from the NET INCOME series, which is a
+    different series that can end in a different year.
+
+    The damage runs one way. Where the share counts stop before net income
+    does — AutoZone's stop at FY2018 against earnings reaching FY2025 — the
+    anchor reads 2025 and a split in, say, 2020 looks OLDER than the data.
+    It is not: the 2018 counts are pre-split and never get scaled, so every
+    per-share figure, market cap and IV15 is wrong by the split ratio. The
+    brief called this out and the earlier fix folded in the cover-page date
+    instead, which repairs it only when the cover-page route happens to win.
+
+    Anchoring to the year of the series actually being scaled fixes it for
+    every route. The cover-page date is still folded in where that route won,
+    because a cover figure is dated at the FILING rather than the year end and
+    is therefore the more recent evidence.
+    """
+    fys = [fy for fy in (share_fys or [])]
+    asof = fy_ends.get(max(fys), "") if fys else max(fy_ends.values(), default="")
+    if use_cover and cover_asof:
+        asof = max(asof, cover_asof)
+    return asof
+
+
 def foreign_filer_note(net_income_tag: str, unread: list[str]) -> str:
     """Say plainly that this is an IFRS filer and which lines went unread.
 
@@ -1748,9 +1777,8 @@ def load(ticker: str, n_years: int = 10):
     # Scaling the share counts rather than the prices is deliberate: it leaves
     # the price on screen matching the price in the market, and every ratio
     # (dilution, P/IV15, market cap) comes out invariant.
-    _asof = max((v[1] for v in series["N"].values()), default="")
-    if _share_route == "the 10-K cover page":
-        _asof = max(_asof, _cover_asof(facts))
+    _asof = split_asof(shares_out, {fy: v[1] for fy, v in series["N"].items()},
+                       _cover_asof(facts), _share_route == "the 10-K cover page")
     _split_factor, _split_seen = 1.0, []
     for _day, _ratio in sorted(splits.items()):
         if _asof and _day > _asof:
@@ -2471,6 +2499,24 @@ def self_test() -> list[tuple[str, bool, str]]:
                 stale_instant_lines({"A": "2025", "B": "2025", "C": "2025", "D": "2025"},
                                     2025, _rows) == [],
                 "Adobe's shape after the debt repair"))
+    # 10e. Item 1c — the split anchor belongs to the series being scaled.
+    _ends = {fy: f"{fy}-08-25" for fy in range(2016, 2026)}
+    out.append(("AutoZone's shape anchors on FY2018, the last year it has share counts for",
+                split_asof([2016, 2017, 2018], _ends) == "2018-08-25",
+                "a 2020 split is now correctly seen as later than the data"))
+    out.append(("...where the old anchor read FY2025 and would have missed that split",
+                max(_ends.values()) == "2025-08-25", "the earnings series, not the share series"))
+    out.append(("A current share series anchors exactly where it did before",
+                split_asof(list(range(2016, 2026)), _ends) == "2025-08-25", "no change"))
+    out.append(("The cover-page date still wins where that route was chosen",
+                split_asof([2025], _ends, "2025-10-20", True) == "2025-10-20",
+                "a cover figure is dated at the filing, not the year end"))
+    out.append(("...and is ignored where it was not",
+                split_asof([2025], _ends, "2025-10-20", False) == "2025-08-25",
+                "only the route that used it gets its date"))
+    out.append(("With no share counts at all it falls back to the earnings series",
+                split_asof({}, _ends) == "2025-08-25", "something is better than nothing"))
+
     # 10d. Shell plc, and the four things it showed.
     _sh = foreign_filer_note("ProfitLossAttributableToOwnersOfParent",
                              ["stock compensation", "the share count", "the balance sheet"])
