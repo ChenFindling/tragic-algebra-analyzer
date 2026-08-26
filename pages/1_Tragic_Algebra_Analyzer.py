@@ -2729,6 +2729,14 @@ def self_test() -> list[tuple[str, bool, str]]:
     out.append(("...while a real 4:1 split is still restated",
                 _real[0][2021] == 400e6 and any("Stock split detected" in m for m in _real[1]),
                 "4:1 in FY2023, earlier years multiplied"))
+    class _Y:
+        def __init__(self, oe, ex=""):
+            self.OE, self.excluded = oe, ex
+    _yrs = [_Y(100.0), _Y(200.0), _Y(-1278.0, "acquisition"), _Y(300.0), _Y(400.0)]
+    _h = sorted(y.OE for y in _yrs[-5:] if not y.excluded)
+    out.append(("The 5-year median drops excluded years, as tool 2's already did",
+                _h[len(_h) // 2] == 300.0 and -1278.0 not in _h,
+                "an excluded year's owners' earnings are not a measurement"))
     out.append(("A 948,347:1 split is a data artifact, not a split",
                 MAX_SPLIT == 200.0 and 948347 > MAX_SPLIT,
                 "Berkshire's A and B counts in one series looked like a split"))
@@ -3348,7 +3356,16 @@ if years and ticker and st.session_state.get("tk") == ticker:
             + (f" (capped from {use_dE:.1%})" if dE_capped else "   ")
             + f"   (full {pooled.dE:.1%} / 3y {recent.dE:.1%})\n"
             f"median OE, 5y       {median_OE:,.0f}\n"
-            f"owners' earnings    {OE:,.0f}   ({OE/shares:,.2f}/share)\n"
+            f"owners' earnings    {OE:,.0f}   ({OE/shares:,.2f}/share)"
+            # ARM, 26 Aug 2026: the block showed "ΔE applied -16.2%" beside
+            # "owners' earnings 556" and no arithmetic connects those two. The
+            # seed came from the median because a negative ΔE cannot project,
+            # which the reader had no way to know from a block whose whole
+            # purpose is to be pasted when something looks wrong.
+            + ("\n" + " " * 20 + "seeded from "
+               + ("forward net income x ΔE" if dE_ok else
+                  "the 5-year median — ΔE is not projectable" if median_OE > 0 else
+                  "forward net income, a ceiling to revise DOWN from")) + "\n"
             f"net cash            {net_cash:,.0f}   ({net_cash/shares:,.2f}/share)\n"
             f"tier                {tier_name}   growth {growth:.2%}\n"
             f"exit multiple       {exit_m:g}x   blend {blend:g}   leg {m2_style}\n"
