@@ -812,6 +812,9 @@ def current_price(ticker: str) -> float | None:
         return None
 
 
+MAX_SPLIT = 200.0   # no real split comes near this; see split_adjust
+
+
 def split_adjust(shares: dict[int, float]) -> tuple[dict[int, float], list[str]]:
     """Restate historical share counts onto the current basis. Ported from
     tool 1: XBRL reports shares as filed, market prices arrive already
@@ -827,6 +830,20 @@ def split_adjust(shares: dict[int, float]) -> tuple[dict[int, float], list[str]]
         adjusted[fy] = shares[fy] * factor
         if i > 0 and shares[fys[i - 1]] > 0:
             ratio = shares[fy] / shares[fys[i - 1]]
+            # A ratio this extreme is not a split. Berkshire, 26 Aug 2026:
+            # its Class A and Class B counts arrived in one series and the
+            # jump between them read as "about 1:948347", which the page then
+            # restated history by. Real splits are small integers; 200:1 is
+            # already far beyond anything a listed company has done.
+            if ratio > MAX_SPLIT or (0 < ratio < 1 / MAX_SPLIT):
+                notes.append(
+                    f"The share count changes by about {max(ratio, 1 / ratio):,.0f}x at FY{fy}, "
+                    "which is too large to be a stock split. The usual cause is two share "
+                    "classes arriving in one series — a count in Class A equivalents beside a "
+                    "count of Class B shares. History has been left as filed rather than "
+                    "restated onto a basis that would be wrong either way; check the share "
+                    "count against the market capitalisation before using any figure here.")
+                continue
             if ratio > 2.85 and shares[fys[i - 1]] < 25e6:
                 continue
             if ratio > 0 and (ratio > 2.85 or ratio < 0.35):
@@ -2065,6 +2082,9 @@ def load(ticker: str, n_years: int = 10):
         "dividends": {fy: abs(series["DIV"][fy][2]) / 1e6 for fy in series.get("DIV", {})},
         "capex": {fy: abs(series["CAPEX"][fy][2]) / 1e6 for fy in series.get("CAPEX", {})},
         "revenue": {fy: rev[fy][2] / 1e6 for fy in rev},
+        # The form that resolved against the SEC list; Yahoo uses the same
+        # hyphenated spelling, so pricing BRK.B as typed returned nothing.
+        "ticker": ticker,
         "name": subs.get("name", ticker),
         "proxy": proxy,
         "form4": _form4_count(subs),
@@ -2179,8 +2199,17 @@ class Verdict:
 
 def assess(required: float | None, fundable: float | None,
            delivered: float | None, mcap_m: float,
-           trend: float | None = None) -> Verdict:
+           trend: float | None = None, oe_m: float | None = None) -> Verdict:
     """The whole tool, in one function, so it can be tested without a browser."""
+    # Before anything else: is this input believable? Tool 1 has had this guard
+    # for a long time and this page had none. Berkshire, 26 Aug 2026: a share
+    # count read in Class A equivalents gave a $160M market cap against
+    # $60,599M of owners' earnings, and the page printed a required growth rate
+    # of MINUS 10.1% and a verdict of "open on history". A company cannot
+    # capitalise at a fraction of one year's earnings; the reading is wrong.
+    if oe_m is not None and oe_m > 0 and 0 < mcap_m < oe_m:
+        return Verdict("This reading is not believable — an input is wrong",
+                       "error", "implausible")
     if mcap_m > 0 and mcap_m * 100 > WORLD_GDP_M * 0.05:
         return Verdict("Closed on size", "error", "size")
     if required is None:
@@ -3067,6 +3096,30 @@ def self_test() -> list[tuple[str, bool, str]]:
     out.append(("...and a usable leg produces no message at all",
                 growth_leg_reason("revenue", 10, 9, 100.0, 300.0) == "", "nothing to say"))
 
+    _brk = split_adjust({2008: 1_550_000.0, 2009: 1_560_000.0, 2010: 2_200_000_000.0,
+                         2011: 2_210_000_000.0})
+    out.append(("Berkshire's two share classes are not restated as a 948,347:1 split",
+                any("too large to be a stock split" in m for m in _brk[1])
+                and _brk[0][2008] == 1_550_000.0,
+                "history left as filed, with a note saying why"))
+    _real = split_adjust({2021: 100e6, 2022: 100e6, 2023: 400e6, 2024: 405e6})
+    out.append(("...while a real 4:1 split is still restated",
+                _real[0][2021] == 400e6 and any("Stock split detected" in m for m in _real[1]),
+                "4:1 in FY2023, earlier years multiplied"))
+    # 4s. Berkshire. A market cap below one year of earnings is a broken read.
+    out.append(("A market cap under one year's owners' earnings is refused outright",
+                assess(0.10, None, 0.12, 160.0, 0.07, 60_599.0).why == "implausible",
+                "$160M against $60,599M of owners' earnings"))
+    out.append(("...and it is checked before size, so the bigger error wins",
+                assess(0.10, None, 0.12, 160.0, 0.07, 60_599.0).kind == "error",
+                "an unbelievable input is not a size verdict"))
+    out.append(("...while an ordinary company is untouched by it",
+                assess(0.20, 0.30, 0.25, 1_980.0, 0.24, 200.0).why == "both",
+                "a $1.98B cap on $200M of owners' earnings is an ordinary 9.9x"))
+    out.append(("...and omitting owners' earnings leaves every verdict as it was",
+                assess(0.20, 0.30, 0.25, 1_980.0, 0.24).why == "both",
+                "the parameter defaults to None"))
+
     # 4q. An insurer cannot pass on the growth leg alone.
     _pgr_small = assess(0.2600, None, 0.3178, 1_980, 0.2900)
     out.append(("Progressive's shape at $2B does not print a pass when ROIC is withheld",
@@ -3379,7 +3432,8 @@ if years and ticker and st.session_state.get("hb_tk") == ticker:
     st.subheader("Inputs")
 
     c1, c2, c3 = st.columns(3)
-    price = c1.number_input("Price", value=float(current_price(tk) or 100.0), step=0.01)
+    price = c1.number_input("Price", value=float(current_price(pre.get("ticker", tk)) or 100.0),
+                            step=0.01)
     shares = c2.number_input("Diluted shares (M)", value=float(round(pre["shares"], 1)), step=1.0,
                              help="Everything per-share divides by this. Check it against the "
                                   "market cap below — a missed second share class is the most "
@@ -3507,7 +3561,7 @@ if years and ticker and st.session_state.get("hb_tk") == ticker:
 
     required = (required_growth(mcap / OE, exit_mult, horizon, 100.0, dilution)
                 if OE > 0 and mcap > 0 else None)
-    v = assess(required, fundable, delivered, mcap, trend)
+    v = assess(required, fundable, delivered, mcap, trend, OE)
 
     # ══ verdict ══════════════════════════════════════════════════════
     st.markdown("---")
@@ -3622,6 +3676,14 @@ if years and ticker and st.session_state.get("hb_tk") == ticker:
             f"its capital funds and the {delivered:.1%} it has delivered. That makes a "
             "hundredfold possible, not likely. Everything now turns on how long the return on "
             "capital and the runway last, which no filing can tell you.")
+    elif v.why == "implausible":
+        st.error(
+            f"**{v.label}.** A market capitalisation of {money(mcap)} against {money(OE)} of "
+            "owners' earnings is a price of less than one year's profit, which no market "
+            "offers. The usual cause is the share count: a company with two share classes "
+            "reports its diluted average in one class's equivalents, so the count can be "
+            "hundreds of times too small. Check the share box against the market "
+            "capitalisation you know — nothing below means anything until it agrees.")
     elif v.why == "no ceiling of either kind":
         st.error(
             f"**{v.label}.** {required:.1%} a year is what the price requires, and neither "
