@@ -2183,15 +2183,52 @@ def fund_badge_caption(roic_med: float | None, payout_eff: float, buyback_yield:
         return f"ROIC {roic_med:.0%} · retention assumed"
     if fundable is not None:
         if payout_eff >= 1.0:
-            return (f"buyback yield {buyback_yield:.1%} · payout {payout_eff:.0%} leaves nothing "
-                    "retained" if buyback_yield > 0 else
-                    f"payout {payout_eff:.0%} leaves nothing retained, and no buybacks either")
+            # Kept under ~30 characters. The first version read "buyback yield
+            # 3.6% · payout 170% leaves nothing retained" and Booking rendered
+            # it as "buyback yield 3.6% · payout 17…" — the truncation ate the
+            # half of the sentence that was the whole point of the fix. The
+            # payout figure is in the assumptions block and in the paragraph
+            # below; what only this badge can say is which term the number
+            # came from.
+            return (f"buyback yield alone · {buyback_yield:.1%}" if buyback_yield > 0 else
+                    "nothing retained, no buybacks")
         return f"ROIC {roic_med:.0%} · retains {max(0.0, 1 - payout_eff):.0%}"
     if financial:
         return "financial company"
     if roic_med is not None and roic_med <= 0:
         return "return on capital is negative"
     return reason or "capital base unread"
+
+
+def can_fund_explainer(oe: float, returned: float, dividends: float, buybacks: float,
+                       payout: float, roic_med: float | None, buyback_yield: float) -> str:
+    """The paragraph under `can fund`, which has to survive a payout above 100%.
+
+    Booking read "leaving 0% retained, reinvested at 45%" — the third printing
+    of the same mistake, after the ROIC expander caption (Drop 18) and the
+    badge above this. Where payout exceeds earnings there is nothing to
+    reinvest and the return on capital is not in the figure at all: the whole
+    of `can fund` is the buyback term, because (1+0)/(1-b)-1 is what is left.
+    Saying otherwise points the reader at a number that had no effect.
+    """
+    head = (f"**Can fund** is {money(oe)} of owners' earnings a year, less the "
+            f"{money(returned)} handed back — {money(dividends)} of dividends and "
+            f"{money(buybacks)} of buybacks")
+    if payout >= 1.0:
+        return (head + ", which is more than it earned. Nothing is retained, so the return on "
+                + (f"capital of {roic_med:.0%} " if roic_med is not None else "capital ")
+                + "does not enter this figure at all — what is left is the buyback yield alone. "
+                + (f"Retiring {buyback_yield:.1%} of the shares a year raises earnings per share "
+                   "by about that much with the business standing still, which is real but is "
+                   "not the company compounding."
+                   if buyback_yield > 0 else
+                   "With no buybacks either, there is nothing here to compound at all."))
+    return (head + f" — leaving {max(0.0, 1 - payout):.0%} retained, reinvested at "
+            + (f"{roic_med:.0%}" if roic_med is not None else "an unreadable return")
+            + ". It is an upper bound, not a forecast: it assumes every retained dollar finds a "
+              "project as good as the business already is. A very high return on capital usually "
+              "means the business needs little capital, which is also a reason there may be "
+              "nowhere to put more of it.")
 
 
 def interest_gap_note(interest_years: int, cash: float, invested: float, fy: int) -> str | None:
@@ -2795,8 +2832,12 @@ def self_test() -> list[tuple[str, bool, str]]:
     # 4m. The badge under `can fund` names the figure it is actually built on.
     _b_hi = fund_badge_caption(0.4521, 1.704, 0.03557, 0.03688, False, False, None)
     out.append(("Booking's can-fund badge names the buyback yield, not a ROIC it never uses",
-                "3.6%" in _b_hi and "ROIC" not in _b_hi and "nothing retained" in _b_hi,
+                "3.6%" in _b_hi and "ROIC" not in _b_hi and "buyback yield alone" in _b_hi,
                 _b_hi))
+    out.append(("...and it is short enough that Streamlit does not truncate the point away",
+                max(len(fund_badge_caption(0.45, p, b, 0.03, False, False, None))
+                    for p, b in ((1.704, 0.03557), (1.20, 0.0), (0.959, 0.0))) <= 30,
+                "longest badge is 30 characters or fewer"))
     _b_lo = fund_badge_caption(0.4685, 0.959, 0.0, 0.0192, False, False, None)
     out.append(("...and a company that does retain earnings still shows ROIC and retention",
                 "ROIC 47%" in _b_lo and "retains 4%" in _b_lo, _b_lo))
@@ -2806,6 +2847,14 @@ def self_test() -> list[tuple[str, bool, str]]:
     _b_nobb = fund_badge_caption(0.30, 1.20, 0.0, 0.0, False, False, None)
     out.append(("A payout above 100% with no buyback says so rather than printing a yield",
                 "no buybacks" in _b_nobb, _b_nobb))
+    _e_hi = can_fund_explainer(3820.0, 6510.0, 484.0, 6020.0, 1.704, 0.4521, 0.03557)
+    out.append(("The paragraph under it stops crediting a ROIC that contributed nothing",
+                "does not enter this figure at all" in _e_hi and "reinvested at" not in _e_hi
+                and "3.6%" in _e_hi, "buyback yield alone, 45% explicitly excluded"))
+    _e_lo = can_fund_explainer(1738.0, 1667.0, 1300.0, 367.0, 0.959, 0.4685, 0.0)
+    out.append(("...and a company that does retain earnings keeps the original wording",
+                "reinvested at 47%" in _e_lo and "4% retained" in _e_lo,
+                "4% retained, reinvested at 47%"))
 
     # 4n. Interest income that reads nothing at all is a silent overstatement.
     _ig = interest_gap_note(0, 4900.0, 7293.0, 2026)
@@ -3145,16 +3194,10 @@ if years and ticker and st.session_state.get("hb_tk") == ticker:
             f"every dollar at {roic_med:.1%}, which is the most generous reading available. Any "
             "dividend or buyback lowers it.")
     elif payout is not None and fundable is not None:
-        st.caption(
-            f"**Can fund** is {money(pay.oe)} of owners' earnings a year, less the "
-            f"{money(pay.returned)} handed back — {money(pay.dividends)} of dividends and "
-            f"{money(pay.implied if pay.used_implied else pay.buybacks)} of buybacks — leaving "
-            f"{max(0.0, 1-payout):.0%} retained, reinvested at "
-            + (f"{roic_med:.0%}" if roic_med is not None else "an unreadable return")
-            + ". It is an upper bound, not a forecast: it assumes every retained dollar finds a "
-              "project as good as the business already is. A very high return on capital usually "
-              "means the business needs little capital, which is also a reason there may be "
-              "nowhere to put more of it.")
+        st.caption(can_fund_explainer(
+            pay.oe, pay.returned, pay.dividends,
+            pay.implied if pay.used_implied else pay.buybacks,
+            payout, roic_med, buyback_yield))
 
     if v.why == "size":
         st.error(
