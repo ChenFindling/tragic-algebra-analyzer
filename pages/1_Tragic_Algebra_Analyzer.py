@@ -1964,6 +1964,27 @@ def load(ticker: str, n_years: int = 10):
 #  SELF-TEST
 # ══════════════════════════════════════════════════════════════════════
 
+def test_summary(results: list[tuple[str, bool, str]]) -> tuple[str, str]:
+    """One line at the TOP of the expander: how many ran, how many failed.
+
+    Verification used to mean scrolling a list of 48 or 124 lines looking for a
+    red tick, or spending screenshots on it. Worse, the count itself was being
+    taken from the source rather than the page: the handover recorded 105
+    checks for this tool because that is how many `out.append` statements it
+    has, while one of them sits inside a loop and the page actually runs 107.
+    A number the page prints itself cannot drift from the page.
+
+    Returns (severity, text) where severity is "success" or "error", so a red
+    is visible before any scrolling and names the checks that failed.
+    """
+    bad = [name for name, ok, _ in results if not ok]
+    if not bad:
+        return "success", f"**{len(results)} checks, 0 failed.**"
+    return "error", (f"**{len(results)} checks, {len(bad)} FAILED:** "
+                     + "; ".join(bad[:4])
+                     + (f" — and {len(bad) - 4} more" if len(bad) > 4 else ""))
+
+
 def self_test() -> list[tuple[str, bool, str]]:
     out = []
     goog = [(2016, 19478, 6900, 3693, 3304, 97, 47), (2017, 12662, 7900, 4846, 4166, 78, 55),
@@ -2193,6 +2214,13 @@ def self_test() -> list[tuple[str, bool, str]]:
                 == _ratio([_Y(G=100.0, Cw=120.0, N=2000.0)]),
                 "ordinary withholding is under 3x the charge, so nothing is rejected"))
 
+    _sum_ok = test_summary([("a", True, ""), ("b", True, "")])
+    out.append(("The expander header counts what actually ran, not what was written",
+                _sum_ok == ("success", "**2 checks, 0 failed.**"), _sum_ok[1]))
+    _sum_bad = test_summary([("a", True, ""), ("b", False, ""), ("c", False, "")])
+    out.append(("...and a red one says so first and names the failures",
+                _sum_bad[0] == "error" and "2 FAILED" in _sum_bad[1]
+                and "b; c" in _sum_bad[1], _sum_bad[1]))
     # 9. Item 9 — a balance-sheet line that stops before net income does.
     #    Fixtures are the real shapes: AutoZone's short-term debt, Progressive's
     #    goodwill, Booking's short-term investments, and a clean Adobe.
@@ -2902,7 +2930,10 @@ with _r2:
             "they are simply answering different questions."
         )
         if st.button("Run checks"):
-            for name, ok, got in self_test():
+            _results = self_test()
+            _sev, _line = test_summary(_results)
+            getattr(st, _sev)(_line)
+            for name, ok, got in _results:
                 st.write(("✅ " if ok else "❌ ") + f"{name} — {got}")
             st.caption("Tolerances: dollar figures within $1, ratios within half a point. "
                        "Burry rounds published prices and share counts, so exact equality "
