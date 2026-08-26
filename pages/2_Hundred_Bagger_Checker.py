@@ -1867,6 +1867,13 @@ def load(ticker: str, n_years: int = 10):
         "Goodwill & intangibles": _sum_latest(facts, GOODWILL + INTANGIBLES),
     }
     _stale_cap = stale_capital_lines(_cap_latest, fys[-1] if fys else 0)
+    if is_financial(sic):
+        # ROIC and its ex-goodwill twin are both withheld for financials, so a
+        # stale goodwill line has nothing on this page to be wrong about.
+        # Progressive, 26 Aug 2026: its only stale capital line is goodwill,
+        # and the note fired to describe an effect on a figure the same page
+        # refuses to show three notes higher up.
+        _stale_cap = [t for t in _stale_cap if t[3] != "exgoodwill"]
     if _stale_cap:
         _up = [t for t in _stale_cap if t[3] == "raises"]
         _down = [t for t in _stale_cap if t[3] == "lowers"]
@@ -1876,32 +1883,33 @@ def load(ticker: str, n_years: int = 10):
                          f"{'s' if _g > 1 else ''} behind" for _n, _y, _g, _ in _stale_cap)
         _cost = []
         if _up:
-            _cost.append("**understates the capital base, so ROIC reads high** — "
-                         + ", ".join(t[0].lower() for t in _up)
+            _cost.append("**Understates the capital base, so ROIC reads high.** "
+                         + ", ".join(t[0].lower() for t in _up).capitalize()
                          + (" is" if len(_up) == 1 else " are") + " part of what the business "
                          "runs on, and the missing years are added as zero rather than carried "
-                         "forward. This is the direction that costs money")
+                         "forward. This is the direction that costs money.")
         if _down:
-            _cost.append("**overstates the capital base, so ROIC reads low** — "
-                         + ", ".join(t[0].lower() for t in _down)
+            _cost.append("**Overstates the capital base, so ROIC reads low.** "
+                         + ", ".join(t[0].lower() for t in _down).capitalize()
                          + (" is" if len(_down) == 1 else " are")
                          + " deducted, and a deduction that goes missing makes the business look "
-                           "more capital-hungry than it is. Conservative, but still wrong")
+                           "more capital-hungry than it is. Conservative, but still wrong.")
         if _lse:
-            _cost.append("**raises ROIC where the missing piece is a finance lease**, which is "
-                         "always in the capital base, and changes nothing unless the leases "
-                         "checkbox is on where it is an operating lease — the panel row sums "
-                         "both, so check which half stopped")
+            _cost.append("**Raises ROIC where the missing piece is a finance lease**, which is "
+                         "always in the capital base. Where it is an operating lease it changes "
+                         "nothing unless the leases checkbox is on. The panel row sums both, so "
+                         "check which half stopped.")
         if _gw:
-            _cost.append("moves the ex-goodwill ROIC only, not the headline figure")
+            _cost.append("**Moves the ex-goodwill ROIC only**, not the headline figure.")
         notes.append(
             "**A capital line here stops before net income does.** " + _say
             + f". Net income reaches FY{fys[-1] if fys else 0}, and a balance sheet is reported "
               "at every year end, so this is not a quiet year — either the balance moved to a "
               "tag this reader does not know, or the line ended and is genuinely zero now. "
               "Unlike the year-by-year table, a missing piece of a total is added as zero, so "
-              "the effect is silent: " + "; ".join(_cost)
-            + ". The tag panel names the tags that answered; the missing name is usually the "
+              "the effect is silent:\n\n"
+            + "\n".join(f"- {_c}" for _c in _cost)
+            + "\n\nThe tag panel names the tags that answered; the missing name is usually the "
               "whole fix.")
 
     pre = {
