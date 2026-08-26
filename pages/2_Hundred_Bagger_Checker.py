@@ -2277,7 +2277,8 @@ def can_fund_explainer(oe: float, returned: float, dividends: float, buybacks: f
               "nowhere to put more of it.")
 
 
-def interest_gap_note(interest_years: int, cash: float, invested: float, fy: int) -> str | None:
+def interest_gap_note(interest_years: int, cash: float, invested: float, fy: int,
+                      latest_int_fy: int | None = None) -> str | None:
     """Say so when nothing was subtracted for interest, and by how much it bites.
 
     Interest income is removed from the ROIC numerator because the cash that
@@ -2294,12 +2295,31 @@ def interest_gap_note(interest_years: int, cash: float, invested: float, fy: int
 
     The conversion offered is arithmetic on the company's own capital base and
     nothing else: no interest rate is assumed, because assuming one would be
-    inventing the very number that is missing. A line that reads SOME years and
-    then stops is a different finding — that is the staleness family, and a
-    flow line, which the instants-only guard deliberately does not cover.
+    inventing the very number that is missing.
+
+    A line that reads SOME years and then stops is the second branch, added
+    26 Aug 2026. H&R Block's interest income ends at FY2020 while its ROIC year
+    is FY2026, so six years of the subtraction simply did not happen and 84.41%
+    reads high — with the earlier years subtracting normally, which is what
+    makes it invisible. This is the item 9 disease on a FLOW line, which the
+    instants-only guard deliberately does not cover: a balance sheet is
+    reported every year end and an income line is not, so a flow that stops
+    can legitimately mean the company stopped earning it. The note says both
+    readings rather than asserting the tag broke.
     """
-    if interest_years or cash <= 0 or invested <= 0:
+    if cash <= 0 or invested <= 0:
         return None
+    if interest_years and (latest_int_fy is None or latest_int_fy >= fy):
+        return None
+    if interest_years:
+        return (f"Interest income reads {interest_years} years but stops at FY{latest_int_fy}, "
+                f"and the ROIC above is FY{fy}. Nothing was subtracted on that line for this "
+                f"year, while earlier years in the median did subtract it — so the latest "
+                f"figure reads high against its own history. Every {money(100.0)} of interest "
+                f"missing from the numerator is {100.0 / invested:.1%} of ROIC on this capital "
+                f"base. A flow line can stop because the company stopped earning it or because "
+                f"the tag changed; the two look identical here, and the tag panel gives the "
+                f"name to check.")
     return (f"Interest income reads no years, so nothing was subtracted on that line above. "
             f"FY{fy} carried {money(cash)} of cash and investments and whatever it earned is "
             f"still inside this return, which therefore reads high. Every {money(100.0)} of "
@@ -2908,8 +2928,16 @@ def self_test() -> list[tuple[str, bool, str]]:
                 _ig is not None and "reads high" in _ig and "1.4%" in _ig,
                 "every $100M of interest is 1.4% of ROIC on a 7,293M base"))
     out.append(("...and a filer whose interest income IS read stays silent",
-                interest_gap_note(18, 4900.0, 7293.0, 2026) is None,
-                "18 years read, no note"))
+                interest_gap_note(18, 4900.0, 7293.0, 2026, 2026) is None,
+                "18 years read to FY2026, no note"))
+    _hrb = interest_gap_note(4, 900.0, 729.0, 2026, 2020)
+    out.append(("H&R Block's interest income stops at FY2020 and the FY2026 ROIC says so",
+                _hrb is not None and "stops at FY2020" in _hrb and "FY2026" in _hrb,
+                "4 years to FY2020 against a FY2026 return"))
+    out.append(("...and it is scaled to the capital base, not to an assumed rate",
+                "13.7% of ROIC" in _hrb, "$100M is 13.7% on a 729M base"))
+    out.append(("...and it does not claim the tag broke, since a flow may simply stop",
+                "stopped earning it" in _hrb, "both readings offered"))
     out.append(("...and so does one with no cash to earn any",
                 interest_gap_note(0, 0.0, 7293.0, 2026) is None, "nothing to earn on"))
 
@@ -3539,8 +3567,9 @@ if years and ticker and st.session_state.get("hb_tk") == ticker:
                 "the business and you cannot have it.")
             # Directly under the "less interest income" row it is about, which
             # reads 0 on exactly the filers where the money is largest.
-            _int_gap = interest_gap_note(len(pre.get("interest", {})), w.cash,
-                                         w.invested, latest_r.fy)
+            _int_series = pre.get("interest", {})
+            _int_gap = interest_gap_note(len(_int_series), w.cash, w.invested, latest_r.fy,
+                                         max(_int_series) if _int_series else None)
             if _int_gap:
                 st.info(_int_gap)
 
