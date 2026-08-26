@@ -1501,11 +1501,36 @@ def _cover_asof(facts: dict) -> str:
     return best
 
 
+def resolve_ticker(ticker: str, cmap: dict) -> str | None:
+    """Find a ticker in the SEC list, allowing for how people actually type it.
+
+    The SEC writes class shares with a hyphen — BRK-B, BF-B, HEI-A — and
+    almost everyone writes them with a dot. Berkshire is the single most
+    likely first search on a value-investing forum, and both pages answered
+    "'BRK.B' is not in the SEC company list", which reads as "we do not have
+    Berkshire" rather than "try the other punctuation".
+
+    Tries the ticker as given, then the dot and hyphen swapped both ways.
+    Returns the form that resolved, or None. Yahoo also uses the hyphen, so
+    the resolved form is the right one for the price lookup too.
+    """
+    t = (ticker or "").strip().upper()
+    for candidate in (t, t.replace(".", "-"), t.replace("-", ".")):
+        if candidate in cmap:
+            return candidate
+    return None
+
+
 def load(ticker: str, n_years: int = 10):
     """Everything this page needs, in one pass over the filings."""
     cmap = _ticker_map()
-    if ticker not in cmap:
-        raise ValueError(f"'{ticker}' is not in the SEC company list.")
+    resolved = resolve_ticker(ticker, cmap)
+    if resolved is None:
+        raise ValueError(
+            f"'{ticker}' is not in the SEC company list. Class shares are listed with a "
+            "hyphen rather than a dot — BRK-B, BF-B, HEI-A — and both spellings are "
+            "accepted here, so this is more likely a delisted, foreign or private company.")
+    ticker = resolved
     cik = cmap[ticker]
     facts = _facts(cik)
     subs = _submissions(cik)
@@ -3009,6 +3034,20 @@ def self_test() -> list[tuple[str, bool, str]]:
                 and assess(0.3800, None, 0.2500, 198).why == "history only"
                 and assess(0.2000, 0.3000, 0.2500, 1_980).why == "both",
                 "the parameter defaults to None, so the six original paths are untouched"))
+
+    # 12. Class-share tickers, typed the way people type them.
+    _cm = {"BRK-B": "0001067983", "AAPL": "0000320193", "BF.B": "0000014693"}
+    out.append(("Berkshire resolves whether it is typed with a dot or a hyphen",
+                resolve_ticker("BRK.B", _cm) == "BRK-B"
+                and resolve_ticker("brk.b", _cm) == "BRK-B"
+                and resolve_ticker("BRK-B", _cm) == "BRK-B",
+                "the SEC writes it BRK-B; everyone else writes BRK.B"))
+    out.append(("...and it works in the other direction too",
+                resolve_ticker("BF-B", _cm) == "BF.B", "whichever way the list happens to spell it"))
+    out.append(("...while an ordinary ticker is untouched",
+                resolve_ticker("aapl", _cm) == "AAPL", "upper-cased and passed through"))
+    out.append(("...and a company that really is absent still returns nothing",
+                resolve_ticker("NOTATICKER", _cm) is None, "no false match"))
 
     # 4r. A dropped growth leg says which of the four reasons applied.
     out.append(("Salesforce's owners' earnings are dropped for starting at a loss, not for length",
