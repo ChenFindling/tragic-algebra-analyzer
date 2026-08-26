@@ -392,6 +392,31 @@ def missing_component_total(series_list: list[dict[int, float]], cur_fy: int) ->
     return total
 
 
+def growth_leg_reason(name: str, points: int, span: int, first: float, last: float,
+                      min_span: int = 5) -> str:
+    """Why a growth leg was dropped — the real reason, not a default one.
+
+    `cagr` returns None for four different reasons and the page reported all
+    of them as "covered too few years to be a growth rate", printing the SPAN
+    beside it. Salesforce, 26 Aug 2026: nine clean years spanning nine years,
+    labelled "owners' earnings (9y) covered too few years". The actual cause
+    was FY2017 owners' earnings of -27 — a compound rate cannot start from a
+    negative base. The note contradicted its own figure and sent the reader
+    looking for missing years that were all present.
+
+    Returns "" when the leg is usable.
+    """
+    if points < 3:
+        return f"{name} has only {points} readable year" + ("" if points == 1 else "s")
+    if span < min_span:
+        return f"{name} spans only {span} years"
+    if first <= 0:
+        return f"{name} starts from a loss, so a compound rate has no base to grow from"
+    if last <= 0:
+        return f"{name} ends in a loss, which no growth rate can describe"
+    return ""
+
+
 def carried_forward_capital(invested: float, numerator: float,
                             missing: list[tuple[str, float, str]]) -> tuple[float, float | None]:
     """Invested capital and ROIC if a stale line were carried forward, not zeroed.
@@ -2985,6 +3010,24 @@ def self_test() -> list[tuple[str, bool, str]]:
                 and assess(0.2000, 0.3000, 0.2500, 1_980).why == "both",
                 "the parameter defaults to None, so the six original paths are untouched"))
 
+    # 4r. A dropped growth leg says which of the four reasons applied.
+    out.append(("Salesforce's owners' earnings are dropped for starting at a loss, not for length",
+                growth_leg_reason("owners' earnings", 9, 9, -27.0, 7563.0)
+                == "owners' earnings starts from a loss, so a compound rate has no base "
+                   "to grow from",
+                "nine clean years, and the FY2017 figure is -27"))
+    out.append(("...and a genuinely short series still says it is short",
+                growth_leg_reason("revenue", 2, 1, 100.0, 120.0) == "revenue has only 2 "
+                "readable years", "2 points"))
+    out.append(("...and a long-enough count over too few calendar years says that instead",
+                growth_leg_reason("revenue", 4, 3, 100.0, 120.0) == "revenue spans only 3 years",
+                "3-year span against a 5-year minimum"))
+    out.append(("...and a series ending in a loss is named for that",
+                "ends in a loss" in growth_leg_reason("owners' earnings", 9, 9, 500.0, -20.0),
+                "the last year is negative"))
+    out.append(("...and a usable leg produces no message at all",
+                growth_leg_reason("revenue", 10, 9, 100.0, 300.0) == "", "nothing to say"))
+
     # 4q. An insurer cannot pass on the growth leg alone.
     _pgr_small = assess(0.2600, None, 0.3178, 1_980, 0.2900)
     out.append(("Progressive's shape at $2B does not print a pass when ROIC is withheld",
@@ -3416,9 +3459,12 @@ if years and ticker and st.session_state.get("hb_tk") == ticker:
     trend = max([g for g in (rev_trend, oe_trend) if g is not None], default=None)
     # Generous on purpose, and now actually generous — see delivered_rate.
     delivered = delivered_rate(endpoint, trend)
-    short_spans = [f"{n} ({s}y)" for n, s, g in
-                   (("revenue", rev_span, rev_cagr), ("owners' earnings", oe_span, oe_cagr))
-                   if g is None and s > 0]
+    short_spans = [r for r in (
+        growth_leg_reason("revenue", len(rev_hist), rev_span,
+                          rev_hist[0] if rev_hist else 0.0, rev_hist[-1] if rev_hist else 0.0),
+        growth_leg_reason("owners' earnings", len(oe_clean), oe_span,
+                          oe_clean[0].OE if oe_clean else 0.0,
+                          oe_clean[-1].OE if oe_clean else 0.0)) if r]
 
     required = (required_growth(mcap / OE, exit_mult, horizon, 100.0, dilution)
                 if OE > 0 and mcap > 0 else None)
@@ -3467,11 +3513,13 @@ if years and ticker and st.session_state.get("hb_tk") == ticker:
     if short_spans:
         st.info(
             "**" + " and ".join(short_spans).capitalize()
-            + " covered too few years to be a growth rate**, so it is not counted in *has "
-              "delivered*. Three points spanning two years is a recent trend, not a record, and "
-              "an acquisition inside that window would read as organic growth. Five years is the "
-              "minimum here. Where a line reads fewer years than net income, the tag panel says "
-              "so.")
+            + "**, so it is not counted in *has "
+              "delivered*. A compound rate needs three readable years, a span of at least five, "
+              "and a positive figure at BOTH ends. Three points spanning two years is a recent "
+              "trend rather than a record, and an acquisition inside that window would read as "
+              "organic growth; a rate measured from a loss year is not a growth rate at all, "
+              "whatever arithmetic it produces. Where a line reads fewer years than net income, "
+              "the tag panel says so.")
 
     if pay.warning:
         st.warning("**Check this before trusting the ceiling.** " + pay.warning)
