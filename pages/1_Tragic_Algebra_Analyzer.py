@@ -1131,6 +1131,9 @@ def current_price(ticker: str) -> float | None:
         return None
 
 
+MAX_SPLIT = 200.0   # no real split comes near this; see split_adjust
+
+
 def split_adjust(shares: dict[int, float]) -> tuple[dict[int, float], list[str]]:
     """Restate historical share counts onto the current basis.
 
@@ -1159,6 +1162,20 @@ def split_adjust(shares: dict[int, float]) -> tuple[dict[int, float], list[str]]
             # prior year re-detects the same split on every pass and compounds
             # the factor geometrically.
             ratio = shares[fy] / shares[fys[i - 1]]
+            # A ratio this extreme is not a split. Berkshire, 26 Aug 2026:
+            # its Class A and Class B counts arrived in one series and the
+            # jump between them read as "about 1:948347", which the page then
+            # restated history by. Real splits are small integers; 200:1 is
+            # already far beyond anything a listed company has done.
+            if ratio > MAX_SPLIT or (0 < ratio < 1 / MAX_SPLIT):
+                notes.append(
+                    f"The share count changes by about {max(ratio, 1 / ratio):,.0f}x at FY{fy}, "
+                    "which is too large to be a stock split. The usual cause is two share "
+                    "classes arriving in one series — a count in Class A equivalents beside a "
+                    "count of Class B shares. History has been left as filed rather than "
+                    "restated onto a basis that would be wrong either way; check the share "
+                    "count against the market capitalisation before using any figure here.")
+                continue
             # A share count that MULTIPLIES from a small base is usually a
             # listing, not a split. Splits move a large, established count.
             if ratio > 2.85 and shares[fys[i - 1]] < 25e6:
@@ -2254,6 +2271,11 @@ def load(ticker: str, n_years: int = 10):
     return years, notes, {"tags": tags, "net_cash": net_cash, "cash": cash_total, "debt": debt_total,
                           "median_OE": _med, "revenue": latest_rev, "cagr3": cagr3,
                           "leases": lease_total,
+                          # The form that resolved against the SEC list. Yahoo uses the
+                          # same hyphenated spelling, so pricing BRK.B as typed returned
+                          # nothing and the page fell back to its $100.00 default beside
+                          # a real market cap.
+                          "ticker": ticker,
                           "shares": diluted, "growth": growth, "sic": sic,
                           "sic_desc": sic_desc, "financial": is_financial(sic)}
 
@@ -2697,6 +2719,19 @@ def self_test() -> list[tuple[str, bool, str]]:
                             10, 10, 2025)
     out.append(("...and an unsplit filer is left exactly as it was",
                 "25.7M" in _tr1 and "post-split" not in _tr1, "25.7M against 17.2M"))
+    _brk = split_adjust({2008: 1_550_000.0, 2009: 1_560_000.0, 2010: 2_200_000_000.0,
+                         2011: 2_210_000_000.0})
+    out.append(("Berkshire's two share classes are not restated as a 948,347:1 split",
+                any("too large to be a stock split" in m for m in _brk[1])
+                and _brk[0][2008] == 1_550_000.0,
+                "history left as filed, with a note saying why"))
+    _real = split_adjust({2021: 100e6, 2022: 100e6, 2023: 400e6, 2024: 405e6})
+    out.append(("...while a real 4:1 split is still restated",
+                _real[0][2021] == 400e6 and any("Stock split detected" in m for m in _real[1]),
+                "4:1 in FY2023, earlier years multiplied"))
+    out.append(("A 948,347:1 split is a data artifact, not a split",
+                MAX_SPLIT == 200.0 and 948347 > MAX_SPLIT,
+                "Berkshire's A and B counts in one series looked like a split"))
     out.append(("Every line the tag panel can print has a label",
                 all(k in TAG_LABELS for k in CONCEPTS),
                 f"{len(CONCEPTS)} concepts, {len(CONCEPTS) - sum(k in TAG_LABELS for k in CONCEPTS)} unlabelled"))
@@ -2963,7 +2998,7 @@ if years and ticker and st.session_state.get("tk") == ticker:
              "return on capital is the ceiling. Burry generally sits well below the revenue "
              "figure. For a genuine hypergrowth ramp use the Stage 0 years in Model settings "
              "rather than raising this.") / 100
-    price = c3.number_input("Price", value=float(current_price(tk) or 100.0), step=0.01)
+    price = c3.number_input("Price", value=float(current_price(pre.get("ticker", tk)) or 100.0), step=0.01)
     cash = c3.number_input("Cash & investments ($M)", value=float(round(pre.get("cash", 0.0), 1)),
                            step=10.0, help="Only what is freely deployable. Restricted, regulated "
                                            "and operationally-tied cash funds the business.")
@@ -3140,11 +3175,19 @@ if years and ticker and st.session_state.get("tk") == ticker:
     zn, kind = zone(ratio)
     er_txt = "implausible" if er == float("inf") else f"{er:.1%}"
 
+    # Decided BEFORE the badges are drawn. Berkshire, 26 Aug 2026: a share
+    # count in Class A equivalents produced an IV15 of $262,346 beside a
+    # $100.00 price, and the page printed "Fat Pitch" and "score 35/35" in
+    # green directly above the red box calling the result broken. A reader
+    # scanning headline figures sees the badges first.
+    _broken = er == float("inf") or (price > 0 and iv15 / price > 20)
+
     v1, v2, v3 = st.columns(3)
     v1.metric("IV15", f"${iv15:,.2f}", f"market ${price:,.2f}")
-    v2.metric("Price / IV15", f"{ratio:.2f}x", zn)
-    v3.metric("Expected return", er_txt, f"score {valuation_points(ratio)}/35")
-    if er == float("inf") or (price > 0 and iv15 / price > 20):
+    v2.metric("Price / IV15", f"{ratio:.2f}x", "not usable" if _broken else zn)
+    v3.metric("Expected return", er_txt,
+              "no score — see below" if _broken else f"score {valuation_points(ratio)}/35")
+    if _broken:
         st.error(
             f"**This result is not believable — an input is wrong.** IV15 of {d(iv15)} against a "
             f"{d(price)} share price is not a bargain, it is a broken assumption. The usual "
