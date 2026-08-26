@@ -326,6 +326,51 @@ def dE_was_capped(measured: float) -> bool:
     return DE_SEED_CEILING < measured <= DE_UNUSABLE_ABOVE
 
 
+# Each capital line, and which way a hole in it pushes ROIC. The direction is
+# the point: a missing borrowings component understates the capital base and
+# ROIC reads HIGH, which is the error class that costs money. A missing cash
+# component understates the deduction and ROIC reads LOW, which is merely
+# annoying. The same staleness, opposite consequences.
+CAPITAL_LINE_EFFECT = (
+    ("Shareholders' equity", "raises"),
+    ("Borrowings", "raises"),
+    ("Leases", "leases"),
+    ("Cash", "lowers"),
+    ("Investments", "lowers"),
+    ("Goodwill & intangibles", "exgoodwill"),
+)
+
+
+def stale_capital_lines(latest: dict[str, str], ni_fy: int,
+                        rows=CAPITAL_LINE_EFFECT) -> list[tuple[str, int, int, str]]:
+    """Capital lines whose total stops before net income does. ITEM 9, tool 2.
+
+    Tool 1's twin carries a stale balance FORWARD, because `g()` takes
+    max(d.items()) per line. This page does the opposite: `_instant_sum` adds
+    a missing component as ZERO for that year, so the line does not go stale,
+    it goes absent. AutoZone's current debt stops at FY2014 and simply drops
+    out of every year after it; invested capital of 5,785M is missing it, and
+    the 55.51% ROIC reads high as a result.
+
+    Same disease, opposite arithmetic, opposite wording — which is why this is
+    a separate function from tool 1's rather than a shared one.
+
+    INSTANTS ONLY, for the reason set out in tool 1: a flow line can
+    legitimately stop, a balance sheet cannot. `_sum_latest` already reports
+    the earliest year through which each total is COMPLETE rather than the
+    union's newest year, so a partly-current line is caught here even when one
+    of its components runs to the present.
+    """
+    out = []
+    for name, effect in rows:
+        fy = latest.get(name, "—")
+        if not fy.isdigit():
+            continue
+        if int(fy) < ni_fy:
+            out.append((name, int(fy), ni_fy - int(fy), effect))
+    return out
+
+
 def stale_window_refusal(fys: list[int], rev_fys: list[int], today_year: int) -> str:
     """Reason to refuse a stale earnings window, or '' when it is usable.
 
@@ -1809,6 +1854,56 @@ def load(ticker: str, n_years: int = 10):
     # a snapshot taken at a busy point in the company's own cycle. H&R Block
     # closes on 30 April, days after tax season delivers its cash.
     fye_month = int(series["N"][fys[-1]][1][5:7]) if fys else 12
+    # Computed once, here, and handed to BOTH the panel and the staleness note
+    # below. `_sum_latest` re-reads the facts on every call, and a note running
+    # its own lookup is one edit away from disagreeing with the panel sitting
+    # directly under it.
+    _cap_latest = {
+        "Shareholders' equity": _latest_fy(eq),
+        "Borrowings": _sum_latest(facts, DEBT),
+        "Leases": _sum_latest(facts, FIN_LEASE + OP_LEASE),
+        "Cash": _latest_fy(cash_ser),
+        "Investments": _sum_latest(facts, INVESTMENTS),
+        "Goodwill & intangibles": _sum_latest(facts, GOODWILL + INTANGIBLES),
+    }
+    _stale_cap = stale_capital_lines(_cap_latest, fys[-1] if fys else 0)
+    if _stale_cap:
+        _up = [t for t in _stale_cap if t[3] == "raises"]
+        _down = [t for t in _stale_cap if t[3] == "lowers"]
+        _gw = [t for t in _stale_cap if t[3] == "exgoodwill"]
+        _lse = [t for t in _stale_cap if t[3] == "leases"]
+        _say = "; ".join(f"{_n.lower()} is complete only to FY{_y}, {_g} year"
+                         f"{'s' if _g > 1 else ''} behind" for _n, _y, _g, _ in _stale_cap)
+        _cost = []
+        if _up:
+            _cost.append("**understates the capital base, so ROIC reads high** — "
+                         + ", ".join(t[0].lower() for t in _up)
+                         + (" is" if len(_up) == 1 else " are") + " part of what the business "
+                         "runs on, and the missing years are added as zero rather than carried "
+                         "forward. This is the direction that costs money")
+        if _down:
+            _cost.append("**overstates the capital base, so ROIC reads low** — "
+                         + ", ".join(t[0].lower() for t in _down)
+                         + (" is" if len(_down) == 1 else " are")
+                         + " deducted, and a deduction that goes missing makes the business look "
+                           "more capital-hungry than it is. Conservative, but still wrong")
+        if _lse:
+            _cost.append("**raises ROIC where the missing piece is a finance lease**, which is "
+                         "always in the capital base, and changes nothing unless the leases "
+                         "checkbox is on where it is an operating lease — the panel row sums "
+                         "both, so check which half stopped")
+        if _gw:
+            _cost.append("moves the ex-goodwill ROIC only, not the headline figure")
+        notes.append(
+            "**A capital line here stops before net income does.** " + _say
+            + f". Net income reaches FY{fys[-1] if fys else 0}, and a balance sheet is reported "
+              "at every year end, so this is not a quiet year — either the balance moved to a "
+              "tag this reader does not know, or the line ended and is genuinely zero now. "
+              "Unlike the year-by-year table, a missing piece of a total is added as zero, so "
+              "the effect is silent: " + "; ".join(_cost)
+            + ". The tag panel names the tags that answered; the missing name is usually the "
+              "whole fix.")
+
     pre = {
         "sic": sic, "sic_desc": sic_desc, "financial": is_financial(sic),
         "shares": diluted, "dilution": dil, "caps": caps, "fys": fys,
@@ -1848,27 +1943,27 @@ def load(ticker: str, n_years: int = 10):
              "Status": "used" if _share_route.startswith("the weighted") else
                        "read" if _wv else "not tagged"},
             {"Line": "— Shareholders' equity", "Years read": len(eq),
-             "Latest year": _latest_fy(eq),
+             "Latest year": _cap_latest["Shareholders' equity"],
              "XBRL tag": " + ".join(bal["equity"]) or "—",
              "Status": "read" if eq else "no equity tag found — ROIC cannot be built"},
             {"Line": "— Borrowings", "Years read": len(debt),
-             "Latest year": _sum_latest(facts, DEBT),
+             "Latest year": _cap_latest["Borrowings"],
              "XBRL tag": " + ".join(bal["debt"]) or "—",
              "Status": "read" if debt else "none found (many companies genuinely have none)"},
             {"Line": "— Leases", "Years read": len(op_lease) + len(fin_lease),
-             "Latest year": _sum_latest(facts, FIN_LEASE + OP_LEASE),
+             "Latest year": _cap_latest["Leases"],
              "XBRL tag": " + ".join(bal["leases"]) or "—",
              "Status": "read" if (op_lease or fin_lease) else "none found"},
             {"Line": "— Cash", "Years read": len(cash_ser),
-             "Latest year": _latest_fy(cash_ser),
+             "Latest year": _cap_latest["Cash"],
              "XBRL tag": " + ".join(bal["cash"]) or "—",
              "Status": "read" if cash_ser else "no cash tag found"},
             {"Line": "— Investments", "Years read": len(invest),
-             "Latest year": _sum_latest(facts, INVESTMENTS),
+             "Latest year": _cap_latest["Investments"],
              "XBRL tag": " + ".join(bal["investments"]) or "—",
              "Status": "read" if invest else "none found"},
             {"Line": "— Goodwill & intangibles", "Years read": len(goodwill) + len(intang),
-             "Latest year": _sum_latest(facts, GOODWILL + INTANGIBLES),
+             "Latest year": _cap_latest["Goodwill & intangibles"],
              "XBRL tag": " + ".join(bal["goodwill"]) or "—",
              "Status": "read" if (goodwill or intang) else "none found"},
         ],
@@ -2610,6 +2705,35 @@ def self_test() -> list[tuple[str, bool, str]]:
                 and assess(0.3800, None, 0.2500, 198).why == "history only"
                 and assess(0.2000, 0.3000, 0.2500, 1_980).why == "both",
                 "the parameter defaults to None, so the six original paths are untouched"))
+
+    # 4j. Item 9 on this page. Same disease as tool 1, opposite arithmetic: a
+    #     missing component is added as zero, so the direction of the error
+    #     depends on which side of the capital base the line sits.
+    _azo_cap = stale_capital_lines(
+        {"Shareholders' equity": "2025", "Borrowings": "2014", "Leases": "2025",
+         "Cash": "2025", "Investments": "\u2014", "Goodwill & intangibles": "2020"}, 2025)
+    out.append(("AZO: borrowings to FY2014 and goodwill to FY2020 are both caught",
+                [(n, y, g) for n, y, g, _ in _azo_cap]
+                == [("Borrowings", 2014, 11), ("Goodwill & intangibles", 2020, 5)],
+                f"{[(n, y, g) for n, y, g, _ in _azo_cap]}"))
+    out.append(("...and borrowings is flagged as the direction that costs money",
+                dict((n, e) for n, _, _, e in _azo_cap)["Borrowings"] == "raises"
+                and dict((n, e) for n, _, _, e in _azo_cap)["Goodwill & intangibles"]
+                == "exgoodwill",
+                "capital-side holds raise ROIC; goodwill moves only the ex-goodwill figure"))
+    out.append(("A missing investments deduction is flagged as lowering ROIC instead",
+                [e for n, _, _, e in stale_capital_lines(
+                    {"Investments": "2025"}, 2026)] == ["lowers"],
+                "PAYX's shape — conservative, but still wrong"))
+    out.append(("A line with no data at all is not called stale here either",
+                stale_capital_lines({"Borrowings": "\u2014", "Cash": "2025"}, 2025) == [],
+                "none found is a different finding with a different fix"))
+    out.append(("A fully current capital base fires nothing",
+                stale_capital_lines(
+                    {"Shareholders' equity": "2025", "Borrowings": "2025", "Leases": "2025",
+                     "Cash": "2025", "Investments": "2025",
+                     "Goodwill & intangibles": "2025"}, 2025) == [],
+                "PGR's shape after the Drop 11 debt repair, goodwill aside"))
     return out
 
 
