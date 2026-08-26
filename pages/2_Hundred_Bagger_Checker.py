@@ -2732,6 +2732,11 @@ def self_test() -> list[tuple[str, bool, str]]:
     out.append(("No readable year gives no median at all",
                 median_roic([_R(None, "negative capital")] * 5) is None,
                 "and `can fund` then has no capital ceiling"))
+    out.append(("A payout above 100% leaves can fund as buyback yield alone",
+                abs(per_share_ceiling(0.4521, 1.704, 0.03557) - 0.03688) < 1e-4
+                and abs(per_share_ceiling(0.0, 1.704, 0.03557)
+                        - per_share_ceiling(0.4521, 1.704, 0.03557)) < 1e-9,
+                "BKNG's 3.69%: the 45.21% median multiplies by zero retention"))
 
     # 4j. Item 9 on this page. Same disease as tool 1, opposite arithmetic: a
     #     missing component is added as zero, so the direction of the error
@@ -3266,13 +3271,19 @@ if years and ticker and st.session_state.get("hb_tk") == ticker:
                 (f"The five-year median still reads **{roic_med:.1%}**, from "
                  f"**{_roic_readable} of {len(rows[-5:])}** readable years — the refused years "
                  "are dropped, not counted as zero, so the median describes only the years that "
-                 "computed. That is the figure `can fund` is built on and the one the "
-                 "assumptions block prints."
+                 "computed. It is the figure the assumptions block prints, and the one "
+                 + ("`can fund` multiplies by the share of earnings retained — which here is "
+                    "**nothing**, because payout exceeds earnings, so `can fund` is buyback "
+                    "yield alone and this median does not reach it."
+                    if payout_eff >= 1.0 else
+                    "`can fund` multiplies by the share of earnings retained, so it carries "
+                    "straight through to that ceiling.")
                  if roic_med is not None else
                  "No year in the last five produced a readable return, so there is no median "
                  "and `can fund` has no capital ceiling to work from.")
-                + (f" On {_roic_readable} year{'' if _roic_readable == 1 else 's'} that is a "
-                   "thin base for a ceiling — read it as one year's return, not a trend."
+                + (f" With only {_roic_readable} readable year"
+                   f"{'' if _roic_readable == 1 else 's'}, that is a thin base for a ceiling — "
+                   "read it as one year's return, not a trend."
                    if roic_med is not None and _roic_readable <= 2 else ""))
         else:
             k1, k2, k3 = st.columns(3)
