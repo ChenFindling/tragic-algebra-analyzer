@@ -1392,17 +1392,20 @@ def treasury_signal(shares_out: dict[int, float], wavg: dict[int, float],
     be the same year, and on a filer whose tagged series stopped years ago the
     gap it measured was mostly elapsed time.
 
-    AutoZone, checked against EDGAR on 26 Aug 2026:
+    AutoZone, checked against EDGAR on 26 Aug 2026. The ladder reads
+    CommonStockSharesOutstanding here, which stops at FY2018:
 
-        CommonStockSharesIssued          FY2018   27,530,000
-        WeightedAverageNumber...Diluted  FY2018   27,424,000   ratio 1.004
+        CommonStockSharesOutstanding     FY2018   25.7M
+        WeightedAverageNumber...Diluted  FY2018   27,424,000   ratio 0.94
         WeightedAverageNumber...Diluted  FY2025   17,245,000   ratio 1.49
+        (CommonStockSharesIssued         FY2018   27,530,000   ratio 1.004)
 
-    AutoZone RETIRES the stock it repurchases, so its issued count tracks
-    outstanding closely and there is no treasury block to find. The guard fired
-    anyway, and the note told the reader the difference was "sitting in
-    treasury" — a false statement about that company, produced entirely by
-    seven years of buybacks between one series' last year and the other's.
+    In its own year the count sits BELOW the diluted average, which is what
+    dilution looks like and the opposite of a treasury block — and the issued
+    tag beside it is barely above. The guard fired anyway, and the note told
+    the reader the difference was "sitting in treasury": a false statement
+    about that company, produced entirely by seven years of buybacks between
+    one series' last year and the other's.
 
     Returns (fired, year). With no year in common the test is SKIPPED rather
     than guessed at: a series with no overlap at all is a coverage problem, and
@@ -1413,6 +1416,46 @@ def treasury_signal(shares_out: dict[int, float], wavg: dict[int, float],
         return False, None
     fy = max(common)
     return shares_out[fy] > ratio * wavg[fy], fy
+
+
+def dual_class_signal(outstanding: dict[int, float], wavg: dict[int, float],
+                      factor: float = 1.0) -> tuple[str, int | None, float, float]:
+    """Is the outstanding count missing a share class? Compared IN ONE YEAR.
+
+    ITEM 7. Two defects, one fix.
+
+    First, the same cross-year comparison treasury_signal had: it took
+    max(shares_out) against max(SHD) with nothing tying them to a year. Under a
+    heavy buyback an outstanding count from 2025 against an average from 2019
+    reads like a missing share class, and a genuine dual-class filer whose
+    outstanding tag is current would read clean.
+
+    Second, the series. The ladder fills the weighted-average from three tags
+    (diluted, its alternate spelling, and BASIC as a last resort); the
+    dual-class test read `SHD`, which is unfilled and knows two. A filer that
+    tags only the basic count therefore had a `_wv` for the ladder and nothing
+    here, so the test silently did not run and a missing share class would have
+    gone unreported. Same idea, two lengths, and the shorter one was guarding.
+    Both now read the filled series.
+
+    Returns (kind, fy, outstanding, wavg) with kind one of:
+      "dual" — outstanding is far below the average: classes are missing
+      "gap"  — a smaller divergence, worth naming but not worth overriding
+      "none" — agreement, or no year in common to compare in
+    """
+    common = set(outstanding) & set(wavg)
+    if not common:
+        return "none", None, 0.0, 0.0
+    fy = max(common)
+    o = outstanding[fy] / 1e6
+    w = wavg[fy] / 1e6 * factor
+    if o <= 0 or w <= 0:
+        return "none", fy, o, w
+    if o / w < 0.65:
+        return "dual", fy, o, w
+    if abs(o / w - 1) > 0.03:
+        return "gap", fy, o, w
+    return "none", fy, o, w
 
 
 def share_route_note(kind: str, was: float, wavg: float, route: str,
@@ -1953,22 +1996,30 @@ def load(ticker: str, n_years: int = 10):
     # tagged per class and we may be seeing only one of them. Weighted-average
     # diluted is reported consolidated, so when the two diverge by more than a
     # buyback could explain, trust the diluted figure.
-    sh = series.get("SHD", {})
+    # `_wv` rather than series["SHD"]: same idea, filled from three tags
+    # instead of two. See dual_class_signal. The scaling is still applied, or
+    # the test compares a post-split count against a pre-split one and fires on
+    # a company with one share class.
+    _dc_kind, _dc_fy, _dc_out, _dc_wv = dual_class_signal(shares_out, _wv, _split_factor)
     outstanding = shares_out[max(shares_out)] / 1e6 if shares_out else 0.0
-    # Scaled too, or the dual-class test below compares a post-split count
-    # against a pre-split one and fires on a company with one share class.
-    wavg = sh[max(sh)][2] / 1e6 * _split_factor if sh else 0.0
+    wavg = _dc_wv
     diluted = outstanding or wavg
-    if outstanding > 0 and wavg > 0:
-        if outstanding / wavg < 0.65:
-            diluted = wavg
-            notes.append(f"Shares outstanding read as {outstanding:,.1f}M but weighted-average "
-                         f"diluted is {wavg:,.1f}M — too big a gap for buybacks. This usually "
-                         "means multiple share classes and only one was picked up. Using the "
-                         "diluted figure; check it against the market cap below.")
-        elif abs(outstanding / wavg - 1) > 0.03:
-            notes.append(f"Shares outstanding {outstanding:,.1f}M vs weighted-average diluted "
-                         f"{wavg:,.1f}M. Using the current count; buybacks make the average stale.")
+    if _dc_kind != "none":
+        if _dc_kind == "dual":
+            # The COMPARISON is same-year; the count that replaces it must
+            # still be the most recent one, or a filer whose average stops in
+            # 2019 would be valued on a 2019 share count.
+            diluted = _wv[max(_wv)] / 1e6 * _split_factor
+            notes.append(f"In FY{_dc_fy} shares outstanding read as {_dc_out:,.1f}M but "
+                         f"weighted-average diluted is {_dc_wv:,.1f}M — too big a gap for "
+                         "buybacks. This usually means multiple share classes and only one was "
+                         f"picked up. Using the diluted figure ({diluted:,.1f}M); check it "
+                         "against the market cap below.")
+        else:
+            # Both figures from FY{_dc_fy}, so the ratio quoted is the one tested.
+            notes.append(f"In FY{_dc_fy} shares outstanding read {_dc_out:,.1f}M against "
+                         f"weighted-average diluted {_dc_wv:,.1f}M. Using the current count; "
+                         "buybacks make the average stale.")
 
     rev = series.get("REV", {})
     ry = sorted(rev)
@@ -2379,6 +2430,26 @@ def self_test() -> list[tuple[str, bool, str]]:
                 "coverage is the sparse branch's job"))
     out.append(("A second share class still reads BELOW the average and does not fire",
                 treasury_signal({2025: 10.0e6}, {2025: 14.0e6})[0] is False, "10M vs 14M"))
+
+    # 10c. Item 7 — the dual-class test, same year and same series as the ladder.
+    out.append(("A missing share class is caught in the year both counts exist",
+                dual_class_signal({2025: 10.0e6}, {2025: 25.0e6})[:2] == ("dual", 2025),
+                "10M against 25M is not a buyback"))
+    out.append(("Adobe's ordinary buyback gap is named but does not override the count",
+                dual_class_signal({2025: 413.0e6}, {2025: 427.0e6})[:2] == ("gap", 2025),
+                "413M vs 427M — 3.3%, reported, not overridden"))
+    out.append(("A count within 3% of the average says nothing at all",
+                dual_class_signal({2025: 420.0e6}, {2025: 427.0e6})[0] == "none", "1.6%"))
+    out.append(("A 2025 count is never compared against a 2019 average",
+                dual_class_signal({2019: 30.0e6, 2025: 16.6e6},
+                                  {2019: 30.4e6})[:2] == ("none", 2019),
+                "FY2019 both sides: agreement, and no dual-class claim"))
+    out.append(("With no overlapping year the test is skipped, as the treasury one is",
+                dual_class_signal({2025: 16.6e6}, {2018: 27.4e6}) == ("none", None, 0.0, 0.0),
+                "nothing to compare"))
+    out.append(("A split factor is applied to the average before comparing",
+                dual_class_signal({2025: 791.8e6}, {2025: 32.64e6}, 25.0)[0] == "none",
+                "816M post-split against 791.8M, not 32.6M"))
 
     _tr25 = share_route_note("treasury", 64.5e6, 32.6e6, "the 10-K cover page", 10, 10, 2025,
                              factor=25.0)
