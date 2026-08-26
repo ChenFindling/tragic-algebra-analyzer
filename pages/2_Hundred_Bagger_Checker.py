@@ -371,6 +371,49 @@ def stale_capital_lines(latest: dict[str, str], ni_fy: int,
     return out
 
 
+def carried_forward_capital(invested: float, numerator: float,
+                            missing: list[tuple[str, float, str]]) -> tuple[float, float | None]:
+    """Invested capital and ROIC if a stale line were carried forward, not zeroed.
+
+    ITEM 4, this page's half. Tool 1 carries the last figure found forward;
+    `_instant_sum` here adds the missing component as zero. Same filings,
+    opposite arithmetic, and neither is conservative in general — see
+    stale_swing_note in tool 1 for why unifying the two would be a mistake.
+    So nothing is unified: this states the size of the disagreement.
+
+    Only lines whose effect is unambiguous are counted. Leases are excluded
+    because an operating lease enters the base only when the checkbox is on
+    and a finance lease always does, and the panel row sums both — any claim
+    about a lease line has to say which half, so it says nothing here.
+    Goodwill is excluded because it moves the ex-goodwill figure alone.
+    """
+    adj = invested
+    for _name, amount, effect in missing:
+        if amount <= 0:
+            continue
+        if effect == "raises":
+            adj += amount
+        elif effect == "lowers":
+            adj -= amount
+    return adj, (numerator / adj if adj > 0 else None)
+
+
+def stale_capital_swing_note(invested: float, numerator: float, roic: float | None,
+                             missing: list[tuple[str, float, str]]) -> str:
+    """One sentence putting a number on what the missing component is worth."""
+    live = [m for m in missing if m[1] > 0.05 and m[2] in ("raises", "lowers")]
+    if not live or roic is None:
+        return ""
+    adj, alt = carried_forward_capital(invested, numerator, live)
+    if alt is None or abs(adj - invested) < 0.5:
+        return ""
+    return (" Carried forward at the last complete figure instead of added as zero — the way "
+            "tool 1 treats the same line — invested capital would be about "
+            f"{adj:,.0f}M against {invested:,.0f}M, and this return about {alt:.1%} against "
+            f"{roic:.1%}. Neither is a correction of the other: one guesses the balance "
+            "persisted, the other that it ended. The tag name settles it.")
+
+
 def stale_window_refusal(fys: list[int], rev_fys: list[int], today_year: int) -> str:
     """Reason to refuse a stale earnings window, or '' when it is usable.
 
@@ -1867,6 +1910,20 @@ def load(ticker: str, n_years: int = 10):
         "Goodwill & intangibles": _sum_latest(facts, GOODWILL + INTANGIBLES),
     }
     _stale_cap = stale_capital_lines(_cap_latest, fys[-1] if fys else 0)
+    # What the missing component is worth, in $M, taken from the SAME series
+    # the capital base is built from rather than looked up again. The estimate
+    # is the total when the line was last complete less whatever survives in
+    # the current year — so a line that merely grew reads as nothing missing.
+    _cur_fy = fys[-1] if fys else 0
+    _cap_series = {"Shareholders' equity": eq, "Borrowings": debt,
+                   "Cash": cash_ser, "Investments": invest}
+    _cap_missing = []
+    for _n, _y, _g, _eff in _stale_cap:
+        _ser = _cap_series.get(_n)
+        if not _ser:
+            continue
+        _cap_missing.append(
+            (_n, (_ser.get(_y, 0.0) - _ser.get(_cur_fy, 0.0)) / 1e6, _eff))
     if is_financial(sic):
         # ROIC and its ex-goodwill twin are both withheld for financials, so a
         # stale goodwill line has nothing on this page to be wrong about.
@@ -1915,6 +1972,7 @@ def load(ticker: str, n_years: int = 10):
     pre = {
         "sic": sic, "sic_desc": sic_desc, "financial": is_financial(sic),
         "shares": diluted, "dilution": dil, "caps": caps, "fys": fys,
+        "cap_missing": _cap_missing,
         "interest": {fy: abs(series["INT"][fy][2]) / 1e6 for fy in series.get("INT", {})},
         "leasepay": {fy: abs(series["LEASEPAY"][fy][2]) / 1e6 for fy in series.get("LEASEPAY", {})},
         "dividends": {fy: abs(series["DIV"][fy][2]) / 1e6 for fy in series.get("DIV", {})},
@@ -2977,6 +3035,30 @@ def self_test() -> list[tuple[str, bool, str]]:
                 assess(0.12, 0.50, delivered_rate(0.0711, 0.13), 50_000.0, 0.13).why == "both",
                 "the gate is the trend, not delivered"))
 
+    # 4p. Item 4 — the same disagreement, priced.
+    _mv = [("Borrowings", 1_200.0, "raises")]
+    _adj, _alt = carried_forward_capital(5_785.0, 3_211.0, _mv)
+    out.append(("AutoZone's missing borrowings would raise the capital base, lowering ROIC",
+                abs(_adj - 6_985.0) < 1e-6 and _alt < 3_211.0 / 5_785.0,
+                f"{_adj:,.0f}M, ROIC {_alt:.1%}"))
+    _mv2 = [("Investments", 1_000.0, "lowers")]
+    out.append(("...and a missing deduction runs the other way",
+                abs(carried_forward_capital(5_785.0, 3_211.0, _mv2)[0] - 4_785.0) < 1e-6,
+                "4,785M"))
+    out.append(("Leases and goodwill are left out of the swing on purpose",
+                carried_forward_capital(5_785.0, 3_211.0,
+                                        [("Leases", 900.0, "leases"),
+                                         ("Goodwill & intangibles", 900.0, "exgoodwill")])[0]
+                == 5_785.0, "neither has one unambiguous effect on this figure"))
+    _swn = stale_capital_swing_note(5_785.0, 3_211.0, 0.5551, _mv)
+    out.append(("The note prices the disagreement and refuses to call either side right",
+                "6,985M" in _swn and "5,785M" in _swn and "The tag name settles it" in _swn,
+                _swn[:70] + "…"))
+    out.append(("...and stays silent when there is nothing unambiguous to price",
+                stale_capital_swing_note(5_785.0, 3_211.0, 0.5551,
+                                         [("Leases", 900.0, "leases")]) == "",
+                "no sentence rather than a misleading one"))
+
     out.append(("A payout above 100% leaves can fund as buyback yield alone",
                 abs(per_share_ceiling(0.4521, 1.704, 0.03557) - 0.03688) < 1e-4
                 and abs(per_share_ceiling(0.0, 1.704, 0.03557)
@@ -3572,6 +3654,12 @@ if years and ticker and st.session_state.get("hb_tk") == ticker:
                                          max(_int_series) if _int_series else None)
             if _int_gap:
                 st.info(_int_gap)
+            # Item 4. Priced here rather than in the notes list because this is
+            # the only place invested capital and the return are both on screen.
+            _swing = stale_capital_swing_note(w.invested, latest_r.numerator, latest_r.roic,
+                                              pre.get("cap_missing", []))
+            if _swing:
+                st.caption("**The other page reads this line differently.**" + _swing)
 
             st.write("**Year by year** — the trend matters more than the level")
             st.dataframe(pd.DataFrame([{
