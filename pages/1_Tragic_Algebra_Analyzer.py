@@ -1132,6 +1132,12 @@ TAG_LABELS = {
     "MA": "Shares issued for acquisitions", "OFFER": "Shares issued in offerings",
     "CONV": "Shares from conversions",
     "MAV": "Value of stock issued for acquisitions",
+    # Without an entry here the panel printed the raw dictionary key "SHD"
+    # beside a "— Shares: diluted average" row and looked like a duplicate.
+    # They are two different reads of the same idea: this one is unfilled and
+    # feeds the dual-class check, the row below is filled across three tags
+    # and feeds the share ladder. Named for what it is used for.
+    "SHD": "Diluted shares — dual-class check",
 }
 
 
@@ -1333,6 +1339,43 @@ def _cover_asof(facts: dict) -> str:
     return best
 
 
+def share_route_note(kind: str, was: float, wavg: float, route: str,
+                     covered: int, window: int, last_fy: int,
+                     factor: float = 1.0) -> str:
+    """Explain why the tagged share count was put aside, and for which reason.
+
+    There were two wordings for three situations, so the third borrowed the
+    second's. TransDigm's note said the count "barely moved while the company
+    was buying stock back" — which was false about a series whose three tagged
+    figures were correct and simply stop in 2012. A note that misdescribes what
+    it found is worse than no note.
+
+    The figures are also scaled by `factor`. `_was` and `_wv` are read before
+    the post-filing split adjustment, so Booking printed 64.5M against 32.6M
+    while every other share figure on the page was post-split by 25 — the ratio
+    was right and both numbers were on a basis the reader could not see.
+    """
+    if kind == "treasury":
+        return ("The share count read as {:,.1f}M against a weighted-average diluted count of "
+                "{:,.1f}M — that far above the average means issued shares, with the difference "
+                "sitting in treasury, so repurchases never showed and every per-share figure "
+                "used too many shares. Switched to {}.{}"
+                ).format(was * factor / 1e6, wavg * factor / 1e6, route,
+                         f" Both counts are shown on the current post-split basis "
+                         f"(x{factor:g}), like every other share figure here."
+                         if abs(factor - 1.0) > 0.01 else "")
+    if kind == "static":
+        return ("The share count barely moved while the company was buying stock back, so the "
+                "tag being read is not shares outstanding. Switched to {}.").format(route)
+    # sparse: nothing wrong with the figures, there are just too few of them
+    return ("The tagged share count is not wrong, there is too little of it: {} of the {} years "
+            "in this window carry one and the series stops at FY{}. A year with no count shows "
+            "no share change, so its whole buyback would fall on employees. {}"
+            ).format(covered, window, last_fy,
+                     "Kept it anyway — nothing else covers this window better."
+                     if route == "the tagged share count" else f"Switched to {route}.")
+
+
 def load(ticker: str, n_years: int = 10):
     cmap = _ticker_map()
     if ticker not in cmap:
@@ -1427,6 +1470,7 @@ def load(ticker: str, n_years: int = 10):
                               "TreasuryStockNumberOfSharesHeld",
                               "TreasuryStockCommonSharesHeld"], unit="shares")
     _share_route = "as tagged"
+    _route_note, _route_extra = None, None
     if _wv and shares_out:
         _lat, _latw = max(shares_out), max(_wv)
         _win0 = sorted(series["N"])[-n_years:]
@@ -1438,6 +1482,9 @@ def load(ticker: str, n_years: int = 10):
         # +0.0 in every year and the whole buyback fell on employees — the same
         # damage as the treasury case, arriving by a different door. Coverage is
         # the thing to test, not the symptom that first made it visible.
+        # Captured before shares_out is replaced below, or the note would count
+        # coverage of the series that WON rather than the one it is describing.
+        _covered_by = dict(shares_out)
         _sparse = sum(1 for fy in _win0 if fy in shares_out) < 0.6 * len(_win0)
         if _static or _treasury or _sparse:
             _was = shares_out[_lat]
@@ -1473,17 +1520,15 @@ def load(ticker: str, n_years: int = 10):
                 _pick, _share_route = _wv, "the weighted-average diluted count"
             shares_out, _extra = split_adjust(_pick)
             notes.extend(_extra)
-            notes.append(
-                ("The share count read as {:,.1f}M against a weighted-average diluted count of "
-                 "{:,.1f}M — that far above the average means issued shares, with the difference "
-                 "sitting in treasury, so repurchases never showed and every per-share figure "
-                 "used too many shares. Switched to {}."
-                 ).format(_was / 1e6, _wv[_latw] / 1e6, _share_route)
-                if _treasury else
-                ("The share count barely moved while the company was buying stock back, so the "
-                 "tag being read is not shares outstanding. Switched to {}.").format(_share_route))
+            # Held back until the post-filing split factor below is known, so
+            # the figures quoted are on the same basis as every other share
+            # count on the page. Booking is the case: 64.5M against 32.6M is
+            # the right ratio in units nothing else on the page uses.
+            _route_note = ("treasury" if _treasury else "static" if _static else "sparse",
+                           _was, _wv[_latw], _share_route,
+                           sum(1 for fy in _win0 if fy in _covered_by), len(_win0), _lat)
             if _share_route.startswith("the weighted"):
-                notes.append(
+                _route_extra = (
                     "That count is an average over each year rather than a year-end snapshot, so "
                     "its change lags the repurchase and the true stock-comp cost below will be "
                     "erratic — compare it against the GAAP charge before trusting any year.")
@@ -1528,6 +1573,11 @@ def load(ticker: str, n_years: int = 10):
               f"same basis. Without this the market cap would be wrong by that factor and IV15 "
               f"would be measured against a price it does not match. The next annual filing "
               f"makes the adjustment unnecessary and it will stop being applied.")
+
+    if _route_note:
+        notes.append(share_route_note(*_route_note, factor=_split_factor))
+    if _route_extra:
+        notes.append(_route_extra)
 
     # NetIncomeLoss is profit attributable to the parent; ProfitLoss includes
     # what belongs to minority holders of consolidated subsidiaries. Filling
@@ -1661,7 +1711,8 @@ def load(ticker: str, n_years: int = 10):
         else:
             notes.append(
                 "Tax withholding was read from a treasury-stock line rather than the usual "
-                "withholding tag. Filers that retire shares on repurchase report it this way.")
+                "withholding tag. Filers that retire shares on repurchase report it this way. "
+                "The amounts are withholding-sized, so they were accepted.")
 
     # MOVED BELOW THE WITHHOLDING GUARD, 26 Aug 2026. `omega` is a live property
     # over `Cw`, so this ratio changes the moment the guard above zeroes a
@@ -2166,6 +2217,32 @@ def self_test() -> list[tuple[str, bool, str]]:
                 stale_instant_lines({"A": "2026", "B": "2025", "C": "2025", "D": "2025"},
                                     2025, _rows) == [],
                 "only trailing years are a finding"))
+
+    # 10. The share-route note: three situations, three wordings, and figures
+    #     on the basis the rest of the page uses. TransDigm cannot verify this
+    #     on the page — its tool 1 verdict is "Not investible" and nothing
+    #     renders below it — so its shape is pinned here instead.
+    _sp = share_route_note("sparse", 56.3e6, 58.2e6, "the 10-K cover page", 3, 10, 2012)
+    out.append(("A short share series is described as short, not as static",
+                "stops at FY2012" in _sp and "barely moved" not in _sp,
+                _sp[:72] + "…"))
+    out.append(("...and it says how much of the window it actually covers",
+                "3 of the 10 years" in _sp, "3 of the 10 years"))
+    _st = share_route_note("static", 56.3e6, 58.2e6, "the 10-K cover page", 10, 10, 2025)
+    out.append(("A genuinely static count keeps the wording written for it",
+                "barely moved" in _st and "stops at" not in _st, _st[:60] + "…"))
+    _tr25 = share_route_note("treasury", 64.5e6, 32.6e6, "the 10-K cover page", 10, 10, 2025,
+                             factor=25.0)
+    out.append(("Booking's treasury note prints post-split counts, not 64.5M vs 32.6M",
+                "1,612.5M" in _tr25 and "815.0M" in _tr25 and "64.5M" not in _tr25,
+                "1,612.5M against 815.0M, both x25"))
+    _tr1 = share_route_note("treasury", 25.7e6, 17.2e6, "issued minus treasury shares",
+                            10, 10, 2025)
+    out.append(("...and an unsplit filer is left exactly as it was",
+                "25.7M" in _tr1 and "post-split" not in _tr1, "25.7M against 17.2M"))
+    out.append(("Every line the tag panel can print has a label",
+                all(k in TAG_LABELS for k in CONCEPTS),
+                f"{len(CONCEPTS)} concepts, {len(CONCEPTS) - sum(k in TAG_LABELS for k in CONCEPTS)} unlabelled"))
     return out
 
 
