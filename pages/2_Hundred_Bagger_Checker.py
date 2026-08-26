@@ -2045,8 +2045,9 @@ def assess(required: float | None, fundable: float | None,
     if fundable is not None and required > fundable:
         return Verdict("The arithmetic does not close", "error", "capital")
     # Fundable, but the company has never gone at anything like this rate. Both
-    # ceilings are generous here — delivered takes the better of revenue and
-    # owners' earnings — so failing this one is a real finding.
+    # ceilings are generous here — delivered takes the best of revenue and
+    # owners' earnings, read both as endpoints and as a fitted trend — so
+    # failing this one is a real finding.
     if delivered is not None and required > max(delivered * 1.5, delivered + 0.03):
         if fundable is None:
             return Verdict("Unprecedented, and no ceiling to check it against",
@@ -2165,6 +2166,30 @@ def roic_caveat(r: RoicYear, fye_month: int) -> str:
 # ══════════════════════════════════════════════════════════════════════
 #  SELF-TEST
 # ══════════════════════════════════════════════════════════════════════
+
+def delivered_rate(endpoint: float | None, trend: float | None) -> float | None:
+    """The kindest honest reading of a company's growth history.
+
+    `delivered` is the ceiling a refusal has to clear, so it is deliberately
+    generous: a refusal that survives the friendliest reading of the record is
+    a refusal worth trusting. It used to be max(revenue CAGR, owners' earnings
+    CAGR) — both two-point rates — and the comment claimed that was generous.
+    It is not reliably generous. Adobe reads 28.12% on endpoints against 29.67%
+    fitted through every year, and AutoZone 7.11% against 8.46%: on both, the
+    trend runs ABOVE the endpoint rate, so the supposedly kind measure was the
+    harsh one and the tool refused on a rate lower than the company had
+    actually managed.
+
+    This does NOT touch the pass side. `assess` gates every open verdict on
+    `trend` separately, and that gate is untouched, so a larger `delivered`
+    can turn a refusal into a warning but can never produce a green that the
+    fitted trend does not also support. Correcting an error in the
+    conservative direction is still correcting an error: a wrong number is
+    worse than a cautious one.
+    """
+    vals = [g for g in (endpoint, trend) if g is not None]
+    return max(vals) if vals else None
+
 
 def fund_badge_caption(roic_med: float | None, payout_eff: float, buyback_yield: float,
                        fundable: float | None, payout_assumed: bool, financial: bool,
@@ -2867,6 +2892,35 @@ def self_test() -> list[tuple[str, bool, str]]:
     out.append(("...and so does one with no cash to earn any",
                 interest_gap_note(0, 0.0, 7293.0, 2026) is None, "nothing to earn on"))
 
+    # 4o. Item 2. The refusal ceiling takes the kindest reading, and on Adobe
+    #     and AutoZone the kindest reading is the fitted trend, not the
+    #     endpoints the old rule used.
+    out.append(("Adobe's delivered takes the trend, which runs above its endpoint rate",
+                abs(delivered_rate(0.2812, 0.2967) - 0.2967) < 1e-9,
+                "28.12% endpoints, 29.67% fitted — the higher one is the ceiling"))
+    out.append(("AutoZone likewise: 7.11% endpoints, 8.46% fitted",
+                abs(delivered_rate(0.0711, 0.0846) - 0.0846) < 1e-9, "8.46%"))
+    out.append(("Progressive keeps its endpoint rate, which is the higher one there",
+                abs(delivered_rate(0.3178, 0.2055) - 0.3178) < 1e-9,
+                "31.78% endpoints beats a 20.55% trend"))
+    out.append(("A company with only one readable reading still gets a ceiling",
+                delivered_rate(None, 0.09) == 0.09 and delivered_rate(0.09, None) == 0.09
+                and delivered_rate(None, None) is None, "either alone, or neither"))
+    # The direction of the correction: a refusal can soften to a warning...
+    _old = assess(0.12, 0.50, 0.0711, 50_000.0, 0.0846)
+    _new = assess(0.12, 0.50, delivered_rate(0.0711, 0.0846), 50_000.0, 0.0846)
+    out.append(("A kinder ceiling can turn 'unprecedented' into a milder verdict",
+                _old.why == "history" and _new.why == "growth measure",
+                f"{_old.label} -> {_new.label}"))
+    # ...but never into a green, because the trend gate is a separate test.
+    out.append(("...but it can never manufacture a pass the trend does not support",
+                all(assess(0.12, 0.50, delivered_rate(0.0711, t), 50_000.0, t).why != "both"
+                    for t in (0.0846, 0.10, 0.1199)),
+                "every trend below the requirement still refuses to reach 'open'"))
+    out.append(("...and a trend that does clear it still passes",
+                assess(0.12, 0.50, delivered_rate(0.0711, 0.13), 50_000.0, 0.13).why == "both",
+                "the gate is the trend, not delivered"))
+
     out.append(("A payout above 100% leaves can fund as buyback yield alone",
                 abs(per_share_ceiling(0.4521, 1.704, 0.03557) - 0.03688) < 1e-4
                 and abs(per_share_ceiling(0.0, 1.704, 0.03557)
@@ -3117,9 +3171,9 @@ if years and ticker and st.session_state.get("hb_tk") == ticker:
     oe_span = oe_clean[-1].fy - oe_clean[0].fy if len(oe_clean) >= 2 else 0
     oe_cagr = (cagr(oe_clean[0].OE, oe_clean[-1].OE, oe_span)
                if len(oe_clean) >= 3 and oe_span >= MIN_SPAN else None)
-    # Deliberately generous: the better of the two. A refusal that survives the
-    # kindest reading of the history is a refusal worth trusting.
-    delivered = max([g for g in (rev_cagr, oe_cagr) if g is not None], default=None)
+    # The better of the two two-point rates. Kept as its own name because the
+    # growth-measure warning below has to be able to say which reading is which.
+    endpoint = max([g for g in (rev_cagr, oe_cagr) if g is not None], default=None)
     # The same two series read as a trend rather than as endpoints. Same
     # generosity about WHICH series describes the business, none about which
     # two years happen to sit at the ends of it. See trend_growth's docstring.
@@ -3128,6 +3182,8 @@ if years and ticker and st.session_state.get("hb_tk") == ticker:
     oe_trend = (trend_growth([y.OE for y in oe_clean])
                 if len(oe_clean) >= 3 and oe_span >= MIN_SPAN else None)
     trend = max([g for g in (rev_trend, oe_trend) if g is not None], default=None)
+    # Generous on purpose, and now actually generous — see delivered_rate.
+    delivered = delivered_rate(endpoint, trend)
     short_spans = [f"{n} ({s}y)" for n, s, g in
                    (("revenue", rev_span, rev_cagr), ("owners' earnings", oe_span, oe_cagr))
                    if g is None and s > 0]
@@ -3167,9 +3223,10 @@ if years and ticker and st.session_state.get("hb_tk") == ticker:
     if v.why == "growth measure":
         st.warning(
             f"**This price is open on one reading of the history and not the other.** *Has "
-            f"delivered* is {delivered:.1%} — the rate between the first and last year of the "
-            f"window, which is decided by whichever two years sit at the ends. Fitted through "
-            f"every year instead, the same history gives {trend:.1%}. This price needs "
+            f"delivered* is {delivered:.1%} — the kindest reading available, here the rate "
+            f"between the first and last year of the window, which is decided by whichever two "
+            f"years sit at the ends. Fitted through every year instead, the same history gives "
+            f"{trend:.1%}. This price needs "
             f"{required:.1%} a year, which the trend does not reach. Nothing here is called "
             "open on an endpoint rate alone: a refusal that survives the kindest reading is "
             "worth trusting, but a pass that only survives it is the one error on this page "
@@ -3553,7 +3610,12 @@ if years and ticker and st.session_state.get("hb_tk") == ticker:
             f"can fund            "
             + (f"{fundable:.2%}/yr" if fundable is not None else "n/a") + "\n"
             f"has delivered       "
-            + (f"{delivered:.2%}/yr" if delivered is not None else "n/a") + "\n"
+            + (f"{delivered:.2%}/yr" if delivered is not None else "n/a")
+            + ("   (the kinder of the two below)"
+               if endpoint is not None and trend is not None else "") + "\n"
+            f"  endpoint basis    "
+            + (f"{endpoint:.2%}/yr" if endpoint is not None else "n/a")
+            + "   (first to last year)\n"
             f"  trend basis       "
             + (f"{trend:.2%}/yr" if trend is not None else "n/a")
             + "   (log-linear, all years)\n"
