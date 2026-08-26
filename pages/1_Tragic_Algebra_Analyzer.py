@@ -1381,6 +1381,40 @@ def _cover_asof(facts: dict) -> str:
     return best
 
 
+def treasury_signal(shares_out: dict[int, float], wavg: dict[int, float],
+                    ratio: float = 1.15) -> tuple[bool, int | None]:
+    """Is the tagged share count inflated by treasury stock? Compared IN ONE YEAR.
+
+    The test is sound: a year-end count materially above the weighted-average
+    diluted count means treasury shares are being counted, because the average
+    excludes them by construction. What was unsound was the years it compared.
+    It took max(shares_out) against max(wavg) with nothing requiring those to
+    be the same year, and on a filer whose tagged series stopped years ago the
+    gap it measured was mostly elapsed time.
+
+    AutoZone, checked against EDGAR on 26 Aug 2026:
+
+        CommonStockSharesIssued          FY2018   27,530,000
+        WeightedAverageNumber...Diluted  FY2018   27,424,000   ratio 1.004
+        WeightedAverageNumber...Diluted  FY2025   17,245,000   ratio 1.49
+
+    AutoZone RETIRES the stock it repurchases, so its issued count tracks
+    outstanding closely and there is no treasury block to find. The guard fired
+    anyway, and the note told the reader the difference was "sitting in
+    treasury" — a false statement about that company, produced entirely by
+    seven years of buybacks between one series' last year and the other's.
+
+    Returns (fired, year). With no year in common the test is SKIPPED rather
+    than guessed at: a series with no overlap at all is a coverage problem, and
+    the sparse branch is what handles those.
+    """
+    common = set(shares_out) & set(wavg)
+    if not common:
+        return False, None
+    fy = max(common)
+    return shares_out[fy] > ratio * wavg[fy], fy
+
+
 def share_route_note(kind: str, was: float, wavg: float, route: str,
                      covered: int, window: int, last_fy: int,
                      factor: float = 1.0) -> str:
@@ -1398,11 +1432,12 @@ def share_route_note(kind: str, was: float, wavg: float, route: str,
     was right and both numbers were on a basis the reader could not see.
     """
     if kind == "treasury":
-        return ("The share count read as {:,.1f}M against a weighted-average diluted count of "
-                "{:,.1f}M — that far above the average means issued shares, with the difference "
+        return ("In FY{} the share count read as {:,.1f}M against a weighted-average diluted "
+                "count of {:,.1f}M — that far above the average means issued shares, with the "
+                "difference "
                 "sitting in treasury, so repurchases never showed and every per-share figure "
                 "used too many shares. Switched to {}.{}"
-                ).format(was * factor / 1e6, wavg * factor / 1e6, route,
+                ).format(last_fy, was * factor / 1e6, wavg * factor / 1e6, route,
                          f" Both counts are shown on the current post-split basis "
                          f"(x{factor:g}), like every other share figure here."
                          if abs(factor - 1.0) > 0.01 else "")
@@ -1517,7 +1552,8 @@ def load(ticker: str, n_years: int = 10):
         _lat, _latw = max(shares_out), max(_wv)
         _win0 = sorted(series["N"])[-n_years:]
         _static = len({round(v) for v in shares_out.values()}) <= 2
-        _treasury = shares_out[_lat] > 1.15 * _wv[_latw]
+        # Same year on both sides, or no test at all — see treasury_signal.
+        _treasury, _treas_fy = treasury_signal(shares_out, _wv)
         # A third failure, found on TransDigm: the tagged series is neither
         # inflated nor static, just SHORT. CommonStockSharesOutstanding covered
         # 3 of 10 years against a 16-year cover page, so the share change read
@@ -1566,9 +1602,13 @@ def load(ticker: str, n_years: int = 10):
             # the figures quoted are on the same basis as every other share
             # count on the page. Booking is the case: 64.5M against 32.6M is
             # the right ratio in units nothing else on the page uses.
+            # For the treasury branch the figures and the year are the ONES THE
+            # TEST USED, not the newest of each series independently.
+            _t_fy = _treas_fy if _treasury and _treas_fy is not None else _lat
             _route_note = ("treasury" if _treasury else "static" if _static else "sparse",
-                           _was, _wv[_latw], _share_route,
-                           sum(1 for fy in _win0 if fy in _covered_by), len(_win0), _lat)
+                           shares_out[_t_fy] if _treasury else _was,
+                           _wv[_t_fy] if _treasury else _wv[_latw], _share_route,
+                           sum(1 for fy in _win0 if fy in _covered_by), len(_win0), _t_fy)
             if _share_route.startswith("the weighted"):
                 _route_extra = (
                     "That count is an average over each year rather than a year-end snapshot, so "
@@ -2324,6 +2364,22 @@ def self_test() -> list[tuple[str, bool, str]]:
     _st = share_route_note("static", 56.3e6, 58.2e6, "the 10-K cover page", 10, 10, 2025)
     out.append(("A genuinely static count keeps the wording written for it",
                 "barely moved" in _st and "stops at" not in _st, _st[:60] + "…"))
+    # 10b. The guard compares one year against itself.
+    _azo_out = {2016: 30.33e6, 2017: 28.74e6, 2018: 27.53e6}
+    _azo_wv = {2018: 27.42e6, 2024: 17.7e6, 2025: 17.245e6}
+    out.append(("AutoZone's issued count is not a treasury block, and FY2018 says so",
+                treasury_signal(_azo_out, _azo_wv) == (False, 2018),
+                "27.53M against 27.42M in the same year is 1.004, not 1.49"))
+    out.append(("Booking's really is one, and still fires",
+                treasury_signal({2024: 63.0e6, 2025: 64.52e6},
+                                {2024: 33.5e6, 2025: 32.64e6}) == (True, 2025),
+                "1.98x in FY2025"))
+    out.append(("With no year in common the test is skipped, not guessed",
+                treasury_signal({2012: 56.3e6}, {2020: 58.2e6, 2025: 55.0e6}) == (False, None),
+                "coverage is the sparse branch's job"))
+    out.append(("A second share class still reads BELOW the average and does not fire",
+                treasury_signal({2025: 10.0e6}, {2025: 14.0e6})[0] is False, "10M vs 14M"))
+
     _tr25 = share_route_note("treasury", 64.5e6, 32.6e6, "the 10-K cover page", 10, 10, 2025,
                              factor=25.0)
     out.append(("Booking's treasury note prints post-split counts, not 64.5M vs 32.6M",
