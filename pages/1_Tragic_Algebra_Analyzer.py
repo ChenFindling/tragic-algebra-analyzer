@@ -1396,6 +1396,50 @@ def _cover_asof(facts: dict) -> str:
     return best
 
 
+def foreign_filer_note(net_income_tag: str, unread: list[str]) -> str:
+    """Say plainly that this is an IFRS filer and which lines went unread.
+
+    Written after Shell plc, 26 Aug 2026 — the first foreign filer either page
+    had been pointed at. Net income and revenue read correctly and every other
+    line silently did not: no stock-comp tag, no balance-sheet tag, no share
+    count. The page printed a complete, confident valuation in which net cash
+    read 0 against roughly $77B of real debt, and six of ten years charged
+    their whole buyback as stock compensation, with nothing saying a word.
+
+    This is not IFRS support. It is the refusal that should exist before
+    support is attempted: the tool's premise is that it never prints a number
+    it cannot stand behind, and a reader that knows US-GAAP tag names cannot
+    stand behind an IFRS filing.
+    """
+    if not net_income_tag.startswith("ProfitLoss"):
+        return ""
+    head = ("**This is a foreign private issuer reporting under IFRS.** Net income was read "
+            f"from {net_income_tag}, which is right, but this reader knows US-GAAP tag names "
+            "for the other lines and an IFRS filing does not use them. ")
+    if not unread:
+        return head + "Check each line in the tag panel before trusting any figure below."
+    return head + ("Nothing at all was read for: " + ", ".join(unread) + ". Those lines are "
+                   "wrong rather than missing — a line that reads nothing is treated as a "
+                   "zero. Treat the whole page as unverified and do not use the valuation.")
+
+
+def growth_trend_phrase(cagr3: float, latest: float) -> str:
+    """Describe a change in growth rate without lying about its direction.
+
+    Shell, 26 Aug 2026: -6.1% latest against -11.2% over three years satisfied
+    `latest - cagr3 > 0.05` and printed "revenue growth is accelerating" about
+    a company whose revenue was shrinking in both readings. Arithmetically an
+    increase, verbally false. The sign of each rate decides the words.
+    """
+    if latest > cagr3:
+        if latest <= 0:
+            return "shrinking, though less quickly than it was"
+        return "growing faster than it was" if cagr3 > 0 else "back in growth after shrinking"
+    if latest < 0 <= cagr3:
+        return "shrinking after growing"
+    return "shrinking faster than it was" if latest < 0 else "growing more slowly than it was"
+
+
 def treasury_signal(shares_out: dict[int, float], wavg: dict[int, float],
                     ratio: float = 1.15) -> tuple[bool, int | None]:
     """Is the tagged share count inflated by treasury stock? Compared IN ONE YEAR.
@@ -1646,12 +1690,6 @@ def load(ticker: str, n_years: int = 10):
             if _scored:
                 _best = max(_scored)
                 _pick, _share_route = _best[2], _best[3]
-                if _best[0] < 0.6 * len(_win):
-                    notes.append(
-                        f"Only {_best[0]} of the {len(_win)} years in this window have a share "
-                        "count from any tag this reader knows. Years without one show no share "
-                        "change, so their stock-comp cost is the whole buyback and their owners' "
-                        "earnings are understated. Treat the year-by-year table as partial.")
             else:
                 _pick, _share_route = _wv, "the weighted-average diluted count"
             shares_out, _extra = split_adjust(_pick)
@@ -1672,6 +1710,21 @@ def load(ticker: str, n_years: int = 10):
                     "That count is an average over each year rather than a year-end snapshot, so "
                     "its change lags the repurchase and the true stock-comp cost below will be "
                     "erratic — compare it against the GAAP charge before trusting any year.")
+
+    # Checked HERE, outside the ladder, against whichever series won. Inside
+    # the ladder it could only fire when the ladder RAN, and the ladder is
+    # gated on `_wv and shares_out` — so the filer shape that needs it most
+    # could never receive it. Shell tags none of the US-GAAP share concepts, so
+    # both series were empty, the ladder was skipped, and a 4-year cover page
+    # covered 4 of 10 years in silence.
+    _win_cov = sorted(series["N"])[-n_years:]
+    _cov_n = sum(1 for fy in _win_cov if fy in shares_out)
+    if _win_cov and _cov_n < 0.6 * len(_win_cov):
+        notes.append(
+            f"Only {_cov_n} of the {len(_win_cov)} years in this window have a share count from "
+            "any tag this reader knows. Years without one show no share change, so their "
+            "stock-comp cost is the whole buyback and their owners' earnings are understated. "
+            "Treat the year-by-year table as partial.")
 
     try:
         closes, splits = _monthly_closes(ticker)
@@ -1925,8 +1978,17 @@ def load(ticker: str, n_years: int = 10):
     if any(y.price == 0 for y in years):
         notes.append("No share price for some years — their SBC cost is understated.")
     if not any(y.Cw for y in years) and not capped_any:
+        # The "flattering" claim holds only where the GAAP charge itself read.
+        # On Shell neither read, and the buyback was charged in full as stock
+        # comp in six years — understating owners' earnings, the exact
+        # opposite of what this note asserted.
         notes.append("No tax-withholding line found. That understates the SBC cost, so "
-                     "owners' earnings here are flattering rather than conservative.")
+                     "owners' earnings here are flattering rather than conservative."
+                     if any(y.G for y in years) else
+                     "Neither a stock-comp charge nor a tax-withholding line was found. With no "
+                     "charge to size it against, any year that also lacks a share count charges "
+                     "its whole buyback as compensation, so owners' earnings in those years are "
+                     "understated rather than flattering. Check the tag panel before using them.")
 
     _bal: dict[str, list[str]] = {}
     # Coverage and latest year are captured HERE, from the same read that
@@ -2002,6 +2064,15 @@ def load(ticker: str, n_years: int = 10):
                      "combined-ratio thinking it does not contain.")
         cash_total = debt_total = net_cash = 0.0
 
+    # First in the list, because it governs how every other note reads.
+    _unread = [_l for _l, _empty in (("stock compensation", not any(y.G for y in years)),
+                                     ("the share count", not shares_out),
+                                     ("the balance sheet", cash_total == 0 and debt_total == 0))
+               if _empty]
+    _ff = foreign_filer_note(_nsrc[0] if _nsrc else "", _unread)
+    if _ff:
+        notes.insert(0, _ff)
+
     # Most recent shares OUTSTANDING beats trailing weighted-average diluted.
     # Under a heavy buyback the weighted average is stale and systematically
     # high, which depresses every per-share figure. Adobe: 427M weighted vs
@@ -2051,14 +2122,16 @@ def load(ticker: str, n_years: int = 10):
         cagr3 = (rev[ry[-1]][2] / rev[ry[-4]][2]) ** (1 / 3) - 1
     if raw_growth is not None and cagr3 is not None and cagr3 - raw_growth > 0.05:
         notes.append(
-            f"Revenue growth is decelerating — {cagr3:.1%} over three years but {raw_growth:.1%} "
+            f"Revenue is {growth_trend_phrase(cagr3, raw_growth)} — {cagr3:.1%} over three "
+            f"years but {raw_growth:.1%} "
             "in the latest. The seed uses the recent rate. Burry typically goes lower still: he "
             "projects owners' earnings, not revenue, and cuts further for competitive and AI-era "
             "risk. For Paycom his figure implies about 3.5% against 7% recent revenue growth.")
     elif raw_growth is not None and cagr3 is not None and raw_growth - cagr3 > 0.05:
         notes.append(
-            f"Revenue growth is accelerating — {cagr3:.1%} over three years, {raw_growth:.1%} "
-            "in the latest. The seed uses the recent rate; satisfy yourself it is durable.")
+            f"Revenue is {growth_trend_phrase(cagr3, raw_growth)} — {cagr3:.1%} over three "
+            f"years, {raw_growth:.1%} in the latest. The seed uses the recent rate; satisfy "
+            "yourself it is durable.")
 
     # Applied to EVERY company, not just one branch above. A company emerging
     # from near-zero revenue throws an enormous rate that must never compound
@@ -2398,6 +2471,29 @@ def self_test() -> list[tuple[str, bool, str]]:
                 stale_instant_lines({"A": "2025", "B": "2025", "C": "2025", "D": "2025"},
                                     2025, _rows) == [],
                 "Adobe's shape after the debt repair"))
+    # 10d. Shell plc, and the four things it showed.
+    _sh = foreign_filer_note("ProfitLossAttributableToOwnersOfParent",
+                             ["stock compensation", "the share count", "the balance sheet"])
+    out.append(("An IFRS filer is told it is one, before any figure below it",
+                "foreign private issuer" in _sh and "do not use the valuation" in _sh,
+                "banner fires on ProfitLoss-family tags"))
+    out.append(("...and a US-GAAP filer never sees that banner",
+                foreign_filer_note("NetIncomeLoss", ["the balance sheet"]) == "",
+                "silent on NetIncomeLoss"))
+    out.append(("...and an IFRS filer that read everything is not told to distrust it",
+                "unverified" not in foreign_filer_note("ProfitLoss", []),
+                "no unread lines, no refusal"))
+    out.append(("Shrinking revenue is never called accelerating",
+                growth_trend_phrase(-0.112, -0.061) == "shrinking, though less quickly than it was",
+                "-6.1% against -11.2%"))
+    out.append(("...and real acceleration still is",
+                growth_trend_phrase(0.07, 0.14) == "growing faster than it was", "7% -> 14%"))
+    out.append(("...and a company falling out of growth is not called decelerating",
+                growth_trend_phrase(0.05, -0.03) == "shrinking after growing", "5% -> -3%"))
+    out.append(("...and one climbing out of decline is named for that",
+                growth_trend_phrase(-0.08, 0.04) == "back in growth after shrinking",
+                "-8% -> 4%"))
+
     # 11. IFRS net income: the parent's share, not the consolidated group's.
     _ifrs = {"facts": {"ifrs-full": {
         "ProfitLoss": {"units": {"USD": [
