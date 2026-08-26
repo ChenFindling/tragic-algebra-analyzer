@@ -1142,9 +1142,24 @@ CONCEPTS = {
     # ended at FY2015 and the page valued the company on eleven-year-old
     # earnings of $2,551M against an actual FY2025 figure of $5,404M — and
     # printed a full verdict rather than refusing.
+    # The IFRS list had the same defect the US-GAAP list was fixed for, and it
+    # survived because no filer in the regression set is IFRS.
+    # ProfitLossAttributableToOwnersOfParent is the parent's share — the direct
+    # counterpart of NetIncomeLoss — and ProfitLoss is the consolidated figure
+    # including minority holders, so it belongs last on both sides.
+    #
+    # 26 Aug 2026: the brief named Toyota and SAP as the regression pair for
+    # this. Neither can exercise it. Toyota's
+    # ProfitLossAttributableToOwnersOfParent carries ONE unit key, JPY —
+    # checked against EDGAR, every 20-F row under it, the latest being
+    # ¥4,765,086,000,000 to 2025-03-31 — and SAP reports in EUR. Both are
+    # refused by reporting_currency() long before a net income tag is chosen,
+    # so the swap is invisible on them either way. It is pinned by the
+    # synthetic test in self_test instead, and a live check needs a
+    # USD-reporting IFRS filer.
     "N":  (["NetIncomeLoss", "NetIncomeLossAvailableToCommonStockholdersBasic",
             "ProfitLoss"],
-           ["ProfitLoss", "ProfitLossAttributableToOwnersOfParent"]),
+           ["ProfitLossAttributableToOwnersOfParent", "ProfitLoss"]),
     "G":  (["ShareBasedCompensation", "AllocatedShareBasedCompensationExpense"],
            ["ShareBasedPaymentsExpense"]),
     "T":  (["PaymentsForRepurchaseOfCommonStock", "PaymentsForRepurchaseOfEquity",
@@ -3056,6 +3071,24 @@ def self_test() -> list[tuple[str, bool, str]]:
     out.append(("...and a trend that does clear it still passes",
                 assess(0.12, 0.50, delivered_rate(0.0711, 0.13), 50_000.0, 0.13).why == "both",
                 "the gate is the trend, not delivered"))
+
+    # 11. IFRS net income: the parent's share, not the consolidated group's.
+    _ifrs = {"facts": {"ifrs-full": {
+        "ProfitLoss": {"units": {"USD": [
+            {"form": "20-F", "start": f"{y}-01-01", "end": f"{y}-12-31",
+             "filed": f"{y + 1}-03-01", "val": 1200.0} for y in range(2020, 2026)]}},
+        "ProfitLossAttributableToOwnersOfParent": {"units": {"USD": [
+            {"form": "20-F", "start": f"{y}-01-01", "end": f"{y}-12-31",
+             "filed": f"{y + 1}-03-01", "val": 1000.0} for y in range(2020, 2026)]}}}}}
+    _ifrs_src: list[str] = []
+    _ifrs_n = _annual(_ifrs, CONCEPTS["N"][0], CONCEPTS["N"][1], _ifrs_src, True)
+    out.append(("An IFRS filer's net income is the parent's share, not the group's",
+                bool(_ifrs_n) and all(abs(v[2] - 1000.0) < 1e-6 for v in _ifrs_n.values()),
+                f"{len(_ifrs_n)} years at "
+                f"{list(_ifrs_n.values())[0][2]:,.0f} — 1,000 parent, not 1,200 group"))
+    out.append(("...and the tag panel names the tag that answered",
+                _ifrs_src[:1] == ["ProfitLossAttributableToOwnersOfParent"],
+                "; ".join(_ifrs_src) or "no source recorded"))
 
     # 4p. Item 4 — the same disagreement, priced.
     _mv = [("Borrowings", 1_200.0, "raises")]
