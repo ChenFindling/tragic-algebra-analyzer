@@ -2167,6 +2167,27 @@ def roic_caveat(r: RoicYear, fye_month: int) -> str:
 #  SELF-TEST
 # ══════════════════════════════════════════════════════════════════════
 
+def test_summary(results: list[tuple[str, bool, str]]) -> tuple[str, str]:
+    """One line at the TOP of the expander: how many ran, how many failed.
+
+    Verification used to mean scrolling a list of 48 or 124 lines looking for a
+    red tick, or spending screenshots on it. Worse, the count itself was being
+    taken from the source rather than the page: the handover recorded 105
+    checks for this tool because that is how many `out.append` statements it
+    has, while one of them sits inside a loop and the page actually runs 107.
+    A number the page prints itself cannot drift from the page.
+
+    Returns (severity, text) where severity is "success" or "error", so a red
+    is visible before any scrolling and names the checks that failed.
+    """
+    bad = [name for name, ok, _ in results if not ok]
+    if not bad:
+        return "success", f"**{len(results)} checks, 0 failed.**"
+    return "error", (f"**{len(results)} checks, {len(bad)} FAILED:** "
+                     + "; ".join(bad[:4])
+                     + (f" — and {len(bad) - 4} more" if len(bad) > 4 else ""))
+
+
 def delivered_rate(endpoint: float | None, trend: float | None) -> float | None:
     """The kindest honest reading of a company's growth history.
 
@@ -2892,6 +2913,13 @@ def self_test() -> list[tuple[str, bool, str]]:
     out.append(("...and so does one with no cash to earn any",
                 interest_gap_note(0, 0.0, 7293.0, 2026) is None, "nothing to earn on"))
 
+    _sum_ok = test_summary([("a", True, ""), ("b", True, "")])
+    out.append(("The expander header counts what actually ran, not what was written",
+                _sum_ok == ("success", "**2 checks, 0 failed.**"), _sum_ok[1]))
+    _sum_bad = test_summary([("a", True, ""), ("b", False, ""), ("c", False, "")])
+    out.append(("...and a red one says so first and names the failures",
+                _sum_bad[0] == "error" and "2 FAILED" in _sum_bad[1]
+                and "b; c" in _sum_bad[1], _sum_bad[1]))
     # 4o. Item 2. The refusal ceiling takes the kindest reading, and on Adobe
     #     and AutoZone the kindest reading is the fitted trend, not the
     #     endpoints the old rule used.
@@ -3672,7 +3700,10 @@ with _r2:
             "There is no published ROIC to validate against the way Alphabet validates owners' "
             "earnings, so that test proves the plumbing is right, not that the framework is.")
         if st.button("Run checks"):
-            for name, ok, got in self_test():
+            _results = self_test()
+            _sev, _line = test_summary(_results)
+            getattr(st, _sev)(_line)
+            for name, ok, got in _results:
                 st.write(("✅ " if ok else "❌ ") + f"{name} — {got}")
 
 st.caption(
