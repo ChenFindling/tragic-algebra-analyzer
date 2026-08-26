@@ -1625,17 +1625,6 @@ def load(ticker: str, n_years: int = 10):
         notes.append(f"Excluded {non_sbc_total:,.1f}M shares issued for acquisitions, offerings "
                      "or conversions — those are corporate transactions, not compensation. "
                      "Where a company issues stock for deals this matters a great deal.")
-    _kept = [y for y in years if not y.excluded]
-    _sg = sum(y.G for y in _kept)
-    _som = sum(y.omega for y in _kept)
-    if _sg > 0 and _som / _sg > 4.0:
-        notes.append(
-            f"True SBC cost is {_som/_sg:.1f}x the GAAP charge. Across the whole NASDAQ-100 that "
-            "ratio is about 1.9x and the worst single name is 3.6x, so anything past roughly 4x "
-            "usually means shares issued for something other than pay — an offering, an "
-            "acquisition or a preferred conversion — are being counted as compensation. Treat ΔE "
-            "here as a floor, not a measurement.")
-
     capped_any = False
     if "TreasuryStockValueAcquiredCostMethod" in tag_sources.get("Cw", []):
         # The size test needed a stock-comp charge to test against, and AutoZone
@@ -1673,6 +1662,28 @@ def load(ticker: str, n_years: int = 10):
             notes.append(
                 "Tax withholding was read from a treasury-stock line rather than the usual "
                 "withholding tag. Filers that retire shares on repurchase report it this way.")
+
+    # MOVED BELOW THE WITHHOLDING GUARD, 26 Aug 2026. `omega` is a live property
+    # over `Cw`, so this ratio changes the moment the guard above zeroes a
+    # rejected withholding line — and the note used to be computed before that
+    # and printed after it. AutoZone said 41.7x while its own table said 6.5x;
+    # TransDigm said 4.9x against a table giving 3,334/1,095 = 3.05x, the gap of
+    # 2,031 being exactly the four years the guard rejected. The threshold is
+    # unchanged: AZO still clears 4x at 6.5x and keeps its note, TDG falls under
+    # it at 3.05x and loses the note entirely. That is correct, not a
+    # regression — TransDigm's true cost really is large next to its GAAP charge
+    # because of its option-plus-dividend-equivalent structure, not because
+    # non-pay issuance is being miscounted.
+    _kept = [y for y in years if not y.excluded]
+    _sg = sum(y.G for y in _kept)
+    _som = sum(y.omega for y in _kept)
+    if _sg > 0 and _som / _sg > 4.0:
+        notes.append(
+            f"True SBC cost is {_som/_sg:.1f}x the GAAP charge. Across the whole NASDAQ-100 that "
+            "ratio is about 1.9x and the worst single name is 3.6x, so anything past roughly 4x "
+            "usually means shares issued for something other than pay — an offering, an "
+            "acquisition or a preferred conversion — are being counted as compensation. Treat ΔE "
+            "here as a floor, not a measurement.")
 
     _neg = [y for y in years if y.omega < 0 and not y.excluded]
     if len(_neg) >= max(2, len(years) // 3):
@@ -2090,6 +2101,46 @@ def self_test() -> list[tuple[str, bool, str]]:
                     lambda v: "n/a (base too small)" if v is None else f"{v:.1%}"),
                 "the caption under the table is invisible in fullscreen, which is the "
                 "only view that shows this column"))
+
+    # 10. The ratio note reported a pre-guard figure. `omega` is live over `Cw`,
+    #     so a rejected withholding line changes it — and ordering decided
+    #     which number the reader saw. Fixtures are the two real shapes.
+    class _Y:
+        def __init__(self, G, Cw, Ce=0.0, V=0.0, N=0.0):
+            self.G, self.Cw, self.Ce, self._V, self.N, self.excluded = G, Cw, Ce, V, N, False
+
+        @property
+        def omega(self):
+            return (self.Cw - self.Ce) + self._V
+
+    def _ratio(ys):
+        g = sum(y.G for y in ys)
+        return (sum(y.omega for y in ys) / g) if g > 0 else None
+
+    def _guard(ys):
+        for y in ys:
+            if (y.Cw > 3 * y.G) if y.G > 0 else (y.Cw > 0.10 * abs(y.N)):
+                y.Cw = 0.0
+        return ys
+
+    def _azo_shape():
+        return [_Y(G=100.0, Cw=4000.0, N=2000.0), _Y(G=100.0, Cw=250.0, V=700.0, N=2000.0)]
+    out.append(("AZO's shape: the ratio falls after the guard but keeps its note",
+                _ratio(_azo_shape()) > 4.0
+                and 4.0 < _ratio(_guard(_azo_shape())) < _ratio(_azo_shape()),
+                f"{_ratio(_azo_shape()):.2f}x before the guard, "
+                f"{_ratio(_guard(_azo_shape())):.2f}x after — the table's number"))
+
+    def _tdg_shape():
+        return [_Y(G=500.0, Cw=4500.0, N=3000.0), _Y(G=500.0, Cw=1000.0, N=3000.0)]
+    out.append(("TDG's shape: a guarded ratio drops under 4x and loses the note",
+                _ratio(_tdg_shape()) > 4.0 and _ratio(_guard(_tdg_shape())) <= 4.0,
+                "expected, not a regression — the note firing at all was the "
+                "pre-guard figure talking"))
+    out.append(("A company the guard never touches is unaffected by the move",
+                _ratio(_guard([_Y(G=100.0, Cw=120.0, N=2000.0)]))
+                == _ratio([_Y(G=100.0, Cw=120.0, N=2000.0)]),
+                "ordinary withholding is under 3x the charge, so nothing is rejected"))
 
     # 9. Item 9 — a balance-sheet line that stops before net income does.
     #    Fixtures are the real shapes: AutoZone's short-term debt, Progressive's
