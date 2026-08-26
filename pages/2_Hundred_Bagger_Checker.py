@@ -371,6 +371,27 @@ def stale_capital_lines(latest: dict[str, str], ni_fy: int,
     return out
 
 
+def missing_component_total(series_list: list[dict[int, float]], cur_fy: int) -> float:
+    """Value of the components that stopped, at the last year each was tagged.
+
+    The first version of this compared a GROUP's total at its last complete
+    year against its total today, and AutoZone showed why that is wrong: its
+    `LongTermDebtCurrent` stops at FY2014 at 181M, while the long-term
+    component beside it grew to 8,800M. Today's total is far larger than the
+    total back then, so the difference came out negative and the note
+    suppressed itself on exactly the ticker it was written for.
+
+    A component that stops is missing its own last figure — nothing to do with
+    what its neighbours did in the meantime. Each series here is one component
+    of one capital line; a series that reaches `cur_fy` contributes nothing.
+    """
+    total = 0.0
+    for d in series_list:
+        if d and cur_fy not in d:
+            total += max(d.items())[1]
+    return total
+
+
 def carried_forward_capital(invested: float, numerator: float,
                             missing: list[tuple[str, float, str]]) -> tuple[float, float | None]:
     """Invested capital and ROIC if a stale line were carried forward, not zeroed.
@@ -1915,15 +1936,16 @@ def load(ticker: str, n_years: int = 10):
     # is the total when the line was last complete less whatever survives in
     # the current year — so a line that merely grew reads as nothing missing.
     _cur_fy = fys[-1] if fys else 0
-    _cap_series = {"Shareholders' equity": eq, "Borrowings": debt,
-                   "Cash": cash_ser, "Investments": invest}
+    # Per COMPONENT, not per group total — see missing_component_total.
+    _cap_groups = {"Shareholders' equity": EQUITY, "Borrowings": DEBT,
+                   "Cash": [CASH_PLAIN], "Investments": INVESTMENTS}
     _cap_missing = []
     for _n, _y, _g, _eff in _stale_cap:
-        _ser = _cap_series.get(_n)
-        if not _ser:
+        _grp = _cap_groups.get(_n)
+        if not _grp:
             continue
-        _cap_missing.append(
-            (_n, (_ser.get(_y, 0.0) - _ser.get(_cur_fy, 0.0)) / 1e6, _eff))
+        _sers = [_instant(facts, _c, "USD", None, None, True) for _c in _grp]
+        _cap_missing.append((_n, missing_component_total(_sers, _cur_fy) / 1e6, _eff))
     if is_financial(sic):
         # ROIC and its ex-goodwill twin are both withheld for financials, so a
         # stale goodwill line has nothing on this page to be wrong about.
@@ -3050,6 +3072,14 @@ def self_test() -> list[tuple[str, bool, str]]:
                                         [("Leases", 900.0, "leases"),
                                          ("Goodwill & intangibles", 900.0, "exgoodwill")])[0]
                 == 5_785.0, "neither has one unambiguous effect on this figure"))
+    out.append(("AutoZone's stopped debt component is worth its own last figure, not a delta",
+                abs(missing_component_total(
+                    [{2023: 8.0e9, 2024: 8.4e9, 2025: 8.8e9}, {2013: 1.7e8, 2014: 1.81e8}],
+                    2025) - 1.81e8) < 1e-6,
+                "181M missing while the component beside it grew to 8,800M"))
+    out.append(("...and a line whose components all reach the current year is missing nothing",
+                missing_component_total([{2024: 5.0, 2025: 7.0}, {2025: 3.0}], 2025) == 0.0,
+                "nothing stopped"))
     _swn = stale_capital_swing_note(5_785.0, 3_211.0, 0.5551, _mv)
     out.append(("The note prices the disagreement and refuses to call either side right",
                 "6,985M" in _swn and "5,785M" in _swn and "The tag name settles it" in _swn,
