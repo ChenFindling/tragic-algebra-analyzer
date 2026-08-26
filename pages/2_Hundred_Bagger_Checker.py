@@ -3106,6 +3106,15 @@ def self_test() -> list[tuple[str, bool, str]]:
     out.append(("...while a real 4:1 split is still restated",
                 _real[0][2021] == 400e6 and any("Stock split detected" in m for m in _real[1]),
                 "4:1 in FY2023, earlier years multiplied"))
+    # 4t. ARM. An unusable recent ΔE must not be replaced by an older regime.
+    out.append(("A negative 3-year ΔE is refused rather than swapped for the pooled figure",
+                not (0 < -0.162 <= DE_UNUSABLE_ABOVE),
+                "ARM: -16.2% recent against 27.8% pooled, and 27.8% is pre-IPO"))
+    out.append(("...and a usable recent figure is still what gets applied",
+                0 < 0.939 <= DE_UNUSABLE_ABOVE, "Salesforce's 93.9% projects normally"))
+    out.append(("...and one above the ceiling is refused too, not capped into use",
+                not (0 < 1.31 <= DE_UNUSABLE_ABOVE), "131% is above the 125% ceiling"))
+
     # 4s. Berkshire. A market cap below one year of earnings is a broken read.
     out.append(("A market cap under one year's owners' earnings is refused outright",
                 assess(0.10, None, 0.12, 160.0, 0.07, 60_599.0).why == "implausible",
@@ -3411,13 +3420,26 @@ if years and ticker and st.session_state.get("hb_tk") == ticker:
     # by. They now seed identically.
     pooled = pool(years)
     recent = pool_safe(years[-3:], pooled)
-    use_dE = recent.dE if 0 < recent.dE <= DE_UNUSABLE_ABOVE else pooled.dE
+    # ARM, 26 Aug 2026. This line used to fall back to the POOLED figure
+    # whenever the recent one was unusable, which on ARM meant seeding owners'
+    # earnings from a 5-year ΔE of 27.8% earned largely before its IPO, while
+    # the last three years read -16.2%. Tool 1 applies the recent figure, finds
+    # it unprojectable and falls back to the MEDIAN — so the two pages seeded
+    # 251 and 556 for the same company on the same day, under a caption
+    # claiming they seed identically.
+    #
+    # Substituting an older regime for a recent one is a fallback in the
+    # flattering direction, which is the error class this project keeps
+    # finding. The recent figure now stands or is refused, as on tool 1.
+    _recent_usable = 0 < recent.dE <= DE_UNUSABLE_ABOVE
+    use_dE = recent.dE if _recent_usable else pooled.dE
+    _seed_from_pooled = not _recent_usable
     # Measurement untouched; only the projection is held to 100%.
     applied_dE = seed_dE(use_dE)
     dE_capped = dE_was_capped(use_dE)
     hist_oe = sorted(y.OE for y in years[-5:] if not y.excluded)
     median_OE = hist_oe[len(hist_oe) // 2] if hist_oe else 0.0
-    if 0 < use_dE <= DE_UNUSABLE_ABOVE:
+    if _recent_usable:
         seed_OE, seed_is_placeholder = latest.N * applied_dE, False
     elif median_OE > 0:
         seed_OE, seed_is_placeholder = median_OE, False
@@ -3426,6 +3448,14 @@ if years and ticker and st.session_state.get("hb_tk") == ticker:
         # money. Net income is at least a defensible ceiling to revise down
         # from, but it is not a measurement and must not read as one.
         seed_OE, seed_is_placeholder = latest.N, True
+
+    if _seed_from_pooled:
+        st.warning(
+            f"**ΔE over the last three years is {recent.dE:.1%}, which cannot be projected "
+            "forward.** Stock compensation has swamped earnings over that window, and a "
+            "negative or absurd ratio applied to next year's profit is not a forecast. Owners' "
+            "earnings below are seeded from the 5-year median instead, which is a placeholder "
+            "and not a measurement — set the figure by hand from what the business earns.")
 
     # ══ inputs ═══════════════════════════════════════════════════════
     st.markdown("---")
@@ -3967,8 +3997,14 @@ if years and ticker and st.session_state.get("hb_tk") == ticker:
             width="stretch", hide_index=True)
         st.caption(
             f"ΔE pooled: {pooled.dE:.1%} over {pooled.years} years, {recent.dE:.1%} over the "
-            f"last three. The box above shows {plain(latest.N)} of net income times "
-            f"{applied_dE:.1%}, which is how tool 1 seeds it too — the latest year as filed "
+            f"last three. "
+            + (f"The last three years cannot be projected, so the box above shows the 5-year "
+               f"median of owners' earnings rather than a ΔE applied to net income — the same "
+               f"fallback tool 1 uses. "
+               if _seed_from_pooled else
+               f"The box above shows {plain(latest.N)} of net income times "
+               f"{applied_dE:.1%}, which is how tool 1 seeds it too — ")
+            + f"the latest year as filed "
             f"came in at {plain(latest.OE)}."
             + (f" The {use_dE:.1%} measured over the last three years is left as filed above "
                "but is not projected: shareholders cannot keep more than every reported dollar "
