@@ -1562,6 +1562,14 @@ def share_route_note(kind: str, was: float, wavg: float, route: str,
     while every other share figure on the page was post-split by 25 — the ratio
     was right and both numbers were on a basis the reader could not see.
     """
+    if kind == "treasury" and was <= wavg:
+        # A wiring error upstream once fed this branch a count BELOW the
+        # average while the sentence claimed it was far above. The words are
+        # not allowed to contradict the figures printed beside them.
+        return ("In FY{} the share count read as {:,.1f}M against a weighted-average diluted "
+                "count of {:,.1f}M. That is not the treasury pattern this switch is meant to "
+                "catch, so the figures are worth checking against the tag panel. Switched to "
+                "{}.").format(last_fy, was * factor / 1e6, wavg * factor / 1e6, route)
     if kind == "treasury":
         return ("In FY{} the share count read as {:,.1f}M against a weighted-average diluted "
                 "count of {:,.1f}M — that far above the average means issued shares, with the "
@@ -1729,10 +1737,17 @@ def load(ticker: str, n_years: int = 10):
             # the right ratio in units nothing else on the page uses.
             # For the treasury branch the figures and the year are the ONES THE
             # TEST USED, not the newest of each series independently.
+            # `_covered_by`, NOT `shares_out`: shares_out has already been
+            # replaced by the series that WON, so reading it here quoted the
+            # cover-page count the ladder switched TO rather than the tagged
+            # count it switched FROM. Booking printed "791.8M against a
+            # weighted-average diluted count of 816.0M — that far above the
+            # average means issued shares" about a figure BELOW the average.
             _t_fy = _treas_fy if _treasury and _treas_fy is not None else _lat
             _route_note = ("treasury" if _treasury else "static" if _static else "sparse",
-                           shares_out[_t_fy] if _treasury else _was,
-                           _wv[_t_fy] if _treasury else _wv[_latw], _share_route,
+                           _covered_by.get(_t_fy, _was) if _treasury else _was,
+                           _wv.get(_t_fy, _wv[_latw]) if _treasury else _wv[_latw],
+                           _share_route,
                            sum(1 for fy in _win0 if fy in _covered_by), len(_win0), _t_fy)
             if _share_route.startswith("the weighted"):
                 _route_extra = (
@@ -2626,6 +2641,14 @@ def self_test() -> list[tuple[str, bool, str]]:
                 dual_class_signal({2025: 791.8e6}, {2025: 32.64e6}, 25.0)[0] == "none",
                 "816M post-split against 791.8M, not 32.6M"))
 
+    out.append(("The treasury note never claims 'far above' about a count that is below",
+                "far above" not in share_route_note("treasury", 791.8e6, 816.0e6,
+                                                    "the 10-K cover page", 10, 10, 2025),
+                "791.8M against 816.0M is not the treasury pattern"))
+    out.append(("...and still says it when the count really is above",
+                "far above" in share_route_note("treasury", 1613.0e6, 816.0e6,
+                                                "the 10-K cover page", 10, 10, 2025),
+                "1,613.0M against 816.0M"))
     _tr25 = share_route_note("treasury", 64.5e6, 32.6e6, "the 10-K cover page", 10, 10, 2025,
                              factor=25.0)
     out.append(("Booking's treasury note prints post-split counts, not 64.5M vs 32.6M",
