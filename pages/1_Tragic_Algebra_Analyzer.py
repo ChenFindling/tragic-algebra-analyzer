@@ -750,6 +750,48 @@ def stale_instant_lines(bal_fy: dict[str, str], ni_fy: int,
     return out
 
 
+# How each balance-sheet line enters net cash. Leases are 0 because they do
+# not: they are shown, and handled inside tool 2's capital base instead.
+NET_CASH_SIGN = {"Cash": 1, "Short-term investments": 1, "Long-term investments": 1,
+                 "Long-term debt": -1, "Short-term debt": -1, "Operating leases": 0}
+
+
+def stale_swing_note(net_cash: float, contributions: list[tuple[str, float]]) -> str:
+    """How much of net cash rests on a figure that is being carried forward.
+
+    ITEM 4, and the reason it is a note rather than a rule. The two pages treat
+    a stale balance-sheet line in opposite ways — this one carries the last
+    figure found forward, tool 2 adds the missing component as zero — and
+    NEITHER is conservative in general, because the direction flips with the
+    side of the balance sheet:
+
+      asset carried forward  -> overstates cash    -> flatters IV15
+      asset zeroed           -> understates cash   -> conservative
+      liability carried fwd  -> subtracts a stale, usually smaller debt
+      liability zeroed       -> ignores the debt entirely -> flatters badly
+
+    Adobe is the proof that unifying on zero would be worse, not better:
+    `LongTermDebtNoncurrent` stopped at FY2009, and zeroing it would have
+    dropped $6.1B of real debt instead of subtracting $1.0B of stale debt.
+    So neither treatment is imposed. The size of what is at stake is stated
+    and the reader is pointed at the tag, which is what actually fixed Adobe,
+    Progressive and TransDigm.
+
+    Returns "" when no stale line touches net cash — an operating-lease line
+    is reported by the caller but moves nothing here.
+    """
+    live = [(n, v) for n, v in contributions if abs(v) > 0.05]
+    if not live:
+        return ""
+    alt = net_cash - sum(v for _, v in live)
+    return (f" Net cash reads {net_cash:,.0f}M with "
+            + ", ".join(f"{n.lower()} at {abs(v):,.0f}M" for n, v in live)
+            + f" carried forward; treated as zero instead it would read {alt:,.0f}M, a swing of "
+              f"{abs(alt - net_cash):,.0f}M. Which of the two is right depends on whether the "
+              "balance moved to another tag or genuinely ended, so the tag name is the fix and "
+              "neither figure is guessed at here.")
+
+
 def stale_window_refusal(fys: list[int], rev_fys: list[int], today_year: int) -> str:
     """Reason to refuse a stale earnings window, or '' when it is usable.
 
@@ -1797,6 +1839,8 @@ def load(ticker: str, n_years: int = 10):
 
     _skips: list[tuple[str, int, str, int]] = []
 
+    _bal_v: dict[str, float] = {}
+
     def g(ks):
         src: list[str] = []
         d = _instant(facts, ks, "USD", src, _skips, prefer_recent=True)
@@ -1804,6 +1848,9 @@ def load(ticker: str, n_years: int = 10):
         _bal[ks[0]] = src
         _bal_n[ks[0]] = len(d)
         _bal_fy[ks[0]] = _latest_fy(d)
+        # Kept so the item 9 note can say what the carried-forward figure is
+        # worth. See stale_swing_note.
+        _bal_v[ks[0]] = v
         return v
 
     cash_total = g(BALANCE["cash"]) + g(BALANCE["sti"]) + g(BALANCE["lti"])
@@ -1835,8 +1882,12 @@ def load(ticker: str, n_years: int = 10):
               "reported at every year end, so this is not the company having a quiet year — "
               "either the balance moved to a tag this reader does not know, or the line ended "
               "and the figure should now be zero. Net cash above carries the last figure found "
-              "forward as though it were current, so it is wrong in one direction or the other. "
-              "The tag panel names the tag; that name is usually the whole fix.")
+              "forward as though it were current, so it is wrong in one direction or the other."
+            + stale_swing_note(
+                net_cash,
+                [(_n, NET_CASH_SIGN.get(_n, 0) * _bal_v.get(dict(BALANCE_ROWS)[_n][0], 0.0))
+                 for _n, _y, _g in _stale_bal])
+            + " The tag panel names the tag; that name is usually the whole fix.")
     if debt_total == 0 and lease_total > 0:
         notes.append(f"No funded debt found, which for many companies is simply true — plenty "
                      f"fund themselves entirely from operations. It does carry "
@@ -2241,6 +2292,20 @@ def self_test() -> list[tuple[str, bool, str]]:
                 stale_instant_lines({"A": "2025", "B": "2025", "C": "2025", "D": "2025"},
                                     2025, _rows) == [],
                 "Adobe's shape after the debt repair"))
+    # 9b. Item 4 — the swing, stated rather than resolved.
+    _sw = stale_swing_note(385.0, [("Long-term debt", -1013.0)])
+    out.append(("Adobe's stale debt line says what net cash rests on",
+                "1,398M" in _sw and "385M" in _sw and "1,013M" in _sw,
+                "385M carried forward, 1,398M if the debt were zeroed"))
+    out.append(("...and it names neither treatment as the right one",
+                "neither figure is guessed at here" in _sw, "the tag is the fix"))
+    out.append(("An operating-lease line alone moves net cash by nothing, and says nothing",
+                stale_swing_note(385.0, [("Operating leases", 0.0)]) == "",
+                "leases do not enter net cash"))
+    out.append(("A stale asset line swings net cash the other way",
+                "3,000M" in stale_swing_note(5000.0, [("Short-term investments", 2000.0)]),
+                "5,000M carried forward, 3,000M zeroed"))
+
     out.append(("A line AHEAD of net income is not stale either",
                 stale_instant_lines({"A": "2026", "B": "2025", "C": "2025", "D": "2025"},
                                     2025, _rows) == [],
