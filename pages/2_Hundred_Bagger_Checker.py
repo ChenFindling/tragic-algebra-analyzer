@@ -2159,8 +2159,21 @@ def assess(required: float | None, fundable: float | None,
     if trend is not None and required > trend:
         return Verdict("Open only on the kindest reading of history",
                        "warning", "growth measure")
+    # A verdict whose capital check never ran cannot say "open". `fundable` is
+    # None in two situations and neither is a pass: the capital base could not
+    # be read, or ROIC was WITHHELD because it is not meaningful for the filer
+    # — banks, insurers and REITs, where investments back policyholder or
+    # depositor liabilities rather than shareholders.
+    #
+    # Progressive is the shape that showed it: delivered 31.8% against a 26.0%
+    # requirement, with `can fund` n/a because it is an insurer. Only the $128B
+    # size gate stopped a green. The same business at $2B market cap sailed
+    # past every remaining test and printed "open" with nothing left that could
+    # object — the growth leg checking itself. A tool whose whole claim is that
+    # it refuses what it cannot verify must not pass what it cannot check.
     if fundable is None:
-        return Verdict("Open, on history alone", "info", "no capital base")
+        return Verdict("Open on history, but the capital check could not run",
+                       "warning", "no capital base")
     if delivered is None:
         return Verdict("Open, on capital alone", "info", "no growth history")
     return Verdict("The arithmetic is open", "success", "both")
@@ -2972,6 +2985,24 @@ def self_test() -> list[tuple[str, bool, str]]:
                 and assess(0.2000, 0.3000, 0.2500, 1_980).why == "both",
                 "the parameter defaults to None, so the six original paths are untouched"))
 
+    # 4q. An insurer cannot pass on the growth leg alone.
+    _pgr_small = assess(0.2600, None, 0.3178, 1_980, 0.2900)
+    out.append(("Progressive's shape at $2B does not print a pass when ROIC is withheld",
+                _pgr_small.kind == "warning" and "could not run" in _pgr_small.label,
+                _pgr_small.label))
+    out.append(("...and no combination without a capital ceiling reaches success",
+                all(assess(r, None, d, 1_980, t).kind != "success"
+                    for r in (0.05, 0.26, 0.60) for d in (0.10, 0.35, 0.90)
+                    for t in (0.10, 0.35, 0.90)),
+                "27 combinations, none green"))
+    out.append(("...while a readable capital base still can",
+                assess(0.2000, 0.3000, 0.2500, 1_980, 0.2400).kind == "success",
+                "both ceilings present and above the requirement"))
+    out.append(("The reason code is unchanged, so every other branch still routes",
+                _pgr_small.why == "no capital base"
+                and assess(0.2600, None, 0.3178, 1_980).why == "no capital base",
+                "only the label and severity moved"))
+
     # 4k. The median that survives a refusal. `median_roic` drops refused years
     #     rather than zeroing them, so a five-year median can rest on one year
     #     and read exactly like a five-year one.
@@ -3510,10 +3541,16 @@ if years and ticker and st.session_state.get("hb_tk") == ticker:
             "ceiling could be built: no readable capital base and too little growth history. "
             "There is nothing here to check that number against.")
     else:
-        st.info(
+        (st.warning if v.kind == "warning" else st.info)(
             f"**{v.label}.** {required:.1%} a year, checked against only one ceiling — "
-            + ("no growth history long enough to measure." if v.why == "no growth history" else
-               "the capital base could not be read, so there is no funding ceiling to test.")
+            + ("no growth history long enough to measure."
+               if v.why == "no growth history" else
+               "no funding ceiling could be built. Either the capital base could not be read, "
+               "or return on capital was withheld because it is not meaningful for this kind "
+               "of filer — a bank, insurer or REIT holds investments that back policyholder "
+               "and depositor liabilities rather than shareholders. Growth alone cannot carry "
+               "a verdict: what it says here is that the price has been checked against half "
+               "the question.")
             + " Treat this page as incomplete for this company.")
 
     # ══ criteria ═════════════════════════════════════════════════════
