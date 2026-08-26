@@ -2085,10 +2085,11 @@ def self_test() -> list[tuple[str, bool, str]]:
                           Year(fy=2025, N=10.0, G=0.0, T=0.0, dS=0.0, price=0.0)]).dE
                     - 1.0) < 1e-12,
                 "pooling sums before dividing, so the small year still counts in full"))
-    out.append(("A blanked ΔE cell renders as an em dash, never the word None",
-                (lambda f: f(None) == "\u2014" and f(0.871) == "87.1%")(
-                    lambda v: "\u2014" if v is None else f"{v:.1%}"),
-                "st.dataframe ignores the styler's na_rep, so the cell is built as text"))
+    out.append(("A blanked ΔE cell says why it is blank, and never the word None",
+                (lambda f: f(None) == "n/a (base too small)" and f(0.871) == "87.1%")(
+                    lambda v: "n/a (base too small)" if v is None else f"{v:.1%}"),
+                "the caption under the table is invisible in fullscreen, which is the "
+                "only view that shows this column"))
 
     # 9. Item 9 — a balance-sheet line that stops before net income does.
     #    Fixtures are the real shapes: AutoZone's short-term debt, Progressive's
@@ -2672,7 +2673,13 @@ if years and ticker and st.session_state.get("tk") == ticker:
         # A year whose net income is a rounding error against the rest of the
         # window cannot carry a ratio; the pooled figures below still weight it
         # in full. See the per-year cell block near the top of the file.
-        _dE_text = lambda v: "—" if v is None else f"{v:.1%}"
+        # The cell says WHY it is blank rather than leaning on the caption
+        # below it. Streamlit's fullscreen renders the dataframe alone, and
+        # the normal view crops the ΔE column off the right edge — so the
+        # only view that shows this cell was the one view that could not
+        # show its explanation. A bare em dash there reads like a lookup
+        # that failed rather than a deliberate refusal.
+        _dE_text = lambda v: "n/a (base too small)" if v is None else f"{v:.1%}"
         _med_N = median_positive_N([y.N for y in years])
         _blank_dE = [y.fy for y in years if dE_cell(y.N, y.dE, _med_N) is None]
         st.dataframe(pd.DataFrame([{
@@ -2690,7 +2697,7 @@ if years and ticker and st.session_state.get("tk") == ticker:
             width='stretch', hide_index=True)
         if _blank_dE:
             st.caption(
-                "ΔE is left blank for "
+                "ΔE reads n/a for "
                 + ", ".join(f"FY{f}" for f in _blank_dE)
                 + (": net income there is too small against the rest of the window to divide by, "
                    "so the ratio would describe the denominator rather than the company. Owners' "
