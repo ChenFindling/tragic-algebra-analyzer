@@ -2253,8 +2253,14 @@ def assess(required: float | None, fundable: float | None,
     if fundable is None:
         return Verdict("Open on history, but the capital check could not run",
                        "warning", "no capital base")
+    # The mirror of the branch above, and amber for the same reason: a verdict
+    # checked against ONE ceiling is half-checked, whichever ceiling is
+    # missing. It was left blue while its twin became a warning, and a young
+    # company is exactly where a blue "Open" reads as encouragement — CAVA has
+    # four years of filings and no measurable growth rate at all.
     if delivered is None:
-        return Verdict("Open, on capital alone", "info", "no growth history")
+        return Verdict("Open on capital, but there is no record to check it against",
+                       "warning", "no growth history")
     return Verdict("The arithmetic is open", "success", "both")
 
 
@@ -3106,6 +3112,27 @@ def self_test() -> list[tuple[str, bool, str]]:
     out.append(("...while a real 4:1 split is still restated",
                 _real[0][2021] == 400e6 and any("Stock split detected" in m for m in _real[1]),
                 "4:1 in FY2023, earlier years multiplied"))
+    # 4v. Neither half-checked verdict is green, and neither reads as a pass.
+    _no_hist = assess(0.10, 0.30, None, 1_980.0, None)
+    out.append(("A verdict with no growth record to check is amber, like its mirror",
+                _no_hist.kind == "warning" and _no_hist.why == "no growth history",
+                _no_hist.label))
+    out.append(("...and no input without a growth record reaches success",
+                all(assess(r, f, None, 1_980.0, None).kind != "success"
+                    for r in (0.05, 0.26, 0.60) for f in (0.10, 0.35, 0.90)),
+                "9 combinations, none green"))
+    out.append(("...while both ceilings present can still pass",
+                assess(0.20, 0.30, 0.25, 1_980.0, 0.24).kind == "success",
+                "unchanged"))
+
+    # 4u. CAVA. Name the fallback that was used, not the one above it.
+    out.append(("A negative 5-year median is not described as the seed",
+                (lambda med: "median" if med > 0 else "ceiling")(-47.0) == "ceiling",
+                "CAVA: median -47, so net income is the ceiling instead"))
+    out.append(("...while a positive one still is",
+                (lambda med: "median" if med > 0 else "ceiling")(556.0) == "median",
+                "ARM: median 556"))
+
     # 4t. ARM. An unusable recent ΔE must not be replaced by an older regime.
     out.append(("A negative 3-year ΔE is refused rather than swapped for the pooled figure",
                 not (0 < -0.162 <= DE_UNUSABLE_ABOVE),
@@ -3453,9 +3480,17 @@ if years and ticker and st.session_state.get("hb_tk") == ticker:
         st.warning(
             f"**ΔE over the last three years is {recent.dE:.1%}, which cannot be projected "
             "forward.** Stock compensation has swamped earnings over that window, and a "
-            "negative or absurd ratio applied to next year's profit is not a forecast. Owners' "
-            "earnings below are seeded from the 5-year median instead, which is a placeholder "
-            "and not a measurement — set the figure by hand from what the business earns.")
+            "negative or absurd ratio applied to next year's profit is not a forecast. "
+            # CAVA, 27 Aug 2026: this said "seeded from the 5-year median" in
+            # both branches. CAVA's median is -47, so the seed actually fell
+            # through to net income as a ceiling, and the sentence named a
+            # fallback that had not been used.
+            + (f"Owners' earnings below are seeded from the 5-year median of {money(median_OE)} "
+               "instead."
+               if median_OE > 0 else
+               "The 5-year median is negative too, so there is nothing to fall back to: the box "
+               f"below holds {money(latest.N)} of net income as a CEILING, not a measurement.")
+            + " Set the figure by hand from what the business earns in a normal year.")
 
     # ══ inputs ═══════════════════════════════════════════════════════
     st.markdown("---")
@@ -3722,7 +3757,10 @@ if years and ticker and st.session_state.get("hb_tk") == ticker:
     else:
         (st.warning if v.kind == "warning" else st.info)(
             f"**{v.label}.** {required:.1%} a year, checked against only one ceiling — "
-            + ("no growth history long enough to measure."
+            + ("no growth history long enough to measure. A capital ceiling says what this "
+               "business COULD fund; only the record says whether it ever has, and there is "
+               "no record here. What it says is that the price has been checked against half "
+               "the question."
                if v.why == "no growth history" else
                "no funding ceiling could be built. Either the capital base could not be read, "
                "or return on capital was withheld because it is not meaningful for this kind "
@@ -3998,9 +4036,11 @@ if years and ticker and st.session_state.get("hb_tk") == ticker:
         st.caption(
             f"ΔE pooled: {pooled.dE:.1%} over {pooled.years} years, {recent.dE:.1%} over the "
             f"last three. "
-            + (f"The last three years cannot be projected, so the box above shows the 5-year "
-               f"median of owners' earnings rather than a ΔE applied to net income — the same "
-               f"fallback tool 1 uses. "
+            + (f"The last three years cannot be projected, so the box above shows "
+               + (f"the 5-year median of owners' earnings rather than a ΔE applied to net "
+                  f"income — the same fallback tool 1 uses. " if median_OE > 0 else
+                  f"{plain(latest.N)} of net income as a ceiling, because the 5-year median is "
+                  f"negative as well — the same fallback tool 1 uses. ")
                if _seed_from_pooled else
                f"The box above shows {plain(latest.N)} of net income times "
                f"{applied_dE:.1%}, which is how tool 1 seeds it too — ")
