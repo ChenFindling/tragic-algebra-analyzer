@@ -2535,6 +2535,20 @@ def self_test() -> list[tuple[str, bool, str]]:
     out.append(("...and neither is the 65.1% over six years, which nothing would have capped",
                 not dE_projectable(_rivn6) and not dE_was_capped(_rivn6.dE),
                 "the plausible-looking one: no cap, no warning, 65% of a profit never made"))
+    # TGTX, 28 Aug 2026. Nine loss years and one profitable one. The recent
+    # window pools to a PROFIT, so its ΔE is a real measurement and projects;
+    # the full period pools to a loss and is two negatives divided. Both had
+    # to be got right for the seed to reach the box at all.
+    _tgtx3 = Pooled(dE=273.0 / 483.0, sum_N=483.0, sum_OE=273.0,
+                    sum_omega=355.0, sum_G=146.0, years=3)
+    _tgtx_full = Pooled(dE=-672.0 / -340.0, sum_N=-340.0, sum_OE=-672.0,
+                        sum_omega=601.0, sum_G=270.0, years=7)
+    out.append(("A loss-maker's first profitable years still pool to a real ΔE",
+                dE_projectable(_tgtx3) and abs(_tgtx3.dE - 0.565) < 5e-4,
+                "FY2023-25: 13 + 23 + 447 of net income, so the denominator is positive"))
+    out.append(("...while the ten-year window behind them is not projectable at all",
+                not dE_projectable(_tgtx_full) and _tgtx_full.dE > 1.25,
+                "-672 over -340 reads 197.6%: undefined AND above the ceiling"))
     _crm3 = Pooled(dE=7001.0 / 7457.0, sum_N=7457.0, sum_OE=7001.0,
                    sum_omega=0.0, sum_G=0.0, years=3)
     _adbe3 = Pooled(dE=7656.0 / 7130.0, sum_N=7130.0, sum_OE=7656.0,
@@ -3271,6 +3285,20 @@ if years and ticker and st.session_state.get("tk") == ticker:
             f"Derived owners' earnings of {d(derived,0)}M are {derived/median_OE:.1f}x the "
             f"{d(median_OE,0)}M median of the last five years. Forward profit may carry a "
             "one-off. Check the yearly table and override."))
+    elif derived > 0 >= median_OE:
+        # The branch above warns when the seed outruns a POSITIVE median. A
+        # median that is not positive at all is strictly worse and fell
+        # straight through it. TGTX, 28 Aug 2026: owners' earnings negative in
+        # nine of ten years, one profitable year at the end, ΔE legitimately
+        # measurable over the recent window because those three years pool to
+        # +483 of net income — so nothing here refused, and IV15 printed 52.27
+        # against a 54.19 price with a five-year median of -44 unmentioned.
+        alerts.append(("warning",
+            f"Derived owners' earnings of {d(derived,0)}M rest on the forward year alone: the "
+            f"five-year median is {d(median_OE,0)}M, which is not positive. ΔE is measurable "
+            "here because the recent window pools to a profit, but a median that has not "
+            "turned says the run rate is not established yet. Check the yearly table and set "
+            "the box by hand."))
     if pooled.dE_defined and recent.dE_defined and abs(recent.dE - pooled.dE) > 0.15 \
             and abs(pooled.dE) <= 1.25 and abs(recent.dE) <= 1.25:
         alerts.append(("warning",
