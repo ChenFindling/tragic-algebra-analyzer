@@ -3125,6 +3125,25 @@ def self_test() -> list[tuple[str, bool, str]]:
                 assess(0.20, 0.30, 0.25, 1_980.0, 0.24).kind == "success",
                 "unchanged"))
 
+    # 4w. RIVN, 27 Aug 2026. `roic_med is not None` and `fundable is not None`
+    # are different questions, and the IV15-handoff block asked the wrong one.
+    # A negative return on capital funds no growth, so `fundable` is None while
+    # `roic_med` is a perfectly good negative number — and the block formatted
+    # it, killing the page from the notes expander down. This pins the rule the
+    # block now gates on; it cannot exercise the render itself.
+    def _fundable_like_the_page(r: float | None) -> float | None:
+        return per_share_ceiling(r, 0.0, 0.0) if r is not None and r > 0 else None
+    out.append(("A negative return on capital hands no growth ceiling to tool 1",
+                _fundable_like_the_page(-0.09) is None
+                and _fundable_like_the_page(None) is None,
+                "RIVN's 5-year median is negative, so there is no ceiling to print"))
+    out.append(("...while a positive one still hands one over",
+                _fundable_like_the_page(0.0432) is not None,
+                "CAVA's 4.32% still prints"))
+    out.append(("Rivian's loss cannot be capitalised at any multiple",
+                assess(None, None, None, 20_832.0, None, -3_646.0).why == "no earnings base",
+                "1,240.0M shares at $16.80 against -3,646 of owners' earnings"))
+
     # 4u. CAVA. Name the fallback that was used, not the one above it.
     out.append(("A negative 5-year median is not described as the seed",
                 (lambda med: "median" if med > 0 else "ceiling")(-47.0) == "ceiling",
@@ -3997,7 +4016,15 @@ if years and ticker and st.session_state.get("hb_tk") == ticker:
         st.caption(
             "The Tragic Algebra Analyzer asks for a growth rate and has no way to sanity-check "
             "it. This is that ceiling, computed.")
-        if roic_med is not None:
+        # Gated on `fundable`, not on `roic_med`. They are not the same test:
+        # `fundable` is None whenever ROIC is None OR NOT POSITIVE, because a
+        # negative return funds no growth. Rivian, 27 Aug 2026: a negative
+        # 5-year median passed the `roic_med is not None` gate, the per-share
+        # ceiling below formatted None, and the page died with a TypeError —
+        # taking the notes, the year-by-year table, the assumptions block and
+        # the tag panel with it. Every other site that prints `fundable`
+        # already asks the right question; this one did not.
+        if fundable is not None:
             g_ceiling = sustainable_growth(roic_med, payout_eff)
             st.code(
                 f"{tk}\n"
