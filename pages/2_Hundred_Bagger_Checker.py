@@ -870,11 +870,30 @@ def split_adjust(shares: dict[int, float]) -> tuple[dict[int, float], list[str]]
             if ratio > 2.85 and shares[fys[i - 1]] < 25e6:
                 continue
             if ratio > 0 and (ratio > 2.85 or ratio < 0.35):
+                # Rounded to a whole number, NOT to the nearest half. This
+                # branch is only reachable above 2.85:1, and every real split
+                # in that range is an integer — 3:1, 4:1, 7:1, 10:1, 20:1.
+                # 3:2 and 5:4 sit below the gate and never arrive here.
+                #
+                # AAPL, 28 Aug 2026. What is measured is never the bare split
+                # ratio: a 10-K carries two years of balance sheet, so the
+                # filing after a split restates ONE earlier year and the year
+                # before it is left as filed. The jump therefore sits at the
+                # restatement boundary, and the ratio across it is the split
+                # times whatever buybacks did in between. Apple measured
+                # 17,772.9 / 4,755.0 = 3.738 for a 4:1 split, which the old
+                # half-rounding snapped to 3.5. Earlier years were then
+                # multiplied by 3.5 instead of 4, and the 1,247M shares Apple
+                # RETIRED in FY2019 read as 1,130M shares issued — $123.9B of
+                # stock-comp cost against a $6.1B charge, owners' earnings of
+                # -$62.6B in a year it earned $55.3B, and a ten-year ΔE of
+                # 76.5% that the page reported as a shareholder-quality
+                # failure. Rounding to 4 restates it exactly.
                 if ratio >= 1:
-                    clean = round(ratio * 2) / 2
+                    clean = float(round(ratio))
                     label = f"{clean:g}:1"
                 else:
-                    inv = round((1 / ratio) * 2) / 2
+                    inv = float(round(1 / ratio))
                     clean = 1 / inv if inv > 0 else 0.0
                     label = f"1:{inv:g}"
                 if clean > 0:
@@ -3175,6 +3194,24 @@ def self_test() -> list[tuple[str, bool, str]]:
     # split and nothing in the filings distinguishes them. The restatement is
     # still applied — it is the better guess either way — but the note must not
     # announce a split that may never have happened.
+    # AAPL, 28 Aug 2026: real filed share counts across both restatement
+    # boundaries. The ratio measured is the split times the buybacks in
+    # between, so it is never clean — 3.738 for a 4:1, 6.702 for a 7:1.
+    _aapl = split_adjust({2012: 939_208_000.0, 2013: 6_294_491_000.0,
+                          2017: 5_126_201_000.0, 2018: 4_754_986_000.0,
+                          2019: 17_772_945_000.0, 2020: 16_976_763_000.0})
+    out.append(("Apple's 3.738 measured ratio is a 4:1 split, not a 3.5:1",
+                _aapl[0][2018] == 4_754_986_000.0 * 4.0
+                and any("about 4:1 at FY2019" in m for m in _aapl[1])
+                and not any("3.5:1" in m for m in _aapl[1]),
+                "FY2018 restates to 19,019.9M, so FY2019 reads -1,247.0M shares retired"))
+    out.append(("...and 6.702 across the earlier boundary is a 7:1",
+                _aapl[0][2012] == 939_208_000.0 * 28.0
+                and any("about 7:1 at FY2013" in m for m in _aapl[1]),
+                "7:1 in FY2014 and 4:1 in FY2020 compound to 28x on pre-FY2013 years"))
+    out.append(("...and FY2020 onwards is left alone",
+                _aapl[0][2020] == 16_976_763_000.0 and _aapl[0][2019] == 17_772_945_000.0,
+                "the restated years are the only ones that move"))
     _ipo = split_adjust({2020: 100e6, 2021: 110e6, 2022: 990e6, 2023: 1032e6})
     out.append(("A listing that looks like a split is still restated, but not announced as one",
                 _ipo[0][2021] == 990e6 and _ipo[0][2023] == 1032e6
