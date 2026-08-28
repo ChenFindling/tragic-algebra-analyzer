@@ -3212,6 +3212,21 @@ def self_test() -> list[tuple[str, bool, str]]:
     out.append(("...and FY2020 onwards is left alone",
                 _aapl[0][2020] == 16_976_763_000.0 and _aapl[0][2019] == 17_772_945_000.0,
                 "the restated years are the only ones that move"))
+    # VEEV, 28 Aug 2026. This verdict had no branch in the explanation chain
+    # and fell through to the one written for the two half-checked verdicts,
+    # which announces that no funding ceiling could be built. Both ceilings
+    # existed. These pin that it is its own why, and that it can also arrive
+    # with fundable None — which is why the branch guards the format.
+    out.append(("An endpoint-only pass is its own verdict, not a half-checked one",
+                assess(0.2765, 1.049, 0.4295, 46_490.0, 0.2197).why == "growth measure",
+                "VEEV: needs 27.6%, funds 104.9%, delivered 42.9%, trend 22.0%"))
+    out.append(("...and it is neither of the two the fallback text describes",
+                assess(0.2765, 1.049, 0.4295, 46_490.0, 0.2197).why
+                not in ("no capital base", "no growth history"),
+                "the fallback says no funding ceiling could be built; VEEV's is 104.9%"))
+    out.append(("...and it can arrive with no funding ceiling at all",
+                assess(0.10, None, 0.20, 1_000.0, 0.05).why == "growth measure",
+                "a readable record with an unreadable capital base reaches the same branch"))
     _ipo = split_adjust({2020: 100e6, 2021: 110e6, 2022: 990e6, 2023: 1032e6})
     out.append(("A listing that looks like a split is still restated, but not announced as one",
                 _ipo[0][2021] == 990e6 and _ipo[0][2023] == 1032e6
@@ -3889,6 +3904,23 @@ if years and ticker and st.session_state.get("hb_tk") == ticker:
             "reports its diluted average in one class's equivalents, so the count can be "
             "hundreds of times too small. Check the share box against the market "
             "capitalisation you know — nothing below means anything until it agrees.")
+    elif v.why == "growth measure":
+        # VEEV, 28 Aug 2026: this verdict had no branch, so it fell through to
+        # the else below — which is written for "no capital base" and "no
+        # growth history" — and told a company with a 104.9% funding ceiling
+        # on screen that "no funding ceiling could be built ... a bank,
+        # insurer or REIT". Both ceilings were built here; it is the two
+        # readings of ONE history that disagree, and the box above already
+        # argues that in full. `fundable` can still be None on this branch —
+        # a readable growth record can arrive with an unreadable capital base
+        # — so it is never formatted unguarded.
+        st.warning(
+            f"**{v.label}.** {required:.1%} a year is inside the {delivered:.1%} rate between "
+            "the first and last year of the window"
+            + (f" and inside the {fundable:.1%} its capital could fund"
+               if fundable is not None else ", and no funding ceiling could be built")
+            + f", but not inside the {trend:.1%} the same history gives fitted through every "
+              "year. The box above has the argument.")
     elif v.why == "no ceiling of either kind":
         st.error(
             f"**{v.label}.** {required:.1%} a year is what the price requires, and neither "
