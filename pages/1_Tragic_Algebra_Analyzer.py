@@ -721,6 +721,29 @@ def dE_was_capped(measured: float) -> bool:
     return DE_SEED_CEILING < measured <= DE_UNUSABLE_ABOVE
 
 
+def dE_projectable(p: "Pooled") -> bool:
+    """Can this ΔE be applied to next year's profit?
+
+    Two ways it cannot, and only one of them was checked. The obvious one is a
+    ratio that is negative or absurd — stock comp swamping earnings.
+
+    The one that took until Rivian to find is a NEGATIVE DENOMINATOR. ΔE is
+    sum(OE) / sum(N), and a company that loses money makes BOTH sums negative,
+    so the ratio comes out positive. Worse, the true stock-comp cost makes
+    owners' earnings more negative than net income, so it lands just above 1.0
+    and gets capped to a flattering 100%.
+
+    RIVN, 27 Aug 2026: -9,743 / -9,078 = 107.3% over three years in which it
+    earned nothing at all, and -14,291 / -21,962 = 65.1% over six. The 65.1%
+    is the dangerous one — it is not extreme, so nothing capped it, nothing
+    warned, and it would have seeded owners' earnings at 65% of a profit the
+    company has never made. `dE_defined` knew all along; it was wired to the
+    radio captions and to the wording of the refusals, but not to the gate
+    that decides whether the number gets projected.
+    """
+    return p.dE_defined and 0.0 < p.dE <= DE_UNUSABLE_ABOVE
+
+
 def stale_instant_lines(bal_fy: dict[str, str], ni_fy: int,
                         rows=BALANCE_ROWS) -> list[tuple[str, int, int]]:
     """Balance-sheet lines whose latest year trails net income's. ITEM 9.
@@ -2455,6 +2478,28 @@ def self_test() -> list[tuple[str, bool, str]]:
     out.append(("...and above 125% it still refuses rather than quietly capping",
                 not dE_was_capped(3.0),
                 "a broken read is not turned into a plausible number"))
+    # RIVN, 27 Aug 2026. ΔE off a negative denominator. sum_omega and sum_G
+    # play no part in this gate; the figures that matter are the two sums.
+    _rivn3 = Pooled(dE=-9743.0 / -9078.0, sum_N=-9078.0, sum_OE=-9743.0,
+                    sum_omega=2227.0, sum_G=1562.0, years=2)
+    _rivn6 = Pooled(dE=-14291.0 / -21962.0, sum_N=-21962.0, sum_OE=-14291.0,
+                    sum_omega=-4552.0, sum_G=3119.0, years=6)
+    out.append(("Rivian's 107.3% ΔE is two negatives divided, and is not projectable",
+                not dE_projectable(_rivn3) and abs(_rivn3.dE - 1.073) < 5e-4,
+                "-9,743 of owners' earnings over -9,078 of net income, FY2023 and FY2025"))
+    out.append(("...and neither is the 65.1% over six years, which nothing would have capped",
+                not dE_projectable(_rivn6) and not dE_was_capped(_rivn6.dE),
+                "the plausible-looking one: no cap, no warning, 65% of a profit never made"))
+    _crm3 = Pooled(dE=7001.0 / 7457.0, sum_N=7457.0, sum_OE=7001.0,
+                   sum_omega=0.0, sum_G=0.0, years=3)
+    _adbe3 = Pooled(dE=7656.0 / 7130.0, sum_N=7130.0, sum_OE=7656.0,
+                    sum_omega=0.0, sum_G=0.0, years=3)
+    out.append(("...while Salesforce's 93.9% on real profit still projects",
+                dE_projectable(_crm3), "7,001 over 7,457"))
+    out.append(("...and Adobe's 107.4% still projects, still capped to 100%",
+                dE_projectable(_adbe3) and seed_dE(_adbe3.dE) == 1.0
+                and dE_was_capped(_adbe3.dE),
+                "7,656 over 7,130 — positive earnings, so the cap does the work"))
     _alt = [Year(fy=2024, N=100.0, G=0.0, T=0.0, dS=0.0, price=0.0, Cw=-20.0),
             Year(fy=2025, N=100.0, G=0.0, T=0.0, dS=0.0, price=0.0, Cw=20.0)]
     _pooled_alt = pool(_alt).dE
@@ -2973,11 +3018,13 @@ if years and ticker and st.session_state.get("tk") == ticker:
              "window is the diagnostic; where capital policy has changed, the recent one is "
              "what will apply going forward.") == "Last 3 years"
     use_dE = recent.dE if use_recent else pooled.dE
-    dE_ok = 0.0 < use_dE <= DE_UNUSABLE_ABOVE
+    dE_ok = dE_projectable(recent if use_recent else pooled)
     # The measurement above is left as filed; only what gets projected is held
     # to 100%. See the dE ceiling block near the top of the file.
     applied_dE = seed_dE(use_dE) if dE_ok else use_dE
-    dE_capped = dE_was_capped(use_dE)
+    # Only true when the cap actually applied. Rivian's 107.3% is not
+    # projectable at all, and "107.3% (capped from 107.3%)" is not a sentence.
+    dE_capped = dE_ok and dE_was_capped(use_dE)
 
     hist = sorted(y.OE for y in years[-5:])
     median_OE = hist[len(hist) // 2] if hist else 0.0
