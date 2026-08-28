@@ -1215,9 +1215,22 @@ def split_adjust(shares: dict[int, float]) -> tuple[dict[int, float], list[str]]
                     label = f"1:{inv:g}"
                 if clean > 0:
                     factor *= clean
-                    notes.append(f"Stock split detected in FY{fy} (about {label}). Earlier "
-                                 "share counts restated onto the current basis — without this "
-                                 "the SBC cost would be wildly overstated.")
+                    # Says what it SAW, not what it concluded. RIVN, 27 Aug
+                    # 2026: the November 2021 listing moved the weighted
+                    # average share count by about 9x, this read it as a 9:1
+                    # split and announced one — on a company that has never
+                    # split. Nothing here can tell a split from a listing: the
+                    # prices arrive already split-adjusted, so both look
+                    # identical from the filings alone. The restatement is
+                    # still the better guess in both cases, which is why the
+                    # numbers are unchanged; the claim was the wrong part.
+                    notes.append(f"The share count changes by about {label} at FY{fy} — the "
+                                 "size of a stock split, so earlier share counts have been "
+                                 "restated onto the current basis; without this the SBC cost "
+                                 "would be wildly overstated. A first listing or a "
+                                 "recapitalisation produces the same jump and this reader "
+                                 "cannot tell them apart, so if the company did not split, the "
+                                 "restated years are wrong.")
     return adjusted, notes
 
 
@@ -2772,8 +2785,19 @@ def self_test() -> list[tuple[str, bool, str]]:
                 "history left as filed, with a note saying why"))
     _real = split_adjust({2021: 100e6, 2022: 100e6, 2023: 400e6, 2024: 405e6})
     out.append(("...while a real 4:1 split is still restated",
-                _real[0][2021] == 400e6 and any("Stock split detected" in m for m in _real[1]),
+                _real[0][2021] == 400e6
+                and any("the size of a stock split" in m for m in _real[1]),
                 "4:1 in FY2023, earlier years multiplied"))
+    # RIVN, 27 Aug 2026: a first listing moves the share count exactly like a
+    # split and nothing in the filings distinguishes them. The restatement is
+    # still applied — it is the better guess either way — but the note must not
+    # announce a split that may never have happened.
+    _ipo = split_adjust({2020: 100e6, 2021: 110e6, 2022: 990e6, 2023: 1032e6})
+    out.append(("A listing that looks like a split is still restated, but not announced as one",
+                _ipo[0][2021] == 990e6 and _ipo[0][2023] == 1032e6
+                and all("Stock split detected" not in m for m in _ipo[1])
+                and any("did not split, the restated years are wrong" in m for m in _ipo[1]),
+                "RIVN FY2022 reads about 9:1 on a company that has never split"))
     class _Y:
         def __init__(self, oe, ex=""):
             self.OE, self.excluded = oe, ex
