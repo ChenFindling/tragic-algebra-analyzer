@@ -721,6 +721,19 @@ def dE_was_capped(measured: float) -> bool:
     return DE_SEED_CEILING < measured <= DE_UNUSABLE_ABOVE
 
 
+def buybacks_shrank_count(win) -> bool:
+    """Did buybacks actually retire more stock than this window issued?
+
+    The ONLY thing that licenses saying so. VEEV, 28 Aug 2026: the capped-ΔE
+    note named buybacks as the cause of a 113.5% reading on a company whose
+    share count ROSE in all three years of the window and which repurchased
+    nothing at all until FY2026. ΔE above 100% has a second cause with no
+    buyback in it — the stock-comp cost measured off the share count pooling
+    below the GAAP charge — and the note has to know which one it found.
+    """
+    return sum(y.T for y in win) > 0 and sum(y.dS for y in win) < 0
+
+
 def dE_projectable(p: "Pooled") -> bool:
     """Can this ΔE be applied to next year's profit?
 
@@ -2829,6 +2842,20 @@ def self_test() -> list[tuple[str, bool, str]]:
     out.append(("...and FY2020 onwards is left alone",
                 _aapl[0][2020] == 16_976_763_000.0 and _aapl[0][2019] == 17_772_945_000.0,
                 "the restated years are the only ones that move"))
+    # VEEV, 28 Aug 2026. Real FY2024-26 figures: no buyback until the last
+    # year, and the share count rose in all three. ΔE still measured 113.5%,
+    # so the cause was never the buyback the note used to name.
+    _veev = [Year(fy=2024, N=526.0, G=394.0, T=0.0, dS=1.0, price=189.61, Cw=25.0),
+             Year(fy=2025, N=714.0, G=437.0, T=0.0, dS=1.7, price=209.29, Cw=19.0),
+             Year(fy=2026, N=909.0, G=473.0, T=170.0, dS=1.8, price=255.59, Cw=30.0)]
+    _adbe_like = [Year(fy=2024, N=100.0, G=20.0, T=900.0, dS=-8.0, price=100.0, Cw=5.0),
+                  Year(fy=2025, N=100.0, G=20.0, T=900.0, dS=-8.0, price=100.0, Cw=5.0)]
+    out.append(("Veeva's ΔE above 100% is not a buyback — the count rose every year",
+                not buybacks_shrank_count(_veev),
+                "0, 0 and 170 of buybacks against +1.0, +1.7 and +1.8M shares"))
+    out.append(("...while a real buyback window still says so",
+                buybacks_shrank_count(_adbe_like),
+                "stock retired, count falls — the sentence the note was written for"))
     _ipo = split_adjust({2020: 100e6, 2021: 110e6, 2022: 990e6, 2023: 1032e6})
     out.append(("A listing that looks like a split is still restated, but not announced as one",
                 _ipo[0][2021] == 990e6 and _ipo[0][2023] == 1032e6
@@ -3221,14 +3248,24 @@ if years and ticker and st.session_state.get("tk") == ticker:
                 "fully captured — a company cannot keep more than every reported dollar. It "
                 "cannot be projected forward. Set owners' earnings by hand."))
     elif dE_capped:
+        _win = [y for y in (years[-3:] if use_recent else years) if not y.excluded]
+        _bought_back = buybacks_shrank_count(_win)
         alerts.append(("warning",
             f"ΔE measured {use_dE:.1%} over this window — shareholders kept more than the "
-            "company reported earning, which happens when buybacks retire more stock than the "
-            "year issues. That is a real reading of what happened and the figures above are "
+            "company reported earning, "
+            + ("which happens when buybacks retire more stock than the year issues. "
+               if _bought_back else
+               "and the share count did not fall over this window, so buybacks are not the "
+               "cause: the stock-comp cost measured from the share count pooled below the "
+               "GAAP charge. Compare those two columns in the yearly table. ")
+            + "That is a real reading of what happened and the figures above are "
             f"left as filed. But it is not projectable: owners' earnings are seeded at "
             f"{DE_SEED_CEILING:.0%} of forward net income rather than {use_dE:.1%}, because "
             "fifteen years of handing owners more than the company earns is not a business "
-            "model. Raise the box by hand if you believe the buyback pace continues."))
+            "model. Raise the box by hand "
+            + ("if you believe the buyback pace continues."
+               if _bought_back else
+               "only if you can say why the measured cost should stay below the charge.")))
     elif median_OE > 0 and derived > 2 * median_OE:
         alerts.append(("warning",
             f"Derived owners' earnings of {d(derived,0)}M are {derived/median_OE:.1f}x the "
