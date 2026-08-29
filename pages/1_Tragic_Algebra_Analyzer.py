@@ -714,6 +714,50 @@ def money_fmt(values) -> str:
     """The style.format string for a table's dollar columns, from its own values."""
     return f"{{:,.{money_decimals(values)}f}}"
 
+
+# ══════════════════════════════════════════════════════════════════════
+#  SEED — where the owners' earnings box starts from, and why
+# ══════════════════════════════════════════════════════════════════════
+#
+# Crocs, 29 Aug 2026. FY2025 net income -81M after a 738M non-cash HEYDUDE
+# write-down, on a record of 950M the year before and a five-year median in
+# the hundreds of millions. ΔE over the last three years was 100.9% and
+# projectable, so the seed was forward net income x ΔE = -81, the verdict
+# read "not investible — not even one cent", and the page stopped before
+# the notes. Nothing mentioned the median it had already computed. The
+# reader was right and the judgement was wrong.
+#
+# The median was already the fallback when ΔE cannot be projected. A filed
+# loss year on a record whose median is a profit is a worse reading of a
+# normal year than that median is, so it takes the same fallback. Every
+# other shape is unchanged: a profit seeds from ΔE as before, a loss on a
+# losing record still falls to the median if positive and to net income as
+# a ceiling if not. The source is returned alongside the figure so the
+# page can say which it used.
+
+SEED_FROM_DE = "forward net income x ΔE"
+SEED_FROM_MEDIAN = "the 5-year median — ΔE is not projectable"
+SEED_FROM_MEDIAN_LOSS = "the 5-year median — the forward year is a loss on a profitable record"
+SEED_CEILING = "forward net income, a ceiling to revise DOWN from"
+
+
+def loss_year_on_record(fwd_N: float, median_OE: float) -> bool:
+    """A forward year that is a loss, on a record whose 5-year median is a profit."""
+    return fwd_N <= 0 < median_OE
+
+
+def seed_owners_earnings(fwd_N: float, applied_dE: float, dE_ok: bool,
+                         median_OE: float) -> tuple[float, str]:
+    """The owners' earnings seed and the sentence that says where it came from."""
+    if dE_ok and not loss_year_on_record(fwd_N, median_OE):
+        return fwd_N * applied_dE, SEED_FROM_DE
+    if median_OE > 0:
+        return median_OE, (SEED_FROM_MEDIAN_LOSS if dE_ok else SEED_FROM_MEDIAN)
+    # Every recent year is negative. Seeding zero makes IV15 collapse to net
+    # cash per share, which looks like an answer but is not one. Forward net
+    # income is at least a defensible ceiling to revise down from.
+    return fwd_N, SEED_CEILING
+
 # ══════════════════════════════════════════════════════════════════════
 #  ΔE CEILING — a measurement above 100% is real; a projection is not
 # ══════════════════════════════════════════════════════════════════════
@@ -3077,6 +3121,21 @@ def self_test() -> list[tuple[str, bool, str]]:
                 and "fiscal year end" not in _payx_note
                 and holes_note(list(range(2016, 2026))) is None,
                 "Paychex wording unchanged"))
+    # 14. The seed (CROX, 29 Aug 2026). A loss year on a profitable record
+    #     seeds from the median; a profit, ARM's unprojectable ΔE and RIVN's
+    #     losing record all seed exactly as before.
+    _crox = seed_owners_earnings(-81.2, 1.0, True, 600.0)
+    _msft = seed_owners_earnings(88000.0, 1.0, True, 70000.0)
+    _arm = seed_owners_earnings(600.0, -0.162, False, 556.0)
+    _rivn = seed_owners_earnings(-3646.0, 1.073, False, -2000.0)
+    out.append(("A loss year on a profitable record seeds from the median, and says so",
+                _crox == (600.0, SEED_FROM_MEDIAN_LOSS),
+                f"CROX: {_crox[0]:.0f} — {_crox[1]}"))
+    out.append(("...and every other shape seeds exactly as before",
+                _msft == (88000.0, SEED_FROM_DE) and _arm == (556.0, SEED_FROM_MEDIAN)
+                and _rivn == (-3646.0, SEED_CEILING),
+                "MSFT from ΔE, ARM from the median, RIVN net income as a ceiling"))
+
     return out
 
 
@@ -3321,15 +3380,7 @@ if years and ticker and st.session_state.get("tk") == ticker:
     c1, c2, c3 = st.columns(3)
     fwd_N = c1.number_input("Forward net income ($M)", value=float(round(years[-1].N, 1)), step=10.0,
                             help="Next year's expected GAAP net income.")
-    if dE_ok:
-        derived = fwd_N * applied_dE
-    elif median_OE > 0:
-        derived = median_OE
-    else:
-        # Every recent year is negative. Seeding zero makes IV15 collapse to
-        # net cash per share, which looks like an answer but is not one.
-        # Forward net income is at least a defensible ceiling to revise down from.
-        derived = fwd_N
+    derived, seed_source = seed_owners_earnings(fwd_N, applied_dE, dE_ok, median_OE)
     OE = c1.number_input("Owners' earnings ($M)", value=float(round(derived, 1)), step=1.0,
                          help="Seeded from forward net income x ΔE. Adjust for maintenance "
                               "capex, working capital and anything non-recurring.")
@@ -3411,6 +3462,16 @@ if years and ticker and st.session_state.get("tk") == ticker:
                 "the margin path, which is what the hypergrowth years in Model settings are for. "
                 "ServiceNow and monday.com both need this treatment."))
 
+    if seed_source == SEED_FROM_MEDIAN_LOSS:
+        st.error(
+            f"**The forward year is a loss on a profitable record.** Net income for the latest "
+            f"year is {d(fwd_N,0)}M, while the five-year median of owners' earnings is "
+            f"{d(median_OE,0)}M. A single loss year on a record like that is usually a non-cash "
+            "charge — an impairment or a write-down — and a verdict measured against it would "
+            "be a verdict on the charge, not on the business. Owners' earnings above are "
+            f"therefore seeded from the median, {d(median_OE,0)}M, rather than from the loss. "
+            "The yearly table shows which year it was; set the box to what the business earns "
+            "in a normal year.")
     if not dE_ok and median_OE <= 0:
         if not (pooled.dE_defined and recent.dE_defined):
             st.error(
@@ -3725,10 +3786,7 @@ if years and ticker and st.session_state.get("tk") == ticker:
             # seed came from the median because a negative ΔE cannot project,
             # which the reader had no way to know from a block whose whole
             # purpose is to be pasted when something looks wrong.
-            + ("\n" + " " * 20 + "seeded from "
-               + ("forward net income x ΔE" if dE_ok else
-                  "the 5-year median — ΔE is not projectable" if median_OE > 0 else
-                  "forward net income, a ceiling to revise DOWN from")) + "\n"
+            + ("\n" + " " * 20 + "seeded from " + seed_source) + "\n"
             f"net cash            {net_cash:,.0f}   ({net_cash/shares:,.2f}/share)\n"
             f"tier                {tier_name}   growth {growth:.2%}\n"
             f"exit multiple       {exit_m:g}x   blend {blend:g}   leg {m2_style}\n"
