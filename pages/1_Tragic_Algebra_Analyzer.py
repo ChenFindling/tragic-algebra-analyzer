@@ -3517,9 +3517,9 @@ if years and ticker and st.session_state.get("tk") == ticker:
             "company reported earning, "
             + ("which happens when buybacks retire more stock than the year issues. "
                if _bought_back else
-               "and the share count did not fall over this window, so buybacks are not the "
-               "cause: the stock-comp cost measured from the share count pooled below the "
-               "GAAP charge. Compare those two columns in the yearly table. ")
+               "and buybacks over this window were too small to be the cause: the stock-comp "
+               "cost measured from the share count pooled below the GAAP charge. Compare "
+               "those two columns in the yearly table. ")
             + "That is a real reading of what happened and the figures above are "
             f"left as filed. But it is not projectable: owners' earnings are seeded at "
             f"{DE_SEED_CEILING:.0%} of forward net income rather than {use_dE:.1%}, because "
