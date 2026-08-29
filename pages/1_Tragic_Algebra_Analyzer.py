@@ -679,6 +679,42 @@ def median_positive_N(values: list[float]) -> float:
     return pos[len(pos) // 2] if pos else 0.0
 
 # ══════════════════════════════════════════════════════════════════════
+#  TABLE DECIMALS — a row the reader can add up, at any scale
+# ══════════════════════════════════════════════════════════════════════
+#
+# Pro-Dex, 28 Aug 2026: 3.3M shares, and every dollar column rounded to
+# whole millions. FY2016 read net income 1, GAAP SBC 0, true SBC cost 0,
+# owners' earnings 1 — and ΔE 79.2%. The engine was right; the ratios are
+# computed unrounded. But six of ten rows showed a stock-comp cost of "0"
+# that was plainly not zero, and the table exists so a reader can follow
+# the arithmetic across a row. "Your table says 1 minus 0 equals 79.2%" is
+# the first comment a microcap reader would write.
+#
+# One decision for the WHOLE table, not per column, because it is the row
+# that has to reconcile: net income at whole millions beside stock comp at
+# tenths adds up no better than today. Gated on the largest absolute value
+# across the dollar columns, so a table with anything at $100M or more
+# keeps printing whole millions — HRB, BRBR, Apple and every other baseline
+# are untouched. Display only; no figure the page computes passes through
+# this.
+
+MONEY_1DP_BELOW = 100.0   # largest |value| in the table, $M: below this, one decimal
+MONEY_2DP_BELOW = 10.0    # ...and below this, two
+
+
+def money_decimals(values) -> int:
+    """Decimal places for a year-by-year table's dollar columns: 0, 1 or 2."""
+    big = max((abs(v) for v in values if v is not None), default=0.0)
+    if big >= MONEY_1DP_BELOW:
+        return 0
+    return 1 if big >= MONEY_2DP_BELOW else 2
+
+
+def money_fmt(values) -> str:
+    """The style.format string for a table's dollar columns, from its own values."""
+    return f"{{:,.{money_decimals(values)}f}}"
+
+# ══════════════════════════════════════════════════════════════════════
 #  ΔE CEILING — a measurement above 100% is real; a projection is not
 # ══════════════════════════════════════════════════════════════════════
 #
@@ -2890,6 +2926,23 @@ def self_test() -> list[tuple[str, bool, str]]:
     out.append(("Every line the tag panel can print has a label",
                 all(k in TAG_LABELS for k in CONCEPTS),
                 f"{len(CONCEPTS)} concepts, {len(CONCEPTS) - sum(k in TAG_LABELS for k in CONCEPTS)} unlabelled"))
+    # 11. The year-by-year table at microcap scale (PDEX, 28 Aug 2026).
+    #     Pinned on the rendered cell, not on the threshold: a Pro-Dex row
+    #     must show its stock comp, a Bellring row must still print whole
+    #     millions, and Apple's table must be byte-identical to before.
+    _pdex = money_fmt([1.2, 0.08, 0.0, 0.05, 1.15, 5.4, 0.3, 0.0, 0.21, 5.19])
+    out.append(("A microcap table shows the stock comp it rounded away",
+                _pdex.format(0.05) == "0.05" and _pdex.format(1.15) == "1.15",
+                f"PDEX FY2016 true SBC cost formats as {_pdex.format(0.05)}, not 0"))
+    _mid = money_fmt([42.0, 3.7, 0.0, 2.14, 39.86])
+    out.append(("...one decimal when the table tops out between 10 and 100",
+                _mid.format(2.14) == "2.1" and _mid.format(42.0) == "42.0",
+                f"2.14 formats as {_mid.format(2.14)}, 42 as {_mid.format(42.0)}"))
+    _brbr = money_fmt([24.0, 2.0, 0.0, -524.0, 550.0])
+    _aapl = money_fmt([93736.0, 11688.0, 95000.0, 6400.0, 98800.0])
+    out.append(("Anything with a figure at $100M or more keeps whole millions",
+                _brbr.format(-524.0) == "-524" and _aapl.format(93736.0) == "93,736",
+                f"BRBR {_brbr.format(-524.0)}, AAPL {_aapl.format(93736.0)} — unchanged"))
     return out
 
 
@@ -3491,6 +3544,9 @@ if years and ticker and st.session_state.get("tk") == ticker:
         _dE_text = lambda v: "n/a (base too small)" if v is None else f"{v:.1%}"
         _med_N = median_positive_N([y.N for y in years])
         _blank_dE = [y.fy for y in years if dE_cell(y.N, y.dE, _med_N) is None]
+        # PDEX: one decimal count for all five dollar columns, chosen from
+        # the table's own largest value. See money_decimals.
+        _mfmt = money_fmt([v for y in years for v in (y.N, y.G, y.T, y.omega, y.OE)])
         st.dataframe(pd.DataFrame([{
             "FY": f"{y.fy}*" if y.excluded else str(y.fy),
             "Net income": y.N, "GAAP SBC": y.G, "Buybacks": y.T,
@@ -3500,9 +3556,9 @@ if years and ticker and st.session_state.get("tk") == ticker:
             # not honour na_rep and prints a bare "None" into the cell, which
             # reads like a failure rather than a deliberate blank.
             "ΔE": _dE_text(dE_cell(y.N, y.dE, _med_N))} for y in years]).style.format({
-                "Net income": "{:,.0f}", "GAAP SBC": "{:,.0f}", "Buybacks": "{:,.0f}",
-                "Share change": "{:+,.1f}", "Avg price": "${:,.2f}", "True SBC cost": "{:,.0f}",
-                "Owners' earnings": "{:,.0f}"}, na_rep="—"),
+                "Net income": _mfmt, "GAAP SBC": _mfmt, "Buybacks": _mfmt,
+                "Share change": "{:+,.1f}", "Avg price": "${:,.2f}", "True SBC cost": _mfmt,
+                "Owners' earnings": _mfmt}, na_rep="—"),
             width='stretch', hide_index=True)
         if _blank_dE:
             st.caption(
