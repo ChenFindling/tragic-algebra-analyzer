@@ -4290,11 +4290,13 @@ if years and ticker and st.session_state.get("hb_tk") == ticker:
             st.write("**Year by year** — the trend matters more than the level")
             st.dataframe(pd.DataFrame([{
                 "FY": r.fy, "Owners' earnings": r.OE, "Invested capital": r.cap.invested,
-                "ROIC": r.roic if not r.reason else None,
-                "Ex-goodwill": r.tangible_roic if not r.reason else None,
+                # Text, not None: st.dataframe ignores na_rep and printed "None"
+                # in every refused cell. Same fix as tool 1's ΔE column.
+                "ROIC": f"{r.roic:.1%}" if not r.reason and r.roic is not None else "n/a",
+                "Ex-goodwill": (f"{r.tangible_roic:.1%}"
+                                if not r.reason and r.tangible_roic is not None else "n/a"),
                 "n/a because": r.reason} for r in rows]).style.format(
-                {"Owners' earnings": "{:,.0f}", "Invested capital": "{:,.0f}",
-                 "ROIC": "{:.1%}", "Ex-goodwill": "{:.1%}"}, na_rep="n/a"),
+                {"Owners' earnings": "{:,.0f}", "Invested capital": "{:,.0f}"}),
                 width="stretch", hide_index=True)
             st.caption(
                 f"FY{latest_r.fy} uses the owners' earnings figure from the input box; earlier "
