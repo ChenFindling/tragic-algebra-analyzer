@@ -1713,6 +1713,48 @@ def share_route_note(kind: str, was: float, wavg: float, route: str,
                      if route == "the tagged share count" else f"Switched to {route}.")
 
 
+def negative_sbc_note(years) -> str | None:
+    """The note for a true stock-comp cost that reads below zero, or None.
+
+    Two ways it earns a note. Many years: the count test, unchanged since it
+    was written — Rivian trips it at 3 of 7 and must go on doing so. One year
+    of a size that swamps everything else: BellRing FY2020, 28 Aug 2026, the
+    only negative year in its window and so invisible to the count, reading
+    -524 against a GAAP charge of 2 and net income of 24. Owners' earnings
+    for the year came out at 550 and its ΔE cell at 2342.1%, and nothing on
+    the page mentioned it. With no withholding line found, a negative reading
+    IS option and ESPP proceeds, and proceeds twenty times the year's profit
+    are the October 2019 spin-off financing tagged where exercises would be —
+    the same shape as Rivian's FY2019 pre-IPO round. The size test: the
+    negative cost outweighs the year's net income, so the year's owners'
+    earnings are at least double what was reported. A negative year that
+    fails both tests gets nothing, as before.
+    """
+    kept = [y for y in years if not y.excluded]
+    neg = [y for y in kept if y.omega < 0]
+    if len(neg) >= max(2, len(years) // 3):
+        return (
+            f"The true stock-comp cost reads negative in {len(neg)} of {len(years)} years, which "
+            "ADDS to owners' earnings instead of subtracting and pushes ΔE above 100%. It happens "
+            "legitimately when option and ESPP proceeds exceed the tax withheld, but it is also "
+            "what a missing buyback or issuance line looks like. Check the tag panel below: if "
+            "buybacks read fewer years than net income, that is the cause and ΔE here is a "
+            "ceiling rather than a measurement.")
+    big = [y for y in neg if abs(y.omega) > abs(y.N)]
+    if big:
+        y = max(big, key=lambda y: abs(y.omega))
+        return (
+            f"The true stock-comp cost reads {y.omega:,.0f}M in FY{y.fy} against a GAAP charge of "
+            f"{y.G:,.0f}M and net income of {y.N:,.0f}M, so that year's owners' earnings of "
+            f"{y.OE:,.0f}M are more than double what was reported. A negative reading means option "
+            "and ESPP proceeds exceeded the tax withheld, and proceeds that dwarf both the charge "
+            "and the year's profit are almost always financing — a listing, a spin-off or an "
+            "offering — tagged where employee exercises would be. The year is not excluded from "
+            "the pooled figures, so that year's ΔE cell, and any pool that includes it, is a "
+            "ceiling rather than a measurement.")
+    return None
+
+
 def resolve_ticker(ticker: str, cmap: dict) -> str | None:
     """Find a ticker in the SEC list, allowing for how people actually type it.
 
@@ -2118,15 +2160,11 @@ def load(ticker: str, n_years: int = 10):
             "acquisition or a preferred conversion — are being counted as compensation. Treat ΔE "
             "here as a floor, not a measurement.")
 
-    _neg = [y for y in years if y.omega < 0 and not y.excluded]
-    if len(_neg) >= max(2, len(years) // 3):
-        notes.append(
-            f"The true stock-comp cost reads negative in {len(_neg)} of {len(years)} years, which "
-            "ADDS to owners' earnings instead of subtracting and pushes ΔE above 100%. It happens "
-            "legitimately when option and ESPP proceeds exceed the tax withheld, but it is also "
-            "what a missing buyback or issuance line looks like. Check the tag panel below: if "
-            "buybacks read fewer years than net income, that is the cause and ΔE here is a "
-            "ceiling rather than a measurement.")
+    # Count OR size — see negative_sbc_note. BellRing FY2020 was one year
+    # among nine and the largest distortion in its table.
+    _neg_note = negative_sbc_note(years)
+    if _neg_note:
+        notes.append(_neg_note)
 
     # A blank year inside the window is invisible in a table full of numbers.
     # H&R Block read 12 of 19 years after the gap-filling fix, and the four
@@ -2943,6 +2981,30 @@ def self_test() -> list[tuple[str, bool, str]]:
     out.append(("Anything with a figure at $100M or more keeps whole millions",
                 _brbr.format(-524.0) == "-524" and _aapl.format(93736.0) == "93,736",
                 f"BRBR {_brbr.format(-524.0)}, AAPL {_aapl.format(93736.0)} — unchanged"))
+    # 12. The negative true-SBC-cost note, count OR size (BellRing FY2020).
+    #     Rivian's shape is the control: 3 negative years of 7 must keep the
+    #     original count wording, word for word.
+    def _yr(fy, N, G=0.0, Ce=0.0, ex=""):
+        return Year(fy=fy, N=N, G=G, T=0.0, dS=0.0, price=0.0, Ce=Ce, excluded=ex)
+    _brbr_ys = ([_yr(2018, 0.0), _yr(2019, 0.0), _yr(2020, 24.0, 2.0, 524.0)]
+                + [_yr(f, 100.0, 5.0) for f in (2021, 2024, 2025)]
+                + [_yr(f, 100.0, 5.0, ex="share-funded acquisition") for f in (2022, 2023)])
+    _bn = negative_sbc_note(_brbr_ys)
+    out.append(("One negative year that outweighs its net income gets a note",
+                _bn is not None and "-524M in FY2020" in _bn and "550M" in _bn
+                and "negative in" not in _bn,
+                (_bn or "no note")[:60] + "…"))
+    _rivn_ys = ([_yr(f, -400.0, 10.0, 2750.0) for f in (2019, 2020, 2021)]
+                + [_yr(f, -5000.0, 500.0) for f in (2022, 2023, 2024, 2025)])
+    _rn = negative_sbc_note(_rivn_ys)
+    out.append(("Rivian's shape keeps the original count wording",
+                _rn is not None and _rn.startswith("The true stock-comp cost reads negative in 3 of 7 years"),
+                (_rn or "no note")[:60] + "…"))
+    out.append(("A clean window and a small negative year both get nothing",
+                negative_sbc_note([_yr(f, 100.0, 5.0) for f in range(2016, 2026)]) is None
+                and negative_sbc_note([_yr(2016, 100.0, 5.0, 8.0)]
+                                      + [_yr(f, 100.0, 5.0) for f in range(2017, 2026)]) is None,
+                "MSFT's shape, and a -3M year against 100M of profit"))
     return out
 
 
