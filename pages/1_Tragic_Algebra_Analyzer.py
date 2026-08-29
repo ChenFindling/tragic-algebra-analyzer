@@ -743,6 +743,20 @@ def money_fmt(values) -> str:
 # projecting it at 100% would turn a broken read into a plausible number.
 # That band still refuses and asks for owners' earnings by hand.
 
+# Build-A-Bear, 29 Aug 2026: the holes note said "nothing read for FY2018".
+# Nothing was missing. BBW moved its year end from late December to the
+# Saturday nearest 31 January in 2018, so fiscal 2017 ended December 2017 and
+# fiscal 2018 ended February 2019, and a reader that names each year by the
+# calendar year it ended in puts consecutive filings on labels two apart. The
+# figures were right; the sentence was false. Telling the two cases apart
+# needs the period-end MONTH, which the reader sees and discards — that is
+# the proper fix and it is queued. Until then a one-label hole says which
+# two things it can be, and asserts neither.
+HOLE_OR_FYE_CHANGE = (
+    " A single missing label can also be a change of fiscal year end: consecutive filings "
+    "whose year end moved by more than a month land on labels two apart, and nothing is "
+    "missing. The period-end dates in the filing settle which this is.")
+
 DE_SEED_CEILING = 1.00    # highest dE that may be projected forward
 DE_UNUSABLE_ABOVE = 1.25  # above this, refuse rather than cap
 
@@ -1725,6 +1739,30 @@ def share_route_note(kind: str, was: float, wavg: float, route: str,
                      if route == "the tagged share count" else f"Switched to {route}.")
 
 
+def holes_note(fys) -> str | None:
+    """The note for a window whose labels are not consecutive, or None.
+
+    Paychex is the case it was written for: net income read for 2009-2015 and
+    2024-2026, ten rows spanning eighteen years, two eras blended. A gap of
+    exactly one label is different — see HOLE_OR_FYE_CHANGE — and gets the
+    clause that says so. Wording unchanged otherwise.
+    """
+    span = max(fys) - min(fys) + 1
+    if span <= len(fys):
+        return None
+    missing = [y for y in range(min(fys), max(fys) + 1) if y not in fys]
+    return (
+        f"**The filing history has holes.** {len(fys)} annual figures span {span} calendar "
+        f"years, with nothing read for FY{missing[0]}"
+        + (f"-FY{missing[-1]}" if len(missing) > 1 else "")
+        + ". The year-by-year table draws these rows next to each other as though they were "
+          "consecutive. Growth rates here are measured across the real calendar gap, so they "
+          "are not wrong, but they blend two eras of the company with a hole in the middle — "
+          "and the pooled ΔE weights whichever era has more years. The tag panel shows how "
+          "many years each line actually read."
+        + (HOLE_OR_FYE_CHANGE if len(missing) == 1 else ""))
+
+
 def negative_sbc_note(years) -> str | None:
     """The note for a true stock-comp cost that reads below zero, or None.
 
@@ -2201,18 +2239,9 @@ def load(ticker: str, n_years: int = 10):
     # The table draws FY2015 directly above FY2024, ten rows spanning eighteen
     # calendar years, and every rate computed across them silently blends two
     # different eras of the company.
-    _span = max(fys) - min(fys) + 1
-    if _span > len(fys):
-        _missing = [y for y in range(min(fys), max(fys) + 1) if y not in fys]
-        notes.append(
-            f"**The filing history has holes.** {len(fys)} annual figures span {_span} calendar "
-            f"years, with nothing read for FY{_missing[0]}"
-            + (f"-FY{_missing[-1]}" if len(_missing) > 1 else "")
-            + ". The year-by-year table draws these rows next to each other as though they were "
-              "consecutive. Growth rates here are measured across the real calendar gap, so they "
-              "are not wrong, but they blend two eras of the company with a hole in the middle — "
-              "and the pooled ΔE weights whichever era has more years. The tag panel shows how "
-              "many years each line actually read.")
+    _holes = holes_note(fys)
+    if _holes:
+        notes.append(_holes)
 
     if any(y.price == 0 for y in years):
         notes.append("No share price for some years — their SBC cost is understated.")
@@ -3033,6 +3062,21 @@ def self_test() -> list[tuple[str, bool, str]]:
                 and negative_sbc_note([_yr(2016, 100.0, 5.0, 8.0)]
                                       + [_yr(f, 100.0, 5.0) for f in range(2017, 2026)]) is None,
                 "MSFT's shape, and a -3M year against 100M of profit"))
+    # 13. The holes note (BBW, 29 Aug 2026). A one-label hole names the
+    #     fiscal-year-end case; Paychex's eight-year hole does not, and its
+    #     wording is untouched.
+    _bbw_fys = [2016, 2017, 2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026]
+    _payx_fys = list(range(2009, 2016)) + [2024, 2025, 2026]
+    _bbw_note, _payx_note = holes_note(_bbw_fys), holes_note(_payx_fys)
+    out.append(("A one-label hole says it may be a change of fiscal year end",
+                _bbw_note is not None and "nothing read for FY2018." in _bbw_note
+                and "change of fiscal year end" in _bbw_note,
+                "BBW: December 2017 filing followed by a February 2019 one"))
+    out.append(("...a multi-year hole does not, and a full window gets no note",
+                _payx_note is not None and "FY2016-FY2023" in _payx_note
+                and "fiscal year end" not in _payx_note
+                and holes_note(list(range(2016, 2026))) is None,
+                "Paychex wording unchanged"))
     return out
 
 
