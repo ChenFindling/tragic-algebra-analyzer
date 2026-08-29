@@ -3665,7 +3665,8 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 st.title("💯 100-Bagger Checker")
-st.caption("What a hundredfold requires, against what this business can fund and has ever done")
+st.caption("What a hundredfold requires, against what this business can fund and has ever done. "
+           "Its ROIC follows Burry's fully-adjusted formula; the hundred-bagger arithmetic is Mayer's.")
 
 if not _sec_contact():
     st.warning(
