@@ -3685,7 +3685,7 @@ if "hb_years" not in st.session_state:
 
 with st.form("hb_lookup"):
     ticker = st.text_input("Stock ticker",
-                           placeholder="CPRX · MATX · CXDO · AGX — press Enter").upper().strip()
+                           placeholder="XPEL · GCT · CXDO · CLMB — press Enter").upper().strip()
     submitted = st.form_submit_button("Check", type="primary")
 
 if submitted:
