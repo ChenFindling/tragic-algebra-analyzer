@@ -1143,6 +1143,13 @@ class RoicYear:
         """
         if self.excluded:
             return f"{self.excluded} — owners' earnings distorted"
+        # BellRing FY2018-19, 28 Aug 2026: the pre-listing holdco files net
+        # income of exactly zero, so the year sits in the window with owners'
+        # earnings 0 over a capital base of 452 and printed ROIC 0.0% — which
+        # reads as "earned nothing on its capital" when nothing was earned or
+        # lost, only absent. A zero numerator is a missing year, not a return.
+        if self.OE == 0.0 and self.numerator == 0.0:
+            return "no owners' earnings read for this year"
         if not self.cap.equity_found:
             return "no equity figure in this year's filing"
         if self.cap.invested <= 0:
@@ -2670,6 +2677,21 @@ def self_test() -> list[tuple[str, bool, str]]:
                                equity_found=True))
     out.append(("Negative capital base refuses rather than flipping sign",
                 neg.reason != "" and neg.roic is None, neg.reason or "printed a number"))
+    # 4a. BellRing FY2018: nothing read for the year, a real capital base, and
+    #     the cell used to print 0.0%. A year with a genuine small profit on
+    #     the same base must still compute.
+    _absent = RoicYear(fy=2018, OE=0.0, interest_income=0, lease_payments=0, other_expense=0,
+                       cap=Capital(fy=2018, equity=452, debt=0, cash=0, revenue=0,
+                                   equity_found=True))
+    out.append(("A year with no owners' earnings read is n/a, not 0.0%",
+                _absent.reason == "no owners' earnings read for this year",
+                _absent.reason or f"printed {_absent.roic:.1%}"))
+    _small = RoicYear(fy=2018, OE=0.3, interest_income=0, lease_payments=0, other_expense=0,
+                      cap=Capital(fy=2018, equity=452, debt=0, cash=0, revenue=0,
+                                  equity_found=True))
+    out.append(("...but a small real profit on the same base still computes",
+                _small.reason == "" and _small.roic is not None and abs(_small.roic - 0.3 / 452) < 1e-9,
+                f"{_small.roic:.2%}" if _small.roic is not None else _small.reason))
 
     # 4b. The payout cross-check. HRB shaped: dividends tagged, buybacks not,
     #     share count visibly shrinking.
