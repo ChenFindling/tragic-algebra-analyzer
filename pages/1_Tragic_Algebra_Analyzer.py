@@ -766,8 +766,20 @@ def buybacks_shrank_count(win) -> bool:
     nothing at all until FY2026. ΔE above 100% has a second cause with no
     buyback in it — the stock-comp cost measured off the share count pooling
     below the GAAP charge — and the note has to know which one it found.
+
+    XPEL, 29 Aug 2026: the same wrong sentence by another door. Nothing
+    bought back in FY2023-24, $3.0M in FY2025, and the count moved by about
+    -0.04M on 27.6M over the window — enough to pass both tests above. The
+    excess over 100% was 3.8, which is exactly the GAAP charge of 7.6 less
+    the measured cost of 3.8: the second cause, with a token buyback standing
+    in front of it. So a third question: were there enough buyback dollars
+    to account for the excess being credited to them? Apple, PDEX and Adobe
+    clear it by orders of magnitude; XPEL's 3.0 against 3.8 does not, and
+    gets the sentence that names the charge instead.
     """
-    return sum(y.T for y in win) > 0 and sum(y.dS for y in win) < 0
+    excess = sum(y.G - y.omega for y in win)
+    return (sum(y.T for y in win) > 0 and sum(y.dS for y in win) < 0
+            and sum(y.T for y in win) >= excess)
 
 
 def dE_projectable(p: "Pooled") -> bool:
@@ -2944,6 +2956,22 @@ def self_test() -> list[tuple[str, bool, str]]:
     out.append(("...while a real buyback window still says so",
                 buybacks_shrank_count(_adbe_like),
                 "stock retired, count falls — the sentence the note was written for"))
+    # XPEL, 29 Aug 2026. Real FY2023-25 figures: buybacks 0, 0 and 3.0, the
+    # count effectively flat, ΔE 102.5% from a GAAP charge of 7.6 against a
+    # measured cost of 3.8. PDEX's real FY2023-25 figures are the control:
+    # 8.55 of buybacks on a 3.3M count, and §8 says the note keeps naming them.
+    _xpel = [Year(fy=2023, N=52.8, G=1.6, T=0.0, dS=0.016, price=68.71),
+             Year(fy=2024, N=45.5, G=3.2, T=0.0, dS=0.027, price=44.64),
+             Year(fy=2025, N=51.2, G=2.8, T=3.0, dS=-0.041, price=36.55)]
+    _pdex = [Year(fy=2023, N=7.07, G=0.77, T=1.55, dS=-0.1, price=17.41, Cw=0.85),
+             Year(fy=2024, N=2.13, G=0.60, T=3.50, dS=-0.2, price=17.96, Cw=0.33),
+             Year(fy=2025, N=8.98, G=0.56, T=3.50, dS=-0.1, price=39.48)]
+    out.append(("A token buyback does not get credit for a charge-driven ΔE (XPEL)",
+                not buybacks_shrank_count(_xpel),
+                f"3.0 of buybacks against an excess of {sum(y.G - y.omega for y in _xpel):.1f}"))
+    out.append(("...and PDEX's real buybacks still do",
+                buybacks_shrank_count(_pdex),
+                f"8.55 of buybacks against an excess of {sum(y.G - y.omega for y in _pdex):.2f}"))
     _ipo = split_adjust({2020: 100e6, 2021: 110e6, 2022: 990e6, 2023: 1032e6})
     out.append(("A listing that looks like a split is still restated, but not announced as one",
                 _ipo[0][2021] == 990e6 and _ipo[0][2023] == 1032e6
