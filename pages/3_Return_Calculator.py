@@ -316,43 +316,70 @@ st.set_page_config(
 st.title("📈 Return Calculator")
 st.caption("Compound returns, forward and in reverse, with a table of saved scenarios")
 
-# Widget keys. A re-load writes these before the widgets are drawn — Streamlit
-# refuses to change a widget's value after it exists in the same run — so the
-# pending load is applied here, at the top, and then the page draws normally.
-_KEYS = {"form": FORM_FORWARD, "start": 10_000.0, "rate": 10.0, "years": 10,
-         "contrib": 0.0, "target": 1_000_000.0}
-for _k, _v in _KEYS.items():
-    st.session_state.setdefault(_k, _v)
+# INPUT STORE. The first version kept each input's value in its widget's own
+# session-state key. Streamlit drops the state of any keyed widget that is
+# not drawn in a run, and switching forms hides two of the five inputs — so
+# on the first switch the target read 0, and on switching back the return
+# read 0 (Chen, 30 Aug 2026). The headless test never saw it because it
+# loaded a row between switches, which rewrote the keys.
+#
+# The inputs now live in one dict of their own, `vals`, that the widgets
+# read their value from and write back to on change. Load writes `vals`.
+# Nothing the page needs is ever stored only inside a hidden widget.
+_DEFAULTS = {"start": 10_000.0, "rate": 10.0, "years": 10,
+             "contrib": 0.0, "target": 1_000_000.0}
+st.session_state.setdefault("vals", dict(_DEFAULTS))
+st.session_state.setdefault("form", FORM_FORWARD)
 if "scenarios" not in st.session_state:
     st.session_state["scenarios"] = []
+vals = st.session_state["vals"]
+
+
+def _keep(k: str) -> None:
+    """on_change: copy the widget's value into the store."""
+    st.session_state["vals"][k] = st.session_state["w_" + k]
+
+
+# A re-load writes the store before the widgets are drawn — Streamlit refuses
+# to change a widget's value after it exists in the same run.
 if "pending_load" in st.session_state:
     _row = st.session_state.pop("pending_load")
-    st.session_state["start"] = float(_row["Start"])
-    st.session_state["years"] = int(_row["Years"])
+    vals["start"] = float(_row["Start"])
+    vals["years"] = int(_row["Years"])
     if _row["Solved for"] == "return":
         st.session_state["form"] = FORM_REVERSE
-        st.session_state["target"] = float(_row["Ending"])
+        vals["target"] = float(_row["Ending"])
     else:
         st.session_state["form"] = FORM_FORWARD
-        st.session_state["rate"] = float(_row["Return %"])
-        st.session_state["contrib"] = float(_row["Contribution"])
+        vals["rate"] = float(_row["Return %"])
+        vals["contrib"] = float(_row["Contribution"])
     st.session_state["loaded_name"] = _row["Name"]
+    # A widget that stayed on screen keeps its own state and ignores a
+    # changed `value=`; dropping the widget keys makes every input rebuild
+    # from the store. Allowed here because no widget has been drawn yet.
+    for _k in _DEFAULTS:
+        st.session_state.pop("w_" + _k, None)
 
 form = st.radio("Solve for", [FORM_FORWARD, FORM_REVERSE], horizontal=True, key="form")
 
 _c1, _c2, _c3 = st.columns(3)
 with _c1:
-    start = st.number_input("Start amount", step=1_000.0, format="%.2f", key="start")
+    start = st.number_input("Start amount", value=vals["start"], step=1_000.0, format="%.2f",
+                            key="w_start", on_change=_keep, args=("start",))
 with _c2:
     if form == FORM_FORWARD:
-        rate_pct = st.number_input("Yearly return %", step=0.5, format="%.2f", key="rate")
+        rate_pct = st.number_input("Yearly return %", value=vals["rate"], step=0.5,
+                                   format="%.2f", key="w_rate", on_change=_keep, args=("rate",))
     else:
-        target = st.number_input("Target amount", step=1_000.0, format="%.2f", key="target")
+        target = st.number_input("Target amount", value=vals["target"], step=1_000.0,
+                                 format="%.2f", key="w_target", on_change=_keep, args=("target",))
 with _c3:
-    years = st.number_input("Years", min_value=0, max_value=MAX_YEARS + 1, step=1, key="years")
+    years = st.number_input("Years", value=vals["years"], min_value=0, max_value=MAX_YEARS + 1,
+                            step=1, key="w_years", on_change=_keep, args=("years",))
 if form == FORM_FORWARD:
-    contrib = st.number_input("Yearly contribution (optional)", step=100.0, format="%.2f",
-                              key="contrib", help="Paid at the end of each year.")
+    contrib = st.number_input("Yearly contribution (optional)", value=vals["contrib"], step=100.0,
+                              format="%.2f", key="w_contrib", on_change=_keep, args=("contrib",),
+                              help="Paid at the end of each year.")
 else:
     contrib = 0.0
     rate_pct = 0.0
