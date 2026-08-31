@@ -3136,6 +3136,21 @@ def self_test() -> list[tuple[str, bool, str]]:
                 and _rivn == (-3646.0, SEED_CEILING),
                 "MSFT from ΔE, ARM from the median, RIVN net income as a ceiling"))
 
+    # 15. The Stage 0 control (31 Aug 2026). Zero years must leave IV15
+    #     exactly where it was whatever the rate says; years with a positive
+    #     rate must lift it; and the exit model must still read year 15.
+    _base = IVParams(OE=7300, shares=1073.3, tier="Chapel", growth=0.069, net_cash=0,
+                     exit_multiple=21.8, blend=0.5)
+    _off = IVParams(**{**_base.__dict__, "stage0_years": 0, "stage0_growth": 0.40})
+    _on = IVParams(**{**_base.__dict__, "stage0_years": 3, "stage0_growth": 0.40})
+    out.append(("Stage 0 at zero years changes nothing, whatever the rate box says",
+                intrinsic_value(_off, 15) == intrinsic_value(_base, 15),
+                f"{intrinsic_value(_off, 15):.2f} both ways"))
+    out.append(("...and three years at 40% lifts IV15 above the plain stream",
+                intrinsic_value(_on, 15) > intrinsic_value(_base, 15)
+                and len(_stream(_on, 15)) == 15,
+                f"{intrinsic_value(_base, 15):.2f} → {intrinsic_value(_on, 15):.2f}"))
+
     return out
 
 
@@ -3409,7 +3424,11 @@ if years and ticker and st.session_state.get("tk") == ticker:
     with st.expander("Model settings — what these do"):
         st.caption(
             "Burry builds IV15 from two models and blends them. Everything else in this app is "
-            "calculated; these three are judgement, and he has never published his choices.\n\n"
+            "calculated; these are judgement, and he has never published his choices.\n\n"
+            "**Hypergrowth (Stage 0) years** — extra years placed *before* stage 1 at their own "
+            "growth rate, for a business whose earnings are still ramping: his Stage 0. Zero "
+            "means none, and nothing else on the page changes. The perpetuity model's horizon "
+            "extends by these years; the year-15 exit model does not.\n\n"
             "**Exit multiple** — what the business might fetch in year 15, as a multiple of its "
             "owners' earnings then. Higher for durable businesses, lower for fading ones.\n\n"
             "**Exit-multiple leg** — how that year-15 sale is combined with the cash the business "
@@ -3437,13 +3456,26 @@ if years and ticker and st.session_state.get("tk") == ticker:
         blend = m2.slider("Long-horizon weight", 0.0, 1.0, 0.5, 0.05,
                           help="IV15 blends a perpetuity model with an exit-multiple model. "
                                "Moves the answer materially — about \\$10 on CRM.")
+        # 31 Aug 2026: five notes on this page told the reader to use these
+        # in Model settings; the engine had the fields (IVParams.stage0_*) and
+        # the expander never had the widgets. Default 0 years: no stream moves.
+        s0_years = int(m2.number_input(
+            "Hypergrowth (Stage 0) years", min_value=0, max_value=10, value=0, step=1,
+            help="Years of ramp placed before stage 1, at the rate below. 0 = none. Burry adds "
+                 "a Stage 0 for inflecting hypergrowth; set the years and the rate by hand from "
+                 "the margin path, not from the seed."))
+        s0_growth = m2.number_input(
+            "Stage 0 growth (%)", value=round(growth * 100, 2), step=1.0,
+            disabled=(s0_years == 0),
+            help="Owners' earnings growth in each Stage 0 year. Ignored when years is 0.") / 100.0
         t = AICT[tier_name]
         st.caption(f"{tier_name}: stage 1 {t.stage1_years}y, stage 2 {t.stage2_years}y at "
                    f"{t.stage2_multiplier:.2f}x, terminal cap {t.terminal_growth_cap:.0%}, "
                    f"total horizon {t.horizon} years.")
         _l1, _l2 = model_legs(IVParams(OE=OE, shares=shares, tier=tier_name, growth=growth,
                                        net_cash=net_cash, exit_multiple=exit_m, blend=blend,
-                                       m2_style=m2_style))
+                                       m2_style=m2_style, stage0_years=s0_years,
+                                       stage0_growth=s0_growth))
         if _l1 == _l1 and _l2 == _l2:
             st.caption(f"Long-horizon leg ${_l1:,.2f} · exit-multiple leg ${_l2:,.2f}. "
                        + ("They agree closely, so the blend barely matters here."
@@ -3583,7 +3615,7 @@ if years and ticker and st.session_state.get("tk") == ticker:
 
     par = IVParams(OE=OE, shares=shares, tier=tier_name, growth=growth,
                    net_cash=net_cash, exit_multiple=exit_m, blend=blend,
-                   m2_style=m2_style)
+                   m2_style=m2_style, stage0_years=s0_years, stage0_growth=s0_growth)
     lad = ladder(par)
     iv15 = lad[15]
 
@@ -3708,7 +3740,8 @@ if years and ticker and st.session_state.get("tk") == ticker:
     cut = s2.slider("Cut growth by (%)", 0, 80, 30, 5)
     siv = intrinsic_value(IVParams(OE=OE, shares=shares, tier=worse,
                                    growth=growth * (1 - cut / 100), net_cash=net_cash,
-                                   exit_multiple=exit_m, blend=blend), 15)
+                                   exit_multiple=exit_m, blend=blend,
+                                   stage0_years=s0_years, stage0_growth=s0_growth), 15)
     if siv == siv and siv > 0:
         t1, t2 = st.columns(2)
         t1.metric("Stressed IV15", f"${siv:,.2f}", f"{siv/iv15-1:+.1%}")
@@ -3790,7 +3823,8 @@ if years and ticker and st.session_state.get("tk") == ticker:
             f"net cash            {net_cash:,.0f}   ({net_cash/shares:,.2f}/share)\n"
             f"tier                {tier_name}   growth {growth:.2%}\n"
             f"exit multiple       {exit_m:g}x   blend {blend:g}   leg {m2_style}\n"
-            f"IV15                {iv15:,.2f}   P/IV15 {ratio:.2f}x", language="text")
+            + (f"stage 0             {s0_years}y at {s0_growth:.1%}\n" if s0_years else "")
+            + f"IV15                {iv15:,.2f}   P/IV15 {ratio:.2f}x", language="text")
 
         st.write("**Calibrate against a published IV15**")
         target = st.number_input("Published IV15", value=0.0, step=0.01,
