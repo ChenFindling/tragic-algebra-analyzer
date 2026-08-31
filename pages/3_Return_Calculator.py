@@ -156,16 +156,18 @@ def required_contribution(start: float, rate: float, years: float, target: float
     return (target - start * g) * period_rate(rate, per) / (g - 1.0)
 
 
-def format_periods(whole: int, per: str) -> str:
+def format_periods(whole: int, per: str, short: bool = False) -> str:
+    """'22 years 3 months', or '22y 3m' for the metric box, which crops
+    anything longer than a few characters."""
     if per == PER_MONTH:
         y, m = divmod(whole, 12)
         parts = []
         if y:
-            parts.append(f"{y} year" + ("s" if y != 1 else ""))
+            parts.append(f"{y}y" if short else f"{y} year" + ("s" if y != 1 else ""))
         if m or not y:
-            parts.append(f"{m} month" + ("s" if m != 1 else ""))
+            parts.append(f"{m}m" if short else f"{m} month" + ("s" if m != 1 else ""))
         return " ".join(parts)
-    return f"{whole} year" + ("s" if whole != 1 else "")
+    return f"{whole}y" if short else f"{whole} year" + ("s" if whole != 1 else "")
 
 
 # ── refusals ─────────────────────────────────────────────────────────
@@ -477,7 +479,11 @@ def self_test() -> list[tuple[str, bool, str]]:
                 and format_periods(25, PER_YEAR) == "25 years"
                 and format_periods(290, PER_MONTH) == "24 years 2 months"
                 and format_periods(5, PER_MONTH) == "5 months"
-                and format_periods(24, PER_MONTH) == "2 years", format_periods(290, PER_MONTH)))
+                and format_periods(24, PER_MONTH) == "2 years"
+                and format_periods(290, PER_MONTH, short=True) == "24y 2m"
+                and format_periods(24, PER_MONTH, short=True) == "2y"
+                and format_periods(25, PER_YEAR, short=True) == "25y",
+                format_periods(290, PER_MONTH) + " / " + format_periods(290, PER_MONTH, short=True)))
 
     # ── required contribution ────────────────────────────────────────
     c = required_contribution(10_000, 0.10, 10, 41_874.85)
@@ -596,14 +602,24 @@ _DEFAULTS = {"start": 10_000.0, "rate": 10.0, "years": 10,
              "contrib": 0.0, "per": PER_YEAR, "target": 1_000_000.0}
 st.session_state.setdefault("vals", dict(_DEFAULTS))
 st.session_state.setdefault("form", FORM_FORWARD)
+st.session_state.setdefault("gen", 0)
 if "scenarios" not in st.session_state:
     st.session_state["scenarios"] = []
 vals = st.session_state["vals"]
 
 
-def _keep(k: str) -> None:
+def _keep(k: str, wkey: str) -> None:
     """on_change: copy the widget's value into the store."""
-    st.session_state["vals"][k] = st.session_state["w_" + k]
+    st.session_state["vals"][k] = st.session_state[wkey]
+
+
+def _wkey(k: str) -> str:
+    """Widget key for input k. The generation number is part of it, so a
+    Load — which bumps the generation — gives every box a new identity.
+    With a fixed key the browser keeps the box's typed value as local state
+    and a new `value=` from the server never lands (Chen, 31 Aug 2026: the
+    return box stayed on 7 after loading a 10% row). New identity, new box."""
+    return f"w_{k}_{st.session_state['gen']}"
 
 
 # A re-load writes the store before the widgets are drawn — Streamlit refuses
@@ -623,18 +639,14 @@ if "pending_load" in st.session_state:
     if _s != "ending":
         vals["target"] = float(_ld["Ending"])
     st.session_state["loaded_name"] = _ld["Name"]
-    # A widget that stayed on screen keeps its own state and ignores a
-    # changed `value=`; dropping the widget keys makes every input rebuild
-    # from the store. Allowed here because no widget has been drawn yet.
-    for _k in _DEFAULTS:
-        st.session_state.pop("w_" + _k, None)
+    st.session_state["gen"] += 1   # see _wkey
 
 form = st.radio("Solve for", FORMS, horizontal=True, key="form")
 
 
 def _num(label: str, k: str, step: float, **kw):
-    return st.number_input(label, value=vals[k], step=step, key="w_" + k,
-                           on_change=_keep, args=(k,), **kw)
+    return st.number_input(label, value=vals[k], step=step, key=_wkey(k),
+                           on_change=_keep, args=(k, _wkey(k)), **kw)
 
 
 # Which inputs each form shows. The solved quantity is the one missing.
@@ -661,7 +673,7 @@ with _k1:
 with _k2:
     per = st.radio("Contribution paid", [PER_YEAR, PER_MONTH],
                    index=[PER_YEAR, PER_MONTH].index(vals["per"]),
-                   horizontal=True, key="w_per", on_change=_keep, args=("per",))
+                   horizontal=True, key=_wkey("per"), on_change=_keep, args=("per", _wkey("per")))
 
 _loaded = st.session_state.pop("loaded_name", None)
 if _loaded:
@@ -693,8 +705,11 @@ elif form == FORM_YEARS:
         _whole, _bal = reached_after(start, rate_pct / 100.0, target, contrib, per)
         _m = st.columns(3)
         _m[0].metric("Years needed", f"{row['Years']:.2f}")
-        _m[1].metric("Reached after", format_periods(_whole, per))
+        _m[1].metric("Reached after", format_periods(_whole, per, short=True))
         _m[2].metric("Balance then", f"{_bal:,.2f}")
+        st.caption(f"Reached after {format_periods(_whole, per)} — the first whole "
+                   f"{'month' if per == PER_MONTH else 'year'} at or above the target — "
+                   f"with a balance of {_bal:,.2f}.")
 else:
     refusal = check_contrib(start, rate_pct / 100.0, int(years), target, per)
     if not refusal:
