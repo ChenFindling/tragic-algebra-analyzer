@@ -3331,7 +3331,7 @@ st.set_page_config(
     layout="centered",
     initial_sidebar_state="collapsed",
 )
-st.title("📈 Inflection Checker")
+st.title("🌱 Inflection Checker")
 st.caption("For companies whose income statement looks terrible but whose trend tells a story. "
            "Is the turn actually in the filings — and if it continues, what is it worth at 15%?")
 
