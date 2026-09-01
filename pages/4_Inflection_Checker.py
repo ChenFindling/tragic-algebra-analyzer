@@ -2989,6 +2989,49 @@ def oe_seed(rev0: float, m0: float, tax: float, dE: float) -> float:
     return rev0 * m0 * (1.0 - tax) * dE
 
 
+def revenue_rates(rows: list[TrendYear]) -> tuple[float | None, float | None]:
+    """(latest year-over-year growth, 3-year CAGR) from the trend rows — the
+    same revenue series the reader used, recomputed here because load()
+    returns tool 1's CAPPED growth and this page needs the filed rate.
+    Palantir: the box seeded 25% (tool 1's cap) where the filed figures
+    were 56.2% latest and 32.9% over three years."""
+    revs = [r.rev for r in rows if r.rev is not None]
+    latest = revs[-1] / revs[-2] - 1 if len(revs) >= 2 and revs[-2] > 0 and revs[-1] > 0 else None
+    cagr3 = (revs[-1] / revs[-4]) ** (1 / 3) - 1 if len(revs) >= 4 and revs[-4] > 0 and revs[-1] > 0 else None
+    return latest, cagr3
+
+
+def stage0_growth_seed(latest: float | None, cagr3: float | None) -> tuple[float, float | None]:
+    """(seed, the filed rate it came from): the lower of the latest year and
+    the 3-year CAGR, capped at STAGE0_GROWTH_CAP, never below zero."""
+    cands = [v for v in (latest, cagr3) if v is not None]
+    if not cands:
+        return 0.08, None
+    raw = min(cands)
+    return max(0.0, min(raw, STAGE0_GROWTH_CAP)), raw
+
+
+# Tool 1's reader writes three notes about how TOOL 1 seeds growth — "the
+# seed uses the recent rate", "capped at 25% for the seed ... use the
+# hypergrowth years in Model settings instead". On this page every one of
+# them misdescribes what happened: this page seeds from the lower of two
+# rates, caps at 50%, and IS the Stage 0 those notes point to. A note that
+# misdescribes what it found is worse than no note, so they are dropped
+# here and the box carries the page's own sentence.
+TOOL1_SEED_NOTE_PREFIXES = ("Revenue is ", "Latest revenue growth is ")
+
+
+def page_notes(notes: list[str]) -> list[str]:
+    return [n for n in notes if not n.startswith(TOOL1_SEED_NOTE_PREFIXES)]
+
+
+def numeric_frame(df):
+    """None in a numeric column renders as the word None in st.dataframe —
+    the Styler's na_rep only sees NaN. Coerce every non-label column."""
+    return df.apply(lambda c: pd.to_numeric(c, errors="coerce")
+                    if c.name not in ("FY", "Terminal margin") else c)
+
+
 def stage1_seed(growth_latest: float | None, g0_seed: float) -> float:
     """Tool 1's rule (latest revenue growth capped at 25%), then never above
     the Stage 0 rate. A first synthetic run seeded 13% through Stage 0 and
@@ -3143,6 +3186,25 @@ def self_test() -> list[tuple[str, bool, str]]:
     out.append(("...a profitable GAIN year before the crossing (Uber FY2018) stays out when since_fy is the crossing",
                 profitable_pool(gain_first, since_fy=2023) == (pool([mixed[2]]), [2023]),
                 f"years {profitable_pool(gain_first, since_fy=2023)[1]}"))
+    _pl_rows = [TrendYear(2022, 1906.0, -161.0, None, "", None, None, 0, 0, None, ""),
+                TrendYear(2023, 2225.0, 120.0, None, "", None, None, 0, 0, None, ""),
+                TrendYear(2024, 2866.0, 310.0, None, "", None, None, 0, 0, None, ""),
+                TrendYear(2025, 4476.0, 1414.0, None, "", None, None, 0, 0, None, "")]
+    _lat, _c3 = revenue_rates(_pl_rows)
+    out.append(("Revenue rates from the rows: Palantir 56.2% latest, 32.9% over three years",
+                abs(_lat - 0.562) < 0.001 and abs(_c3 - 0.329) < 0.001, f"{_lat:.1%} / {_c3:.1%}"))
+    _sd, _raw = stage0_growth_seed(_lat, _c3)
+    out.append(("Stage 0 growth seeds from the LOWER filed rate, not tool 1's 25% cap",
+                abs(_sd - 0.329) < 0.001 and _raw == _sd, f"{_sd:.1%}"))
+    out.append(("...and caps at 50% with the filed rate kept for the caption",
+                stage0_growth_seed(0.90, 0.70) == (0.50, 0.70) and stage0_growth_seed(None, None) == (0.08, None), ""))
+    _n = ["Revenue is growing faster than it was — x", "Latest revenue growth is 56%, which is a launch rate",
+          "No share price for some years — their SBC cost is understated."]
+    out.append(("Tool 1's three growth-seeding notes are dropped; every other note is kept",
+                page_notes(_n) == _n[2:], f"{len(page_notes(_n))} of 3 kept"))
+    _df = numeric_frame(pd.DataFrame([{"FY": "2018", "Shares (M)": None}, {"FY": "2019", "Shares (M)": 1744.5}]))
+    out.append(("None in a numeric column becomes NaN, so the table prints a dash and not the word None",
+                str(_df["Shares (M)"].dtype) == "float64" and _df["Shares (M)"].isna().iloc[0], str(_df["Shares (M)"].dtype)))
     out.append(("Stage 1 seed never sits above the Stage 0 rate",
                 stage1_seed(0.15, 0.13) == 0.13 and stage1_seed(0.40, 0.50) == 0.25 and stage1_seed(0.10, 0.30) == 0.10,
                 "13%, 25% cap, 10%"))
@@ -3265,7 +3327,7 @@ def _fmt_pct(v):
 
 st.set_page_config(
     page_title="Inflection Checker — is the turn visible in the filings, and what is it worth at 15%",
-    page_icon="📈",
+    page_icon="🌱",
     layout="centered",
     initial_sidebar_state="collapsed",
 )
@@ -3321,7 +3383,7 @@ years = st.session_state.get("inf_years", [])
 if years and ticker and st.session_state.get("inf_tk") == ticker:
     notes, pre, tk = st.session_state["inf_notes"], st.session_state["inf_pre"], st.session_state["inf_tk"]
     rows = build_trend(years, pre.get("trend", {}), pre.get("shares_by_fy", {}))
-    alerts: list[tuple[str, str]] = [("info", n) for n in notes]
+    alerts: list[tuple[str, str]] = [("info", n) for n in page_notes(notes)]
 
     # ══ trend evidence — always printed, before any refusal ══════════
     st.markdown("---")
@@ -3332,7 +3394,7 @@ if years and ticker and st.session_state.get("inf_tk") == ticker:
 
     _incr_cells = [None] + [incremental_margin(rows[i - 1], rows[i]) for i in range(1, len(rows))]
     _mfmt = money_fmt([v for r in rows for v in (r.rev, r.oi, r.gp, r.N, r.fcf, r.omega)])
-    st.dataframe(pd.DataFrame([{
+    st.dataframe(numeric_frame(pd.DataFrame([{
         "FY": f"{r.fy}*" if r.excluded else str(r.fy),
         "Revenue": r.rev,
         "Rev growth": growth_pct(r.rev, rows[i - 1].rev) if i else None,
@@ -3346,7 +3408,7 @@ if years and ticker and st.session_state.get("inf_tk") == ticker:
         "True SBC cost / rev": r.omega_pct,
         "Shares (M)": r.shares,
         "Share change": growth_pct(r.shares, rows[i - 1].shares) if i else None,
-    } for i, r in enumerate(rows)]).style.format({
+    } for i, r in enumerate(rows)])).style.format({
         "Revenue": _mfmt, "Operating income": _mfmt, "FCF": _mfmt, "Shares (M)": "{:,.1f}",
         "Rev growth": "{:+.1%}", "Gross margin": "{:.1%}", "Op margin": "{:+.1%}",
         "Costs growth": "{:+.1%}", "Incremental margin": "{:+.1%}", "Net margin": "{:+.1%}",
@@ -3381,10 +3443,10 @@ if years and ticker and st.session_state.get("inf_tk") == ticker:
               f"FY{_first_both.fy}→FY{_last.fy}" if _first_both else "not readable")
     s2.metric("Margin pace, last 3 steps", "—" if _pace is None else f"{_pace:+.1%}/yr",
               f"to {_fmt_pct(_last.opm)} in FY{_last.fy}")
-    s3.metric("Runway", "no burn — FCF ≥ 0" if _rw is None and _last.cfo is not None else
+    s3.metric("Runway", "no burn" if _rw is None and _last.cfo is not None else
               "—" if _rw is None else f"{_rw:.1f} years",
               f"burn {_burn:,.0f}M on {pre.get('cash', 0.0):,.0f}M cash" if _rw is not None else
-              ("cash-flow line not read" if _last.cfo is None else f"FCF {_last.fcf:,.0f}M"))
+              ("cash-flow line not read" if _last.cfo is None else f"FCF +{_last.fcf:,.0f}M, FY{_last.fy}"))
 
     # ══ refusals, in order ═══════════════════════════════════════════
     st.markdown("---")
@@ -3458,15 +3520,15 @@ if years and ticker and st.session_state.get("inf_tk") == ticker:
     j1.caption(f"Seeded from {_t_src}. Window incremental {_fmt_pct(_w_incr)}; trailing pace "
                f"reaches {_fmt_pct(_pace_path)} in {int(s0_years)}y; gross margin {_fmt_pct(_gm_latest)}.")
 
-    _g0_seed = min(v for v in (pre.get("growth", 0.08), pre.get("cagr3")) if v is not None) if pre.get("cagr3") is not None else pre.get("growth", 0.08)
-    _g0_raw = _g0_seed
-    _g0_seed = max(0.0, min(_g0_seed, STAGE0_GROWTH_CAP))
+    _lat_g, _cagr3 = revenue_rates(rows)
+    _g0_seed, _g0_raw = stage0_growth_seed(_lat_g, _cagr3)
     g_rev = j3.number_input("Revenue growth through Stage 0 (%)", value=round(_g0_seed * 100, 1), step=1.0,
                             min_value=-50.0, max_value=100.0,
                             help="Seeded from the lower of the latest year and the 3-year CAGR, capped "
                                  f"at {STAGE0_GROWTH_CAP:.0%}.") / 100.0
-    if abs(_g0_raw - _g0_seed) > 1e-9:
-        j3.caption(f"Filed rate {_g0_raw:.1%}, capped at {STAGE0_GROWTH_CAP:.0%} for the seed.")
+    j3.caption(f"Filed: latest year {_fmt_pct(_lat_g)}, 3-year CAGR {_fmt_pct(_cagr3)}; seeded from the lower"
+               + (f", capped at {STAGE0_GROWTH_CAP:.0%}" if _g0_raw is not None and _g0_raw > STAGE0_GROWTH_CAP else "")
+               + ". A launch rate does not compound for fifteen years — the years box bounds it.")
     g1 = j3.number_input("Growth after Stage 0 (%)", value=round(stage1_seed(pre.get("growth"), _g0_seed) * 100, 1),
                          step=0.5, min_value=-50.0, max_value=60.0,
                          help="Stage 1 growth once the margin path is done. Tool 1's own rule (latest "
@@ -3583,8 +3645,8 @@ if years and ticker and st.session_state.get("inf_tk") == ticker:
     _terms = [max(0.005, terminal - 0.05), terminal, terminal + 0.05]
     _yrs = list(dict.fromkeys([max(1, int(s0_years) - 2), int(s0_years), int(s0_years) + 2]))
     _grid = sensitivity(par, rev0, m0, tax, applied_dE, g_rev, _terms, _yrs, _gm_latest)
-    st.dataframe(pd.DataFrame([{"Terminal margin": f"{mT:.1%}", **{f"{n}y": v for n, v in zip(_yrs, _grid[i])}}
-                               for i, mT in enumerate(_terms)]).style.format(
+    st.dataframe(numeric_frame(pd.DataFrame([{"Terminal margin": f"{mT:.1%}", **{f"{n}y": v for n, v in zip(_yrs, _grid[i])}}
+                               for i, mT in enumerate(_terms)])).style.format(
         {f"{n}y": "${:,.2f}" for n in _yrs}, na_rep="above gross margin"), width='stretch', hide_index=True)
     st.caption("Every cell is the same engine call with one input moved. Market price for reference: "
                f"${price:,.2f}.")
@@ -3624,6 +3686,7 @@ if years and ticker and st.session_state.get("inf_tk") == ticker:
             f"FILED   runway                 {'no burn' if _rw is None else f'{_rw:.1f}y at {_burn:,.0f}M'}\n"
             f"JUDGE   terminal margin        {terminal:.1%}   (seeded from {_t_src})\n"
             f"JUDGE   years to terminal      {int(s0_years)}\n"
+            f"FILED   revenue growth         latest {_fmt_pct(_lat_g)}   3y CAGR {_fmt_pct(_cagr3)}\n"
             f"JUDGE   growth through stage 0 {g_rev:.1%}   after {g1:.1%}\n"
             f"JUDGE   tax                    {tax:.0%}\n"
             f"JUDGE   ΔE                     {applied_dE:.1%}   "
