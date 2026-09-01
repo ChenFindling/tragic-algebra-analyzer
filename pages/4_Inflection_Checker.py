@@ -505,7 +505,7 @@ CONCEPTS = {
     # the whole point. Gross profit is optional: many filers tag only cost
     # of revenue, so the page derives it and says so; where neither is tagged
     # the gross-margin cell is refused rather than guessed.
-    "OI":   (["OperatingIncomeLoss"], []),
+    "OI":   (["OperatingIncomeLoss"], ["ProfitLossFromOperatingActivities"]),
     "GP":   (["GrossProfit"], ["GrossProfit"]),
     "COGS": (["CostOfRevenue", "CostOfGoodsAndServicesSold", "CostOfGoodsSold",
               "CostOfServices"], ["CostOfSales"]),
@@ -513,7 +513,11 @@ CONCEPTS = {
               "NetCashProvidedByUsedInOperatingActivitiesContinuingOperations"],
              ["CashFlowsFromUsedInOperatingActivities"]),
     "CAPEX": (["PaymentsToAcquirePropertyPlantAndEquipment",
-               "PaymentsToAcquireProductiveAssets"], []),
+               "PaymentsToAcquireProductiveAssets"],
+              ["PurchaseOfPropertyPlantAndEquipmentClassifiedAsInvestingActivities"]),
+    # IFRS names on OI, COGS, CFO and CAPEX (1 Sep 2026): Grab reports in
+    # USD under IFRS, so tool 1's net-income fallback let it load and this
+    # page then read no operating line at all.
 }
 
 BALANCE = {
@@ -2751,6 +2755,11 @@ def _span(a: int, b: int) -> str:
     return f"in FY{a}" if a == b else f"from FY{a} to FY{b}"
 
 
+def _fy_range(fys: list[int]) -> str:
+    """FY2025, or FY2023–FY2025. Remitly printed 'FY2025–FY2025'."""
+    return f"FY{fys[0]}" if len(fys) == 1 else f"FY{fys[0]}–FY{fys[-1]}"
+
+
 def op_shape(pts: list[tuple[int, float]]) -> tuple[str, str]:
     """(kind, sentence naming the years and signs) for [(fy, operating income)]."""
     pts = [(fy, oi) for fy, oi in pts if oi is not None]
@@ -3014,12 +3023,12 @@ def dE_gate(box_dE: float, measured, fys: list[int]) -> tuple[str, float]:
             # "have not inflected" about a pool that did.
             return (f"ΔE is set at {box_dE:.1%}; nothing above zero reaches shareholders on that "
                     f"input, so there is nothing to price. The measured figure over "
-                    f"FY{fys[0]}–FY{fys[-1]} is {measured.dE:.1%}."), 0.0
+                    f"{_fy_range(fys)} is {measured.dE:.1%}."), 0.0
         _base = getattr(measured, "sum_base", None)
         _base_txt = (f"after-tax operating income totalled {_base:,.0f}M" if _base is not None
                      else f"net income totalled {measured.sum_N:,.0f}M")
-        return (f"Owners' earnings have not inflected. Over FY{fys[0]}–FY{fys[-1]} (the "
-                f"profitable years since the crossing) {_base_txt} and the GAAP "
+        return (f"Owners' earnings have not inflected. Over {_fy_range(fys)} (the "
+                f"profitable year{'s' if len(fys) > 1 else ''} since the crossing) {_base_txt} and the GAAP "
                 f"stock-comp charge {measured.sum_G:,.0f}M, but the true SBC cost was "
                 f"{measured.sum_omega:,.0f}M, so owners' earnings were {measured.sum_OE:,.0f}M "
                 f"and ΔE {measured.dE:.1%}. GAAP inflected; what reaches shareholders did not. "
@@ -3461,6 +3470,9 @@ def self_test() -> list[tuple[str, bool, str]]:
     out.append(("...a count for the year but not the one before still flags that year",
                 operating_pool(_cv_y, _cv_r, 2024, 0.21, shares_by_fy={2024: 200.0, 2025: 210.0}).missing_shares == [2024]
                 and operating_pool(_cv_y, _cv_r, 2024, 0.21, shares_by_fy={2023: 190.0, 2024: 200.0, 2025: 210.0}).measurable, ""))
+    out.append(("IFRS names for the operating lines are in the reader (Grab reports in USD under IFRS)",
+                CONCEPTS["OI"][1] == ["ProfitLossFromOperatingActivities"] and "CostOfSales" in CONCEPTS["COGS"][1]
+                and CONCEPTS["CFO"][1] and CONCEPTS["CAPEX"][1], ""))
     out.append(("Shares gate: a zero count refuses before anything per share is printed",
                 shares_gate(0.0).startswith("No share count was read") and shares_gate(155.3) == "", ""))
     _gx = operating_pool([Year(fy=2025, N=447, G=50, dS=8, price=40)],
@@ -3470,6 +3482,9 @@ def self_test() -> list[tuple[str, bool, str]]:
     _rg = dE_gate(_gx.dE, _gx, _gx.fys)[0]
     out.append(("...and the refusal sentence names the after-tax operating base",
                 _rg.startswith("Owners' earnings have not inflected") and "after-tax operating income totalled 97M" in _rg, _rg[:90]))
+    _one = dE_gate(_gx.dE, _gx, [2025])[0]
+    out.append(("A one-year pool reads 'Over FY2025 (the profitable year since the crossing)', not FY2025–FY2025",
+                "Over FY2025 (the profitable year since" in _one and _fy_range([2023, 2025]) == "FY2023–FY2025", _one[:70]))
     # PLTR-shaped: profits, but shares handed out at market dwarf them.
     pltr = [Year(fy=2023, N=210, G=476, dS=90, price=15), Year(fy=2024, N=462, G=692, dS=120, price=35)]
     _pl, _plf = profitable_pool(pltr)
@@ -3666,6 +3681,26 @@ if years and ticker and st.session_state.get("inf_tk") == ticker:
     rows = build_trend(years, pre.get("trend", {}), pre.get("shares_by_fy", {}))
     alerts: list[tuple[str, str]] = [("info", n) for n in page_notes(notes)]
 
+    # A financial filer is refused BEFORE the table. Oscar Health, 1 Sep
+    # 2026: SIC 6324, and the table printed revenue of 21M and an operating
+    # margin of +278% for a company with $9B of premiums — filed numbers,
+    # but not an insurer's revenue. Every other refusal keeps the table,
+    # because for every other filer the table is right.
+    if pre.get("financial"):
+        st.markdown("---")
+        st.subheader("Is the turn in the filings?")
+        st.error(f"**Not this page.** {pre.get('sic_desc') or 'Financial company'} (SIC "
+                 f"{pre.get('sic')}). Banks, insurers and REITs need book-value and combined-ratio "
+                 "thinking this page does not contain, and the revenue concept the trend table is "
+                 "built on is not an insurer's revenue — so the table is not shown either. Tool 1 "
+                 "says the same.")
+        with st.expander("Notes and detail", expanded=False):
+            for kind_, msg in alerts:
+                getattr(st, kind_)(msg)
+            st.write("**What was read from the filings** — every tag, found or missing")
+            st.dataframe(pd.DataFrame(pre.get("tags", [])), width='stretch', hide_index=True)
+        st.stop()
+
     # ══ trend evidence — always printed, before any refusal ══════════
     st.markdown("---")
     st.subheader(f"Trend evidence · {tk}")
@@ -3729,11 +3764,7 @@ if years and ticker and st.session_state.get("inf_tk") == ticker:
     st.subheader("Is the turn in the filings?")
     kind, sentence = op_shape(_oi_pts)
     stop = ""
-    if pre.get("financial"):
-        stop = (f"{pre.get('sic_desc') or 'Financial company'} (SIC {pre.get('sic')}). Banks, "
-                "insurers and REITs need book-value and combined-ratio thinking this page does "
-                "not contain; tool 1 says the same.")
-    elif kind in SENT_TO_TOOL_1:
+    if kind in SENT_TO_TOOL_1:
         stop = sentence + " Use the Tragic Algebra Analyzer."
     elif kind in (SHAPE_NOISY, SHAPE_TOO_FEW):
         stop = sentence
@@ -3832,7 +3863,7 @@ if years and ticker and st.session_state.get("inf_tk") == ticker:
                    + " (or the year before), so the shares delivered priced at zero. Set it by hand.")
     elif _measured is not None:
         j2.caption(f"Measured {_measured.dE:.1%} on after-tax operating income over "
-                   f"FY{_prof_fys[0]}–FY{_prof_fys[-1]}"
+                   f"{_fy_range(_prof_fys)}"
                    + (" (one year)" if len(_prof_fys) == 1 else f" ({len(_prof_fys)} years)")
                    + f": base {_measured.sum_base:,.0f}M, GAAP SBC {_measured.sum_G:,.0f}M, true cost "
                    f"{_measured.sum_omega:,.0f}M.")
@@ -3989,10 +4020,10 @@ if years and ticker and st.session_state.get("inf_tk") == ticker:
             f"JUDGE   growth through stage 0 {g_rev:.1%}   after {g1:.1%}\n"
             f"JUDGE   tax                    {tax:.0%}\n"
             f"JUDGE   ΔE                     {applied_dE:.1%}   "
-            + (f"set by hand (measured {_measured.dE:.1%}, FY{_prof_fys[0]}–{_prof_fys[-1]})" if _dE_set_by_hand and _measured is not None and _measured.measurable
+            + (f"set by hand (measured {_measured.dE:.1%}, {_fy_range(_prof_fys)})" if _dE_set_by_hand and _measured is not None and _measured.measurable
                else "set by hand (not measurable — share count missing)" if _dE_set_by_hand and _measured is not None
                else "set by hand (nothing to measure)" if _dE_set_by_hand
-               else f"measured FY{_prof_fys[0]}–{_prof_fys[-1]}" + (" (capped)" if dE_was_capped(dE_box) else ""))
+               else f"measured {_fy_range(_prof_fys)}" + (" (capped)" if dE_was_capped(dE_box) else ""))
             + ", operating basis\n"
             f"ENGINE  stage 0                {int(s0_years)}y at {g0:.2%}   OE seed {OE0:,.0f}\n"
             f"ENGINE  tier {tier_name}   exit {exit_m:g}x   blend {blend:g}   leg {m2_style}\n"
