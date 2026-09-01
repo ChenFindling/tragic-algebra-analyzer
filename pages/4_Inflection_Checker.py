@@ -3018,6 +3018,21 @@ def runway_gate(years_needed: int, runway: float | None, burn: float, cash: floa
     return ""
 
 
+def pace_path_text(m_latest: float, pace: float | None, years: int, gm: float | None) -> str:
+    """What the trailing pace would reach in `years` — but never a margin the
+    identity forbids. TG Therapeutics printed "reaches 13118.4% in 5y": a
+    pace dominated by the FY2022 step, extended past every ceiling there is.
+    Above gross margin (or 100% where gross margin is unreadable) the text
+    says so instead of printing the arithmetic."""
+    if pace is None:
+        return "—"
+    path = m_latest + pace * years
+    ceiling = gm if gm is not None else 1.0
+    if path > ceiling:
+        return (f"above {'gross margin' if gm is not None else '100%'} within {years}y")
+    return f"{path:.1%} in {years}y"
+
+
 def terminal_default(incr: float | None, m_latest: float, pace: float | None,
                      years: int, gm: float | None, post_incr: float | None = None) -> tuple[float, str]:
     """The lowest of three margins the filings show — the window incremental,
@@ -3469,6 +3484,11 @@ def self_test() -> list[tuple[str, bool, str]]:
     out.append(("...incremental wins when lower", abs(_v2 - 0.20) < 1e-12 and _s2.startswith("the window incremental"), f"{_v2:.1%}"))
     _v3, _s3 = terminal_default(0.34, 0.09, 0.03, 5, 0.18)
     out.append(("...gross margin caps both", abs(_v3 - 0.18) < 1e-12 and _s3.startswith("gross margin"), f"{_v3:.1%}"))
+    out.append(("Pace path: a pace that runs past gross margin is described, not printed",
+                pace_path_text(0.20, 26.2, 5, 0.837) == "above gross margin within 5y"
+                and pace_path_text(0.20, 26.2, 5, None) == "above 100% within 5y"
+                and pace_path_text(0.107, 0.055, 5, None) == "38.2% in 5y" and pace_path_text(0.1, None, 5, 0.5) == "—",
+                pace_path_text(0.20, 26.2, 5, 0.837)))
     _v4, _s4 = terminal_default(None, 0.09, None, 5, None)
     out.append(("...no trend at all → the latest margin, and says so", _v4 == 0.09 and "no trend" in _s4, _s4))
 
@@ -3723,10 +3743,9 @@ if years and ticker and st.session_state.get("inf_tk") == ticker:
                                help="The margin the business reaches at the end of Stage 0 — "
                                     "mature competitors' margins are your judgement; enter them. "
                                     "Seeded from " + _t_src + ".") / 100.0
-    _pace_path = None if _pace is None else m0 + _pace * int(s0_years)
     j1.caption(f"Seeded from {_t_src}. Window incremental {_fmt_pct(_w_incr)}; since the FY{_cross_fy} "
-               f"crossing {_fmt_pct(_post_incr)}; trailing pace reaches {_fmt_pct(_pace_path)} in "
-               f"{int(s0_years)}y; gross margin {_fmt_pct(_gm_latest)}. The lowest seeds the box.")
+               f"crossing {_fmt_pct(_post_incr)}; trailing pace {pace_path_text(m0, _pace, int(s0_years), _gm_latest)}; "
+               f"gross margin {_fmt_pct(_gm_latest)}. The lowest seeds the box.")
 
     _lat_g, _cagr3 = revenue_rates(rows)
     _g0_seed, _g0_raw = stage0_growth_seed(_lat_g, _cagr3)
@@ -3916,10 +3935,10 @@ if years and ticker and st.session_state.get("inf_tk") == ticker:
             f"JUDGE   growth through stage 0 {g_rev:.1%}   after {g1:.1%}\n"
             f"JUDGE   tax                    {tax:.0%}\n"
             f"JUDGE   ΔE                     {applied_dE:.1%}   "
-            + (f"set by hand (measured {_measured.dE:.1%} over FY{_prof_fys[0]}–FY{_prof_fys[-1]})" if _dE_set_by_hand and _measured is not None
-               else "set by hand (no profitable year to measure)" if _dE_set_by_hand
-               else f"measured over FY{_prof_fys[0]}–FY{_prof_fys[-1]}" + (" (capped)" if dE_was_capped(dE_box) else ""))
-            + "   on after-tax operating income, not net income\n"
+            + (f"set by hand (measured {_measured.dE:.1%}, FY{_prof_fys[0]}–{_prof_fys[-1]})" if _dE_set_by_hand and _measured is not None
+               else "set by hand (nothing to measure)" if _dE_set_by_hand
+               else f"measured FY{_prof_fys[0]}–{_prof_fys[-1]}" + (" (capped)" if dE_was_capped(dE_box) else ""))
+            + ", operating basis\n"
             f"ENGINE  stage 0                {int(s0_years)}y at {g0:.2%}   OE seed {OE0:,.0f}\n"
             f"ENGINE  tier {tier_name}   exit {exit_m:g}x   blend {blend:g}   leg {m2_style}\n"
             f"ENGINE  net cash               {net_cash:,.0f}   ({net_cash/shares:,.2f}/share)\n"
