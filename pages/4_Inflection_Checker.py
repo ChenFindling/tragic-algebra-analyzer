@@ -2690,6 +2690,24 @@ def window_incremental(rows: list[TrendYear]) -> float | None:
     return (b.oi - a.oi) / d_rev
 
 
+def post_crossing_incremental(rows: list[TrendYear], cross_fy: int | None) -> float | None:
+    """Incremental margin on the revenue added AFTER the crossing — first
+    profitable year to the latest, at least two years. TG Therapeutics,
+    1 Sep 2026: the window incremental read 76.8% because the window opened
+    at 7M of revenue and most of the 468M swing was the loss disappearing;
+    on the 382M added after the crossing the company kept 26.7%."""
+    if cross_fy is None:
+        return None
+    have = [r for r in rows if r.fy >= cross_fy and r.rev is not None and r.oi is not None]
+    if len(have) < 2:
+        return None
+    a, b = have[0], have[-1]
+    d_rev = b.rev - a.rev
+    if d_rev <= 0 or d_rev < INCR_MIN_REV_CHANGE * a.rev:
+        return None
+    return (b.oi - a.oi) / d_rev
+
+
 def margin_pace(margins: list[float]) -> float | None:
     """Average step in operating margin over the last TREND_STEPS steps, as a fraction."""
     if len(margins) < TREND_STEPS + 1:
@@ -2724,8 +2742,13 @@ SHAPE_INFLECTION = "inflection"
 SHAPE_ALL_NEGATIVE = "all-negative"
 SHAPE_NOISY = "noisy"
 SHAPE_TOO_FEW = "too-few"
+SHAPE_STALE = "stale-crossing"
 
-SENT_TO_TOOL_1 = (SHAPE_ALL_POSITIVE, SHAPE_PROFIT_THEN_LOSS, SHAPE_DIP)
+SENT_TO_TOOL_1 = (SHAPE_ALL_POSITIVE, SHAPE_PROFIT_THEN_LOSS, SHAPE_DIP, SHAPE_STALE)
+
+
+def _span(a: int, b: int) -> str:
+    return f"in FY{a}" if a == b else f"from FY{a} to FY{b}"
 
 
 def op_shape(pts: list[tuple[int, float]]) -> tuple[str, str]:
@@ -2757,9 +2780,23 @@ def op_shape(pts: list[tuple[int, float]]) -> tuple[str, str]:
     if not first and last:
         if crossings == 1:
             cross = next(fy for fy, p in zip(fys, pos) if p)
+            # Crocs, 1 Sep 2026: a -6M operating loss on 1,036M of revenue in
+            # FY2016, nine profitable years after it, and the page called it
+            # "one crossing, at FY2017". The trend rule reads the last four
+            # years; a crossing older than that is outside the evidence this
+            # page reasons from, and a margin still rising from a profitable
+            # base is tool 1's growth rate, with its own Stage 0 control.
+            window = fys[-(TREND_STEPS + 1):]
+            if len(fys) > TREND_STEPS and cross < window[0] + 1:
+                return SHAPE_STALE, (
+                    f"Operating income crossed to positive at FY{cross}, and every year of the "
+                    f"trend window (FY{window[0]}–FY{window[-1]}) is profitable — the turn is older "
+                    f"than the four years this page reasons from. A margin path from a profitable "
+                    "base is tool 1's growth rate; its Model settings carry a Stage 0 for a ramp "
+                    "you judge is still ahead.")
             return SHAPE_INFLECTION, (
-                f"Operating income was negative from FY{fys[0]} to FY{cross - 1} and positive "
-                f"from FY{cross} to FY{fys[-1]} — one crossing, at FY{cross}.")
+                f"Operating income was negative {_span(fys[0], cross - 1)} and positive "
+                f"{_span(cross, fys[-1])} — one crossing, at FY{cross}.")
         return SHAPE_NOISY, (
             f"The sign of operating income changed {crossings} times across the window "
             f"({signs}). One crossing is an inflection; several is noise this page will not price.")
@@ -2865,6 +2902,47 @@ def start_gate(fy: int, opm: float | None) -> str:
     return ""
 
 
+@dataclass
+class OpPooled:
+    """ΔE on the base this page projects. Burry's OE = N + G − Ω with N
+    replaced by normalised after-tax operating income, pooled over the
+    profitable years since the crossing. TG Therapeutics, 1 Sep 2026: on
+    net income the FY2023–25 pool read 56.7% and priced a Fat Pitch, and
+    FY2025 net income was 3.6x operating income on a tax benefit; take the
+    benefit out and the pool is negative. A ratio measured on one base and
+    applied to another is a number the page cannot stand behind."""
+    fys: list[int]
+    sum_base: float     # Σ operating income × (1 − tax)
+    sum_G: float
+    sum_omega: float
+
+    @property
+    def years(self) -> int:
+        return len(self.fys)
+
+    @property
+    def sum_OE(self) -> float:
+        return self.sum_base + self.sum_G - self.sum_omega
+
+    @property
+    def dE(self) -> float:
+        return self.sum_OE / self.sum_base
+
+
+def operating_pool(years: list[Year], rows: list[TrendYear], since_fy: int | None,
+                   tax: float) -> OpPooled | None:
+    by_fy = {r.fy: r for r in rows}
+    kept = [(y, by_fy[y.fy]) for y in years
+            if y.fy in by_fy and by_fy[y.fy].oi is not None and by_fy[y.fy].oi > 0
+            and not y.excluded and (since_fy is None or y.fy >= since_fy)]
+    if not kept:
+        return None
+    return OpPooled(fys=[y.fy for y, _ in kept],
+                    sum_base=sum(r.oi * (1.0 - tax) for _, r in kept),
+                    sum_G=sum(y.G for y, _ in kept),
+                    sum_omega=sum(y.omega for y, _ in kept))
+
+
 def profitable_pool(years: list[Year], since_fy: int | None = None) -> tuple[Pooled | None, list[int]]:
     """ΔE pooled over the profitable years SINCE THE CROSSING only — net
     income above zero, from the year operating income turned positive, not
@@ -2886,7 +2964,7 @@ def profitable_pool(years: list[Year], since_fy: int | None = None) -> tuple[Poo
         return None, [y.fy for y in kept]
 
 
-def dE_gate(box_dE: float, measured: Pooled | None, fys: list[int]) -> tuple[str, float]:
+def dE_gate(box_dE: float, measured, fys: list[int]) -> tuple[str, float]:
     """(refusal, applied ΔE). The box is seeded from the measured figure, so
     by default this refuses whenever owners' earnings have not inflected; a
     reader who types a positive ΔE takes Burry's judgement route and the
@@ -2902,8 +2980,11 @@ def dE_gate(box_dE: float, measured: Pooled | None, fys: list[int]) -> tuple[str
             return (f"ΔE is set at {box_dE:.1%}; nothing above zero reaches shareholders on that "
                     f"input, so there is nothing to price. The measured figure over "
                     f"FY{fys[0]}–FY{fys[-1]} is {measured.dE:.1%}."), 0.0
+        _base = getattr(measured, "sum_base", None)
+        _base_txt = (f"after-tax operating income totalled {_base:,.0f}M" if _base is not None
+                     else f"net income totalled {measured.sum_N:,.0f}M")
         return (f"Owners' earnings have not inflected. Over FY{fys[0]}–FY{fys[-1]} (the "
-                f"profitable years) net income totalled {measured.sum_N:,.0f}M and the GAAP "
+                f"profitable years since the crossing) {_base_txt} and the GAAP "
                 f"stock-comp charge {measured.sum_G:,.0f}M, but the true SBC cost was "
                 f"{measured.sum_omega:,.0f}M, so owners' earnings were {measured.sum_OE:,.0f}M "
                 f"and ΔE {measured.dE:.1%}. GAAP inflected; what reaches shareholders did not. "
@@ -2938,15 +3019,20 @@ def runway_gate(years_needed: int, runway: float | None, burn: float, cash: floa
 
 
 def terminal_default(incr: float | None, m_latest: float, pace: float | None,
-                     years: int, gm: float | None) -> tuple[float, str]:
-    """The lower of the window incremental margin and the trailing pace
-    extrapolated (latest margin plus pace × years), then capped at gross
-    margin. Incremental over the whole window runs very high when the
-    window starts in deep losses — Uber's lands in the 30s — so it is
-    shown beside the box, not used alone. Returns (value, what bound it)."""
+                     years: int, gm: float | None, post_incr: float | None = None) -> tuple[float, str]:
+    """The lowest of three margins the filings show — the window incremental,
+    the incremental on revenue added after the crossing, and the trailing
+    pace extrapolated (latest margin plus pace × years) — then capped at
+    gross margin. Each fails in a known way: the window figure counts the
+    loss disappearing as margin on new revenue; the pace is dominated by one
+    early step when losses were deep; the post-crossing figure is a single
+    step when the turn is young. Taking the lowest is the conservative side,
+    and all three are shown beside the box. Returns (value, what bound it)."""
     cands: list[tuple[float, str]] = []
     if incr is not None:
         cands.append((incr, "the window incremental margin"))
+    if post_incr is not None:
+        cands.append((post_incr, "the incremental margin since the crossing"))
     if pace is not None:
         cands.append((m_latest + pace * years, f"the trailing pace ({pace:+.1%} × {years}y)"))
     if not cands:
@@ -3061,7 +3147,8 @@ def below_line_note(flagged: list[tuple[int, float, float]]) -> str | None:
     return (f"Net income exceeds operating income in {len(flagged)} profitable year"
             f"{'s' if len(flagged) > 1 else ''} — {yrs}. Something below the operating line — "
             "interest on cash, a tax benefit, a gain — is in net income, and ΔE is measured on that "
-            "figure, so it is flattered. Operating margin, which the path projects, is not.")
+            "figure — tool 1's ΔE is measured on it and flattered by it. Nothing here is: this "
+            "page measures ΔE on after-tax operating income and projects operating margin.")
 
 
 TERMINAL_TOL = 0.0005   # half of the box's one-decimal display unit
@@ -3085,9 +3172,26 @@ def stage1_seed(growth_latest: float | None, g0_seed: float) -> float:
 def below_line_years(rows: list[TrendYear]) -> list[tuple[int, float, float]]:
     """Profitable years where net income exceeds OPERATING income — something
     below the operating line (interest on cash, a tax benefit, a gain) is in
-    it, and ΔE is measured on that figure. Uber FY2024: $9.9B against $2.8B."""
+    it. Uber FY2024: $9.9B against $2.8B. Informational since 1 Sep: ΔE here
+    is measured on after-tax operating income, so these items never enter it."""
     return [(r.fy, r.N, r.oi) for r in rows
             if r.oi is not None and r.oi > 0 and r.N > BELOW_LINE_MIN * r.oi]
+
+
+def growth_sensitivity(base: IVParams, rev0: float, m0: float, tax: float, dE: float,
+                       growths: list[float], years_list: list[int], terminal: float) -> list[list[float]]:
+    """IV15 for each Stage 0 revenue growth (rows) by years (columns) at the
+    entered terminal margin — the third lever, and the one a launch rate
+    inflates. Rows run at or below the seed, since that is where the risk is."""
+    grid = []
+    for g in growths:
+        row = []
+        for n in years_list:
+            p = IVParams(**{**base.__dict__, "OE": oe_seed(rev0, m0, tax, dE),
+                            "stage0_years": n, "stage0_growth": stage0_rate(g, m0, terminal, n)})
+            row.append(intrinsic_value(p, 15))
+        grid.append(row)
+    return grid
 
 
 def sensitivity(base: IVParams, rev0: float, m0: float, tax: float, dE: float, g_rev: float,
@@ -3177,6 +3281,19 @@ def self_test() -> list[tuple[str, bool, str]]:
     noisy2 = [(2020, -100.0), (2021, 50.0), (2022, -80.0)]
     out.append(("Shape: negative at both ends with a profit between → noisy, not all-negative",
                 op_shape(noisy2)[0] == SHAPE_NOISY, op_shape(noisy2)[1][:60]))
+    crox = [(2016, -6.0), (2017, 17.0), (2018, 63.0), (2019, 129.0), (2020, 214.0), (2021, 683.0),
+            (2022, 851.0), (2023, 1037.0), (2024, 1022.0), (2025, 150.0)]
+    _ck, _cs = op_shape(crox)
+    out.append(("Shape: Crocs — a crossing nine years old with a profitable trend window → sent to tool 1, naming the window",
+                _ck == SHAPE_STALE and "FY2017" in _cs and "FY2022–FY2025" in _cs, _cs[:90]))
+    _uber_next = [(2019, -8596.0), (2020, -4863.0), (2021, -3834.0), (2022, -1832.0), (2023, 1110.0),
+                  (2024, 2799.0), (2025, 5565.0), (2026, 7000.0)]
+    out.append(("Shape: a crossing that is the second year of the window is still an inflection; one year older is stale",
+                op_shape(_uber_next[:-1])[0] == SHAPE_INFLECTION and op_shape(_uber_next)[0] == SHAPE_STALE,
+                "UBER FY2025 window: inflection; FY2026 window: stale"))
+    out.append(("Shape: a single-year loss run reads 'in FY2016', not 'from FY2016 to FY2016'",
+                "negative in FY2016 and" in op_shape([(2016, -6.0), (2017, 17.0), (2018, 63.0)])[1],
+                op_shape([(2016, -6.0), (2017, 17.0), (2018, 63.0)])[1]))
     out.append(("Shape: a year with no operating income is skipped, not read as zero",
                 op_shape([(2020, -10.0), (2021, None), (2022, 5.0)])[0] == SHAPE_INFLECTION,
                 "FY2021 absent → still one crossing"))
@@ -3258,6 +3375,37 @@ def self_test() -> list[tuple[str, bool, str]]:
     out.append(("Stage 1 seed never sits above the Stage 0 rate",
                 stage1_seed(0.15, 0.13) == 0.13 and stage1_seed(0.40, 0.50) == 0.25 and stage1_seed(0.10, 0.30) == 0.10,
                 "13%, 25% cap, 10%"))
+    # ΔE on the operating base. Uber-shaped: after-tax operating income
+    # 7,484 over three years, GAAP SBC 5,500, true cost 9,707 → 43.8%. The
+    # net-income pool on the same rows reads far higher because FY2024–25
+    # carry ~14B of tax benefits and gains.
+    _ub_y = [Year(fy=2022, N=-9141, G=1793, dS=90, price=30), Year(fy=2023, N=1887, G=1900, dS=0, price=45, T=1500),
+             Year(fy=2024, N=9856, G=1800, dS=0, price=70, T=3000), Year(fy=2025, N=10053, G=1800, dS=0, price=80, T=3300)]
+    _ub_r = [TrendYear(2022, 31877.0, -1832.0, None, "", None, None, -9141, 0, None, ""),
+             TrendYear(2023, 37281.0, 1110.0, None, "", None, None, 1887, 0, None, ""),
+             TrendYear(2024, 43978.0, 2799.0, None, "", None, None, 9856, 0, None, ""),
+             TrendYear(2025, 52017.0, 5565.0, None, "", None, None, 10053, 0, None, "")]
+    _op = operating_pool(_ub_y, _ub_r, 2023, 0.21)
+    _exp_base = 0.79 * (1110 + 2799 + 5565)
+    out.append(("Operating ΔE: base is Σ operating income × (1 − tax) over the post-crossing years only",
+                _op.fys == [2023, 2024, 2025] and abs(_op.sum_base - _exp_base) < 1e-9, f"{_op.sum_base:,.0f}"))
+    _exp_dE = (_exp_base + 5500 - 7800) / _exp_base
+    out.append(("...ΔE = (base + ΣG − ΣΩ) / base, and the net-income pool on the same rows is far higher",
+                abs(_op.dE - _exp_dE) < 1e-9 and profitable_pool(_ub_y, 2023)[0].dE > _op.dE + 0.2,
+                f"operating {_op.dE:.1%} vs net-income {profitable_pool(_ub_y, 2023)[0].dE:.1%}"))
+    _ub_r[3].oi = None
+    out.append(("...a year without an operating line is out of the pool, not read as zero",
+                operating_pool(_ub_y, _ub_r, 2023, 0.21).fys == [2023, 2024], ""))
+    _ub_r[3].oi = 5565.0
+    out.append(("...no operating-profit year since the crossing → None",
+                operating_pool(_ub_y, _ub_r, 2026, 0.21) is None, ""))
+    _gx = operating_pool([Year(fy=2025, N=447, G=50, dS=8, price=40)],
+                         [TrendYear(2025, 616.0, 123.0, None, "", None, None, 447, 0, None, "")], 2025, 0.21)
+    out.append(("...a tax-benefit year cannot flatter it: TGTX-shaped 447 net on 123 operating → ΔE on 97, not on 447",
+                abs(_gx.sum_base - 123 * 0.79) < 1e-9 and _gx.dE < 0, f"{_gx.dE:.1%}"))
+    _rg = dE_gate(_gx.dE, _gx, _gx.fys)[0]
+    out.append(("...and the refusal sentence names the after-tax operating base",
+                _rg.startswith("Owners' earnings have not inflected") and "after-tax operating income totalled 97M" in _rg, _rg[:90]))
     # PLTR-shaped: profits, but shares handed out at market dwarf them.
     pltr = [Year(fy=2023, N=210, G=476, dS=90, price=15), Year(fy=2024, N=462, G=692, dS=120, price=35)]
     _pl, _plf = profitable_pool(pltr)
@@ -3288,6 +3436,16 @@ def self_test() -> list[tuple[str, bool, str]]:
                 abs(window_incremental([a, b, e]) - 110 / 330) < 1e-12, f"{window_incremental([a, b, e]):.1%}"))
     out.append(("Window incremental: refused when revenue did not grow over the window",
                 window_incremental([b, c]) is None, "—"))
+    tg = [TrendYear(2021, 7.0, -345.0, None, "", None, None, 0, 0, None, ""),
+          TrendYear(2022, 3.0, -218.0, None, "", None, None, 0, 0, None, ""),
+          TrendYear(2023, 234.0, 21.0, None, "", None, None, 0, 0, None, ""),
+          TrendYear(2024, 329.0, 42.0, None, "", None, None, 0, 0, None, ""),
+          TrendYear(2025, 616.0, 123.0, None, "", None, None, 0, 0, None, "")]
+    out.append(("Post-crossing incremental: TG Therapeutics FY2023→25 keeps 26.7% of new revenue, against a 76.8% window figure",
+                abs(post_crossing_incremental(tg, 2023) - 102 / 382) < 1e-12 and abs(window_incremental(tg) - 468 / 609) < 1e-12,
+                f"{post_crossing_incremental(tg, 2023):.1%} vs {window_incremental(tg):.1%}"))
+    out.append(("...refused with fewer than two years after the crossing, or no crossing",
+                post_crossing_incremental(tg, 2025) is None and post_crossing_incremental(tg, None) is None, ""))
 
     # 8. Gross margin: tagged, derived, refused.
     out.append(("Gross profit: tagged wins", gross_profit(100.0, 60.0, 50.0) == (60.0, "GrossProfit"), ""))
@@ -3299,6 +3457,11 @@ def self_test() -> list[tuple[str, bool, str]]:
                 and gross_margin_gate(0.30, 0.35) == "" and gross_margin_gate(0.90, None) == "", ""))
 
     # 9. Terminal default: the lower of the two, capped, never below latest.
+    _v5, _s5 = terminal_default(0.768, 0.20, 26.2, 5, 0.837, post_incr=0.267)
+    out.append(("Terminal default: the post-crossing incremental bounds TGTX at 26.7%, not 76.8%",
+                abs(_v5 - 0.267) < 1e-12 and _s5.startswith("the incremental margin since"), f"{_v5:.1%}"))
+    out.append(("...and does not move Uber, whose post-crossing figure (30.2%) is above the window's (21.9%)",
+                abs(terminal_default(0.219, 0.107, 0.055, 5, None, post_incr=0.302)[0] - 0.219) < 1e-12, ""))
     _v, _s = terminal_default(0.34, 0.09, 0.03, 5, 0.40)
     out.append(("Terminal default: pace path 9% + 3×5 = 24% beats a 34% window incremental",
                 abs(_v - 0.24) < 1e-12 and _s.startswith("the trailing pace"), f"{_v:.1%} — {_s}"))
@@ -3341,6 +3504,10 @@ def self_test() -> list[tuple[str, bool, str]]:
                        "stage0_growth": stage0_rate(0.25, 0.06, 0.30, 5)})
     out.append(("Sensitivity: the centre cell is the page's own IV15, same engine call",
                 abs(grid[1][1] - intrinsic_value(_mid, 15)) < 1e-9, f"{grid[1][1]:.2f}"))
+    ggrid = growth_sensitivity(base, 4000.0, 0.06, 0.21, 0.8, [0.125, 0.1875, 0.25], [3, 5, 7], 0.30)
+    out.append(("Growth grid: IV15 rises with Stage 0 growth in every column, and the seed row is the page's own IV15",
+                all(ggrid[0][j] < ggrid[1][j] < ggrid[2][j] for j in range(3)) and abs(ggrid[2][1] - grid[1][1]) < 1e-9,
+                f"{ggrid[0][1]:.2f} < {ggrid[1][1]:.2f} < {ggrid[2][1]:.2f}"))
 
     # 12. The shared seed helper still behaves as tool 1's does.
     out.append(("Shared seed helper: a loss on a profitable record still seeds from the median",
@@ -3540,7 +3707,7 @@ if years and ticker and st.session_state.get("inf_tk") == ticker:
                "grid under the verdict shows how much.")
 
     _cross_fy = crossing_year(_oi_pts)
-    _measured, _prof_fys = profitable_pool(years, _cross_fy)
+    _post_incr = post_crossing_incremental(rows, _cross_fy)
     _gm_latest = _last.gm
     m0 = _last.opm
     rev0 = _last.rev
@@ -3550,15 +3717,16 @@ if years and ticker and st.session_state.get("inf_tk") == ticker:
                                value=STAGE0_DEFAULT_YEARS, step=1,
                                help="The length of Stage 0. Five is a convention, not evidence; "
                                     "the pace beside the margin box says what the trend would do.")
-    _t_default, _t_src = terminal_default(_w_incr, m0, _pace, int(s0_years), _gm_latest)
+    _t_default, _t_src = terminal_default(_w_incr, m0, _pace, int(s0_years), _gm_latest, _post_incr)
     terminal = j1.number_input("Terminal operating margin (%)", value=round(_t_default * 100, 1), step=1.0,
                                min_value=0.1, max_value=95.0,
                                help="The margin the business reaches at the end of Stage 0 — "
                                     "mature competitors' margins are your judgement; enter them. "
                                     "Seeded from " + _t_src + ".") / 100.0
     _pace_path = None if _pace is None else m0 + _pace * int(s0_years)
-    j1.caption(f"Seeded from {_t_src}. Window incremental {_fmt_pct(_w_incr)}; trailing pace "
-               f"reaches {_fmt_pct(_pace_path)} in {int(s0_years)}y; gross margin {_fmt_pct(_gm_latest)}.")
+    j1.caption(f"Seeded from {_t_src}. Window incremental {_fmt_pct(_w_incr)}; since the FY{_cross_fy} "
+               f"crossing {_fmt_pct(_post_incr)}; trailing pace reaches {_fmt_pct(_pace_path)} in "
+               f"{int(s0_years)}y; gross margin {_fmt_pct(_gm_latest)}. The lowest seeds the box.")
 
     _lat_g, _cagr3 = revenue_rates(rows)
     _g0_seed, _g0_raw = stage0_growth_seed(_lat_g, _cagr3)
@@ -3575,20 +3743,29 @@ if years and ticker and st.session_state.get("inf_tk") == ticker:
                               "revenue growth capped at 25%), and never above the Stage 0 rate; it should "
                               "usually be lower still after years of hypergrowth.") / 100.0
     tax = j2.number_input("Tax rate (%)", value=TAX_DEFAULT * 100, step=1.0, min_value=0.0, max_value=60.0,
-                          help="Normalised, not the filed rate. Burry normalises per company.") / 100.0
+                          help="Normalised, not the filed rate. Burry normalises per company. Also the "
+                               "rate ΔE below is measured at.") / 100.0
 
+    _measured = operating_pool(years, rows, _cross_fy, tax)
+    _prof_fys = _measured.fys if _measured is not None else []
     _dE_seed = _measured.dE if _measured is not None else 0.0
     dE_box = j2.number_input("ΔE (%)", value=round(_dE_seed * 100, 1), step=1.0,
                              help="Share of after-tax operating profit that reaches shareholders after the "
-                                  "true cost of stock comp. Seeded from the profitable years only. Held "
-                                  "constant through Stage 0, which is the conservative side.") / 100.0
+                                  "true cost of stock comp: (operating income × (1 − tax) + GAAP SBC − true "
+                                  "SBC cost) ÷ operating income × (1 − tax), pooled over the profitable "
+                                  "years since the crossing. Measured on the base this page projects, so "
+                                  "no tax benefit or gain below the operating line can flatter it; tool 1's "
+                                  "ΔE on net income will read differently. Held constant through Stage 0, "
+                                  "the conservative side.") / 100.0
     _dE_set_by_hand = _measured is None or abs(dE_box - _measured.dE) > 5e-4
     if _measured is not None:
-        j2.caption(f"Measured {_measured.dE:.1%} over FY{_prof_fys[0]}–FY{_prof_fys[-1]}"
+        j2.caption(f"Measured {_measured.dE:.1%} on after-tax operating income over "
+                   f"FY{_prof_fys[0]}–FY{_prof_fys[-1]}"
                    + (" (one year)" if len(_prof_fys) == 1 else f" ({len(_prof_fys)} years)")
-                   + f" — the profitable years since the FY{_cross_fy} crossing.")
+                   + f": base {_measured.sum_base:,.0f}M, GAAP SBC {_measured.sum_G:,.0f}M, true cost "
+                   f"{_measured.sum_omega:,.0f}M.")
     else:
-        j2.caption(f"No profitable year since the FY{_cross_fy} crossing to measure it on.")
+        j2.caption(f"No operating-profit year since the FY{_cross_fy} crossing to measure it on.")
 
     k1, k2, k3 = st.columns(3)
     price = k1.number_input("Price", value=float(current_price(pre.get("ticker", tk)) or 100.0), step=0.01)
@@ -3691,6 +3868,14 @@ if years and ticker and st.session_state.get("inf_tk") == ticker:
                                for i, mT in enumerate(_terms)]), width='stretch', hide_index=True)
     st.caption("Every cell is the same engine call with one input moved. Market price for reference: "
                f"{d(price)}.")
+    st.write(f"**…and growth through Stage 0** — at the {terminal:.1%} terminal margin, years across")
+    _gs = [g_rev * 0.5, g_rev * 0.75, g_rev]
+    _ggrid = growth_sensitivity(par, rev0, m0, tax, applied_dE, _gs, _yrs, terminal)
+    st.dataframe(pd.DataFrame([{"Stage 0 growth": f"{g:.1%}" + (" (box)" if i == 2 else ""),
+                                **{f"{n}y": cell(v, "${:,.2f}") for n, v in zip(_yrs, _ggrid[i])}}
+                               for i, g in enumerate(_gs)]), width='stretch', hide_index=True)
+    st.caption("Rows run at half, three-quarters and the box's rate: a launch rate inflates this lever, "
+               "so the risk is below the seed, not above it.")
 
     with st.expander("Notes and detail", expanded=False):
         for kind_, msg in alerts:
@@ -3722,7 +3907,7 @@ if years and ticker and st.session_state.get("inf_tk") == ticker:
             f"{tk}   price {price:,.2f}   shares {shares:,.1f}M   mkt cap ${shares*price/1000:,.2f}B\n"
             f"FILED   revenue FY{_last.fy}        {rev0:,.0f}\n"
             f"FILED   operating margin       {m0:.1%}   (path: {' → '.join(_pct(m) for _, m in _opm_pts[-4:])})\n"
-            f"FILED   incremental, window    {_fmt_pct(_w_incr)}   pace {'—' if _pace is None else f'{_pace:+.1%}/yr'}\n"
+            f"FILED   incremental, window    {_fmt_pct(_w_incr)}   since crossing {_fmt_pct(_post_incr)}   pace {'—' if _pace is None else f'{_pace:+.1%}/yr'}\n"
             f"FILED   gross margin           {_fmt_pct(_gm_latest)}\n"
             f"FILED   runway                 {'no burn' if _rw is None else f'{_rw:.1f}y at {_burn:,.0f}M'}\n"
             f"JUDGE   terminal margin        {terminal:.1%}   (seed: {_t_src})\n"
@@ -3733,7 +3918,8 @@ if years and ticker and st.session_state.get("inf_tk") == ticker:
             f"JUDGE   ΔE                     {applied_dE:.1%}   "
             + (f"set by hand (measured {_measured.dE:.1%} over FY{_prof_fys[0]}–FY{_prof_fys[-1]})" if _dE_set_by_hand and _measured is not None
                else "set by hand (no profitable year to measure)" if _dE_set_by_hand
-               else f"measured over FY{_prof_fys[0]}–FY{_prof_fys[-1]}" + (" (capped)" if dE_was_capped(dE_box) else "")) + "\n"
+               else f"measured over FY{_prof_fys[0]}–FY{_prof_fys[-1]}" + (" (capped)" if dE_was_capped(dE_box) else ""))
+            + "   on after-tax operating income, not net income\n"
             f"ENGINE  stage 0                {int(s0_years)}y at {g0:.2%}   OE seed {OE0:,.0f}\n"
             f"ENGINE  tier {tier_name}   exit {exit_m:g}x   blend {blend:g}   leg {m2_style}\n"
             f"ENGINE  net cash               {net_cash:,.0f}   ({net_cash/shares:,.2f}/share)\n"
