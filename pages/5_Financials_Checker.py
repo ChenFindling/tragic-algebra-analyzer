@@ -3110,6 +3110,39 @@ def cr_lever(nep: float | None, avg_tbv: float | None, tax: float) -> float | No
     return nep / avg_tbv * (1 - tax)
 
 
+def lever_sentence(lev: float, cr_now: float, cr_median: float, fy: int, tax: float, tax_reason: str) -> str:
+    """The combined-ratio lever, worded. `lev` is points of ROTE per point of
+    combined ratio — a dimensionless ratio, so it is printed as it is.
+    Kinsale, 1 Sep 2026: the page printed '72.68 points of ROTE' for a
+    lever of 0.727, having multiplied a ratio of points by 100 as though
+    it were a percentage. The second figure was right and read '+1.4
+    points off' — a rise in the combined ratio lowers ROTE, so it is a
+    reduction and is worded as one."""
+    delta = (cr_median - cr_now) * lev * 100
+    if abs(delta) < 0.05:
+        effect = "the window median is where it already is"
+    elif delta > 0:
+        effect = f"the window median would take about {delta:.1f} points off the normal-year box"
+    else:
+        effect = f"the window median would add about {-delta:.1f} points to the normal-year box"
+    return (f"Lever: at FY{fy}'s premiums-to-tangible-equity and a tax rate of {tax:.1%} ({tax_reason}), one "
+            f"point of combined ratio is **{lev:.2f} points of ROTE**. Combined ratio FY{fy} {cr_now:.1%}, "
+            f"window median {cr_median:.1%} — so {effect}.")
+
+
+def float_sentence(bal: dict, total: float | None, fy: int) -> str:
+    """The float arithmetic, line by line, so it can be checked against the
+    10-K balance sheet — Kinsale publishes no float figure, only the parts."""
+    if total is None:
+        return ""
+    parts = [f"loss reserves {bal['resv']:,.0f} + unearned premiums {bal['upr']:,.0f}"]
+    for name, key in (("premiums receivable", "prec"), ("reinsurance recoverables", "reins"),
+                      ("deferred acquisition costs", "dac")):
+        if bal.get(key) is not None:
+            parts.append(f"− {name} {bal[key]:,.0f}")
+    return f"Float FY{fy}: " + " ".join(parts) + f" = {total:,.0f}."
+
+
 def bank_lines(lines: dict) -> dict:
     nii, noni, nonx, prov = (lines.get(k) for k in ("bnii", "nonii", "nonix", "prov"))
     rev = nii + noni if nii is not None and noni is not None else None
@@ -3350,7 +3383,11 @@ def page_notes(notes: list[str]) -> list[str]:
     financial banner (net cash set to zero — this page never reads it) and
     the revenue-growth seeding sentences (this page derives growth)."""
     drop = ("net cash has been set to zero", "The seed uses the recent rate",
-            "which is a launch rate")
+            "which is a launch rate",
+            # Kinsale, 1 Sep 2026: tool 1's stale-line note ends "net cash above
+            # carries the last figure found forward", and its fallback-tag note
+            # is about the cash and debt groups. Neither line is on this page.
+            "Net cash above carries", "read from a fallback tag because the preferred one had stopped")
     return [n for n in notes if not any(x in n for x in drop)]
 
 
@@ -3508,6 +3545,15 @@ def self_test() -> list[tuple[str, bool, str]]:
     ok("Tax: the filing's rate when readable", effective_tax({"ptx": 500, "tax": 100}) == (0.2, "the filing's own effective rate"))
     ok("Tax: statutory when pre-tax is a loss", effective_tax({"ptx": -500, "tax": 10})[0] == TAX_STATUTORY)
     ok("CR lever: 1 point of combined ratio = NEP/avg TBV × (1−tax) points of ROTE", abs(cr_lever(1100, 1000, 0.21) - 0.869) < 1e-12)
+    _ls = lever_sentence(0.7267, 0.789, 0.808, 2025, 0.206, "the filing's own effective rate")
+    ok("CR lever sentence: KNSL's 0.73 points, not 72.68, and a higher median takes points OFF",
+       "0.73 points of ROTE" in _ls and "take about 1.4 points off" in _ls and "+" not in _ls.split("so")[1], _ls[-70:])
+    ok("CR lever sentence: a lower median adds points", "add about" in lever_sentence(0.7267, 0.85, 0.80, 2025, 0.21, "x"))
+    _fs = float_sentence({"resv": 2000, "upr": 800, "prec": 150, "reins": None, "dac": 100}, 2550, 2025)
+    ok("Float sentence: every line read is shown with its figure; an unread one is absent",
+       "2,000 + unearned premiums 800" in _fs and "premiums receivable 150" in _fs and "deferred acquisition costs 100" in _fs
+       and "reinsurance" not in _fs and "= 2,550" in _fs)
+    ok("Float sentence: nothing when float is refused", float_sentence({}, None, 2025) == "")
 
     # 9. Bank evidence.
     _b = bank_lines({"bnii": 900, "nonii": 400, "nonix": 700, "prov": 50})
@@ -3609,9 +3655,13 @@ def self_test() -> list[tuple[str, bool, str]]:
     _neg = Pooled(dE=1.07, sum_N=-100, sum_OE=-107, sum_omega=0, sum_G=0, years=3)
     ok("Gate: ΔE on a negative denominator → not projectable, applied at 100% with no refusal", gate_dE(_neg) == ("", 1.0))
     ok("Gate: ordinary ΔE applied as measured", gate_dE(Pooled(dE=0.927, sum_N=100, sum_OE=92.7, sum_omega=0, sum_G=0, years=3))[1] == 0.927)
-    ok("Notes: tool 1's net-cash banner and growth-seed sentences dropped, others kept",
+    ok("Notes: tool 1's net-cash banner, growth-seed, stale-line and fallback-tag sentences dropped, others kept",
        page_notes(["x net cash has been set to zero y", "Revenue is slowing — The seed uses the recent rate.",
-                   "Latest revenue growth is 40%, which is a launch rate", "keep me"]) == ["keep me"])
+                   "Latest revenue growth is 40%, which is a launch rate",
+                   "A balance-sheet line here stops ... Net cash above carries the last figure found forward",
+                   "Some balance-sheet lines were read from a fallback tag because the preferred one had stopped: x",
+                   "Excluded 8.8M shares issued for acquisitions", "keep me"])
+       == ["Excluded 8.8M shares issued for acquisitions", "keep me"])
     ok("Cells: None and nan print as a dash", cell(None, "{:.1%}") == "—" and cell(float("nan"), "{:.1f}") == "—" and pct(0.1234) == "12.3%")
     ok("Sanity: FIN_ROWS covers every FIN_BALANCE key once", sorted(k for _, k in FIN_ROWS) == sorted(FIN_BALANCE))
     ok("Sanity: the standalone SIC table names all three classes and the promotion rule",
@@ -3728,7 +3778,8 @@ if years and ticker and st.session_state.get("fin_tk") == ticker:
         } for r in rows]), width='stretch', hide_index=True)
         _lf = _flt[latest.fy]
         if _lf[0] is not None:
-            st.caption(f"Float on Buffett's definition, FY{latest.fy}: {_lf[1]}. Burry's ROIC slide "
+            st.caption(float_sentence(latest.bal, _lf[0], latest.fy)
+                       + f" On Buffett's definition, {_lf[1]}. Burry's ROIC slide "
                        "calls customer float productive capital; here it earns through the "
                        "investment yield already in the earnings, and is shown, not priced.")
         else:
@@ -3910,11 +3961,7 @@ if years and ticker and st.session_state.get("fin_tk") == ticker:
             _lev = cr_lever(latest.lines.get("nep"), _avg_tbv, _tx)
             _crs = [_uw[r.fy]["cr"] for r in rows if _uw[r.fy]["cr"] is not None]
             if _lev is not None and _uw[latest.fy]["cr"] is not None:
-                st.caption(f"Lever: at FY{latest.fy}'s premiums-to-tangible-equity and a tax rate of "
-                           f"{pct(_tx)} ({_txr}), one point of combined ratio is **{_lev * 100:.2f} points of "
-                           f"ROTE**. Combined ratio FY{latest.fy} {pct(_uw[latest.fy]['cr'])}, window median "
-                           f"{pct(median_of(_crs))} — so the median would take about "
-                           f"{(median_of(_crs) - _uw[latest.fy]['cr']) * _lev * 100:+.1f} points off the normal-year box.")
+                st.caption(lever_sentence(_lev, _uw[latest.fy]["cr"], median_of(_crs), latest.fy, _tx, _txr))
 
     # ══ 7. verdict ════════════════════════════════════════════════════
     st.markdown("---")
