@@ -2887,7 +2887,12 @@ def tangible_common(eq: float | None, pref: float | None, gw: float | None,
         return None, "shareholders' equity not read"
     missing = []
     for name, v in (("preferred stock", pref), ("goodwill", gw), ("intangibles", intan)):
-        if v is None and last and name in last:
+        # A line whose last filed value was ZERO has ended, and its absence
+        # afterwards is zero, not staleness. Progressive redeemed its
+        # preferred in February 2023; filers carry the element at 0 for one
+        # comparative year and then drop it, and without this the page would
+        # have refused every year after.
+        if v is None and last and name in last and last[name][1] != 0:
             fy, val = last[name]
             missing.append(f"{name} last read FY{fy} at {val:,.0f}M")
     if missing:
@@ -3485,6 +3490,11 @@ def self_test() -> list[tuple[str, bool, str]]:
        tangible_common(1000, None, None, None, {"goodwill": (2022, 200.0)})[0] is None
        and "200M" in tangible_common(1000, None, None, None, {"goodwill": (2022, 200.0)})[1])
     ok("TBV: no equity → refused", tangible_common(None, 0, 0, 0)[0] is None)
+    ok("TBV: a deduction last filed at ZERO has ended — absence is zero, not staleness (PGR's redeemed preferred)",
+       tangible_common(1000, None, None, None, {"preferred stock": (2023, 0.0)})[0] == 1000)
+    _pg = build_fin_years([Year(fy=2022, N=10), Year(fy=2023, N=10), Year(fy=2024, N=10)], {},
+                          {"eq": {2022: 900, 2023: 950, 2024: 1000}, "pref": {2022: 494, 2023: 0}}, {}, {}, N_TO_COMMON)
+    ok("Rows: preferred 494 → 0 → dropped reads TBV 406, 950, 1000", [r.tbv for r in _pg] == [406, 950, 1000])
 
     # 5. ROTE on average tangible equity.
     ok("ROTE: net to common over the average of two year-ends", abs(rote(30, 120, 80) - 0.30) < 1e-12)
