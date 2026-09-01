@@ -2872,6 +2872,21 @@ def margin_gate(margins: list[tuple[int, float]]) -> str:
     return ""
 
 
+def coverage_gate(rows: list[TrendYear]) -> str:
+    """Operating income read but revenue not (or the reverse) — say which
+    line is the gap, before the trend rule counts margins. Sophia Genetics,
+    1 Sep 2026: six years of operating income, no revenue under an IFRS name
+    this reader lacks, and the page said 'only 0 years of operating margin'."""
+    oi_n = sum(1 for r in rows if r.oi is not None)
+    rev_n = sum(1 for r in rows if r.rev is not None and r.rev != 0)
+    both = sum(1 for r in rows if r.opm is not None)
+    if both >= TREND_STEPS + 1 or oi_n == both or oi_n < TREND_STEPS + 1:
+        return ""
+    return (f"Operating income was read for {oi_n} years but revenue for {rev_n}, so a margin "
+            f"exists for only {both}; the trend rule needs {TREND_STEPS + 1}. The revenue line is "
+            "the gap — the tag panel names what answered.")
+
+
 def margin_trend_sentence(margins: list[tuple[int, float]]) -> str:
     """What a PASSING trend looks like, in words, for the page."""
     pts = [(fy, m) for fy, m in margins if m is not None][-(TREND_STEPS + 1):]
@@ -2968,6 +2983,18 @@ def operating_pool(years: list[Year], rows: list[TrendYear], since_fy: int | Non
                     sum_G=sum(y.G for y, _ in kept),
                     sum_omega=sum(y.omega for y, _ in kept),
                     missing_shares=missing)
+
+
+def financial_sentence(sic_desc: str | None, sic) -> str:
+    """Tool 1's SIC 6000–6799 rule, worded for everyone it catches — Compass
+    (6531, a brokerage) and Affirm (6141, a lender) were told their revenue
+    was 'not an insurer's revenue'."""
+    return (f"{sic_desc or 'Financial company'} (SIC {sic}). Tool 1 treats SIC 6000–6799 — "
+            "banks, insurers, lenders, brokers, REITs — as financial: their investments back "
+            "customer liabilities rather than belonging to shareholders, and for many of them "
+            "the revenue concept this page's trend table is built on is not their revenue. Tool "
+            "1 values them indicatively with net cash set to zero; this page does not price "
+            "them at all, and the table is not shown.")
 
 
 def shares_gate(shares: float) -> str:
@@ -3382,6 +3409,13 @@ def self_test() -> list[tuple[str, bool, str]]:
                 margin_gate(flat).startswith("Flat or noisy"), margin_gate(flat)[:80]))
     out.append(("Trend: fewer than four margins → refused", margin_gate(ok_m[1:]).startswith("Only 3"),
                 margin_gate(ok_m[1:])))
+    _soph = [TrendYear(2020 + i, None, -30.0 - i, None, "", None, None, 0, 0, None, "") for i in range(6)]
+    out.append(("Coverage: operating income read for 6 years and revenue for none names the revenue line as the gap",
+                coverage_gate(_soph).startswith("Operating income was read for 6 years but revenue for 0"),
+                coverage_gate(_soph)[:70]))
+    _full = [TrendYear(2022 + i, 1000.0 + i, 10.0 + i, None, "", None, None, 0, 0, None, "") for i in range(4)]
+    out.append(("Coverage: silent when both lines cover four years, or neither does",
+                coverage_gate(_full) == "" and coverage_gate(_soph[:3]) == "", ""))
     out.append(("Trend: only the last four years are read — an old collapse does not fail it",
                 margin_gate([(2018, 0.50)] + ok_m) == "", "FY2018 at 50% ignored"))
 
@@ -3481,6 +3515,9 @@ def self_test() -> list[tuple[str, bool, str]]:
     out.append(("IFRS names for the operating lines are in the reader (Grab reports in USD under IFRS)",
                 CONCEPTS["OI"][1] == ["ProfitLossFromOperatingActivities"] and "CostOfSales" in CONCEPTS["COGS"][1]
                 and CONCEPTS["CFO"][1] and CONCEPTS["CAPEX"][1], ""))
+    out.append(("Financial sentence names lenders and brokers too, and what tool 1 does instead",
+                "lenders, brokers" in financial_sentence("Real Estate Agents", "6531")
+                and "indicatively" in financial_sentence(None, "6141") and "insurer's revenue" not in financial_sentence(None, "6141"), ""))
     out.append(("Shares gate: a zero count refuses before anything per share is printed",
                 shares_gate(0.0).startswith("No share count was read") and shares_gate(155.3) == "", ""))
     _gx = operating_pool([Year(fy=2025, N=447, G=50, dS=8, price=40)],
@@ -3701,11 +3738,7 @@ if years and ticker and st.session_state.get("inf_tk") == ticker:
     if pre.get("financial"):
         st.markdown("---")
         st.subheader("Is the turn in the filings?")
-        st.error(f"**Not this page.** {pre.get('sic_desc') or 'Financial company'} (SIC "
-                 f"{pre.get('sic')}). Banks, insurers and REITs need book-value and combined-ratio "
-                 "thinking this page does not contain, and the revenue concept the trend table is "
-                 "built on is not an insurer's revenue — so the table is not shown either. Tool 1 "
-                 "says the same.")
+        st.error("**Not this page.** " + financial_sentence(pre.get("sic_desc"), pre.get("sic")))
         with st.expander("Notes and detail", expanded=False):
             for kind_, msg in alerts:
                 getattr(st, kind_)(msg)
@@ -3785,7 +3818,7 @@ if years and ticker and st.session_state.get("inf_tk") == ticker:
         st.error(f"**Not this page.** {stop}")
     else:
         st.write(sentence)
-        _mg = margin_gate(_opm_pts)
+        _mg = coverage_gate(rows) or margin_gate(_opm_pts)
         _rg = revenue_gate(_rev_pts)
         _sg = start_gate(_last.fy, _last.opm)
         if _mg:
