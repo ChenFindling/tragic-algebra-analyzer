@@ -2728,7 +2728,10 @@ def runway_years(cash: float, cfo: float | None, capex: float | None) -> tuple[f
     if fcf >= 0:
         return None, 0.0
     burn = -fcf
-    return (cash / burn if cash > 0 else 0.0), burn
+    # Cash at or below zero is a balance that was not read, not a balance
+    # of nothing — Grab, 1 Sep 2026, "0M of cash lasts 0.0 years" for a
+    # company holding billions under IFRS tag names this reader lacks.
+    return (cash / burn if cash > 0 else None), burn
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -3052,6 +3055,11 @@ def gross_margin_gate(terminal: float, gm: float | None) -> str:
 
 
 def runway_gate(years_needed: int, runway: float | None, burn: float, cash: float) -> str:
+    if burn > 0 and cash <= 0:
+        return (f"Runway cannot be measured: a burn of {burn:,.0f}M (cash from operations less "
+                "capex) is filed but no cash balance was read — the tag panel shows which lines "
+                "answered. A path that needs funding cannot be priced without knowing the funding. "
+                "Type the cash balance to continue.")
     if runway is None or years_needed <= 0:
         return ""
     if runway < years_needed:
@@ -3560,6 +3568,10 @@ def self_test() -> list[tuple[str, bool, str]]:
     out.append(("Runway: 7,000 cash at a 2,500 burn = 2.8 years", runway_years(7000.0, -2000.0, 500.0) == (2.8, 2500.0), ""))
     out.append(("Runway: positive free cash flow → no runway to compute", runway_years(7000.0, 800.0, 300.0) == (None, 0.0), ""))
     out.append(("Runway: no cash-flow line → None, not zero", runway_years(7000.0, None, 300.0) == (None, 0.0), ""))
+    out.append(("Runway: cash not read with a burn filed → no years figure, and the gate refuses on that ground",
+                runway_years(0.0, -10.0, 8.0) == (None, 18.0)
+                and runway_gate(5, None, 18.0, 0.0).startswith("Runway cannot be measured: a burn of 18M"),
+                runway_gate(5, None, 18.0, 0.0)[:60]))
     _rw = runway_gate(5, 2.8, 2500.0, 7000.0)
     out.append(("Runway gate: 2.8 years against a 5-year path refuses with the figures",
                 _rw.startswith("Runway shorter") and "2.8 years" in _rw and "2,500M" in _rw, _rw[:70]))
@@ -3754,10 +3766,11 @@ if years and ticker and st.session_state.get("inf_tk") == ticker:
               f"FY{_first_both.fy}→FY{_last.fy}" if _first_both else "not readable")
     s2.metric("Margin pace, last 3 steps", "—" if _pace is None else f"{_pace:+.1%}/yr",
               f"to {_fmt_pct(_last.opm)} in FY{_last.fy}")
-    s3.metric("Runway", "no burn" if _rw is None and _last.cfo is not None else
+    s3.metric("Runway", "no burn" if _burn == 0 and _last.cfo is not None else
               "—" if _rw is None else f"{_rw:.1f} years",
               f"burn {_burn:,.0f}M on {pre.get('cash', 0.0):,.0f}M cash" if _rw is not None else
-              ("cash-flow line not read" if _last.cfo is None else f"FCF +{_last.fcf:,.0f}M, FY{_last.fy}"))
+              ("cash-flow line not read" if _last.cfo is None else
+               f"burn {_burn:,.0f}M, cash not read" if _burn > 0 else f"FCF +{_last.fcf:,.0f}M, FY{_last.fy}"))
 
     # ══ refusals, in order ═══════════════════════════════════════════
     st.markdown("---")
