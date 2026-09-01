@@ -2578,6 +2578,11 @@ def test_summary(results: list[tuple[str, bool, str]]) -> tuple[str, str]:
 # benefit cannot pollute it), and it is what anyone means by "a mature
 # competitor earns 30%". Net margin is shown beside it and drives nothing.
 
+def d(x, dp=2):
+    """Escaped dollar amount, safe inside markdown."""
+    return f"\\${x:,.{dp}f}"
+
+
 TREND_STEPS = 3            # the trend rule reads the last four years, three steps
 STAGE0_DEFAULT_YEARS = 5   # a convention in a judgement box, not evidence
 STAGE0_GROWTH_CAP = 0.50   # revenue growth through Stage 0 is capped here for the seed
@@ -2941,9 +2946,9 @@ def terminal_default(incr: float | None, m_latest: float, pace: float | None,
     shown beside the box, not used alone. Returns (value, what bound it)."""
     cands: list[tuple[float, str]] = []
     if incr is not None:
-        cands.append((incr, "the incremental margin over the window"))
+        cands.append((incr, "the window incremental margin"))
     if pace is not None:
-        cands.append((m_latest + pace * years, f"the trailing pace, latest margin + {pace:+.1%} × {years}y"))
+        cands.append((m_latest + pace * years, f"the trailing pace ({pace:+.1%} × {years}y)"))
     if not cands:
         return m_latest, "the latest margin — no trend to extend"
     v, src = min(cands)
@@ -3025,11 +3030,47 @@ def page_notes(notes: list[str]) -> list[str]:
     return [n for n in notes if not n.startswith(TOOL1_SEED_NOTE_PREFIXES)]
 
 
-def numeric_frame(df):
-    """None in a numeric column renders as the word None in st.dataframe —
-    the Styler's na_rep only sees NaN. Coerce every non-label column."""
-    return df.apply(lambda c: pd.to_numeric(c, errors="coerce")
-                    if c.name not in ("FY", "Terminal margin") else c)
+def cell(v, fmt: str, blank: str = "—") -> str:
+    """Text for one table cell. Streamlit's grid ignores the Styler's na_rep
+    and prints the word None (or NaN) into a refused cell — tool 1 found
+    this on its ΔE column, and Uber's gross-margin column, refused in every
+    year, printed None nine times after coercing to NaN did nothing. So
+    every cell is formatted here and the table is handed over as text."""
+    if v is None:
+        return blank
+    try:
+        if v != v:
+            return blank
+    except TypeError:
+        pass
+    return fmt.format(v)
+
+
+def ladder_caption(lad: dict) -> str:
+    """Escaped, or Streamlit reads the span between two dollar signs as
+    LaTeX — the ladder printed half its figures in equation type."""
+    return "Ladder: " + "  ·  ".join(f"IV{n} {d(v)}" for n, v in lad.items() if v == v)
+
+
+def below_line_note(flagged: list[tuple[int, float, float]]) -> str | None:
+    """One note for every flagged year, not one paragraph per year."""
+    if not flagged:
+        return None
+    yrs = "; ".join(f"FY{fy} net income {n:,.0f}M against operating income {oi:,.0f}M ({n / oi:.1f}x)"
+                    for fy, n, oi in flagged)
+    return (f"Net income exceeds operating income in {len(flagged)} profitable year"
+            f"{'s' if len(flagged) > 1 else ''} — {yrs}. Something below the operating line — "
+            "interest on cash, a tax benefit, a gain — is in net income, and ΔE is measured on that "
+            "figure, so it is flattered. Operating margin, which the path projects, is not.")
+
+
+TERMINAL_TOL = 0.0005   # half of the box's one-decimal display unit
+
+
+def above_incremental(terminal: float, incr: float | None) -> bool:
+    """The box rounds to one decimal; the comparison must not be finer than
+    that, or a terminal seeded FROM the incremental margin reads as above it."""
+    return incr is not None and terminal > incr + TERMINAL_TOL
 
 
 def stage1_seed(growth_latest: float | None, g0_seed: float) -> float:
@@ -3202,9 +3243,18 @@ def self_test() -> list[tuple[str, bool, str]]:
           "No share price for some years — their SBC cost is understated."]
     out.append(("Tool 1's three growth-seeding notes are dropped; every other note is kept",
                 page_notes(_n) == _n[2:], f"{len(page_notes(_n))} of 3 kept"))
-    _df = numeric_frame(pd.DataFrame([{"FY": "2018", "Shares (M)": None}, {"FY": "2019", "Shares (M)": 1744.5}]))
-    out.append(("None in a numeric column becomes NaN, so the table prints a dash and not the word None",
-                str(_df["Shares (M)"].dtype) == "float64" and _df["Shares (M)"].isna().iloc[0], str(_df["Shares (M)"].dtype)))
+    out.append(("A refused cell is the dash as TEXT — None and NaN both — and a value keeps its format",
+                cell(None, "{:+.1%}") == "—" and cell(float("nan"), "{:,.0f}") == "—" and cell(0.219, "{:+.1%}") == "+21.9%",
+                ""))
+    _lc = ladder_caption({8: 281.57, 15: 93.96, 20: float("nan")})
+    out.append(("Ladder caption escapes every dollar sign and drops a NaN rung",
+                _lc.count("\\$") == 2 and _lc.count("$") == 2 and "IV20" not in _lc, _lc))
+    out.append(("Terminal seeded FROM the incremental margin is not 'above' it after rounding",
+                not above_incremental(0.219, 0.21887) and above_incremental(0.225, 0.21887), ""))
+    _bl = below_line_note([(2023, 1887.0, 1110.0), (2024, 9856.0, 2799.0)])
+    out.append(("Below-the-line note is ONE note naming every year with its ratio",
+                _bl.startswith("Net income exceeds operating income in 2 profitable years") and "FY2024" in _bl and "3.5x" in _bl
+                and below_line_note([]) is None, _bl[:80]))
     out.append(("Stage 1 seed never sits above the Stage 0 rate",
                 stage1_seed(0.15, 0.13) == 0.13 and stage1_seed(0.40, 0.50) == 0.25 and stage1_seed(0.10, 0.30) == 0.10,
                 "13%, 25% cap, 10%"))
@@ -3253,7 +3303,7 @@ def self_test() -> list[tuple[str, bool, str]]:
     out.append(("Terminal default: pace path 9% + 3×5 = 24% beats a 34% window incremental",
                 abs(_v - 0.24) < 1e-12 and _s.startswith("the trailing pace"), f"{_v:.1%} — {_s}"))
     _v2, _s2 = terminal_default(0.20, 0.09, 0.03, 5, 0.40)
-    out.append(("...incremental wins when lower", abs(_v2 - 0.20) < 1e-12 and _s2.startswith("the incremental"), f"{_v2:.1%}"))
+    out.append(("...incremental wins when lower", abs(_v2 - 0.20) < 1e-12 and _s2.startswith("the window incremental"), f"{_v2:.1%}"))
     _v3, _s3 = terminal_default(0.34, 0.09, 0.03, 5, 0.18)
     out.append(("...gross margin caps both", abs(_v3 - 0.18) < 1e-12 and _s3.startswith("gross margin"), f"{_v3:.1%}"))
     _v4, _s4 = terminal_default(None, 0.09, None, 5, None)
@@ -3314,11 +3364,6 @@ def _raises(fn) -> bool:
 # dollar amount inside st.write/markdown/success/error/info/warning must be
 # escaped as \$ or the text between two of them silently becomes an equation.
 # st.metric, st.code and st.dataframe are unaffected.
-
-
-def d(x, dp=2):
-    """Escaped dollar amount, safe inside markdown."""
-    return f"\\${x:,.{dp}f}"
 
 
 def _fmt_pct(v):
@@ -3394,26 +3439,21 @@ if years and ticker and st.session_state.get("inf_tk") == ticker:
 
     _incr_cells = [None] + [incremental_margin(rows[i - 1], rows[i]) for i in range(1, len(rows))]
     _mfmt = money_fmt([v for r in rows for v in (r.rev, r.oi, r.gp, r.N, r.fcf, r.omega)])
-    st.dataframe(numeric_frame(pd.DataFrame([{
+    st.dataframe(pd.DataFrame([{
         "FY": f"{r.fy}*" if r.excluded else str(r.fy),
-        "Revenue": r.rev,
-        "Rev growth": growth_pct(r.rev, rows[i - 1].rev) if i else None,
-        "Gross margin": r.gm,
-        "Operating income": r.oi,
-        "Op margin": r.opm,
-        "Costs growth": growth_pct(r.costs, rows[i - 1].costs) if i else None,
-        "Incremental margin": _incr_cells[i],
-        "Net margin": r.nm,
-        "FCF": r.fcf,
-        "True SBC cost / rev": r.omega_pct,
-        "Shares (M)": r.shares,
-        "Share change": growth_pct(r.shares, rows[i - 1].shares) if i else None,
-    } for i, r in enumerate(rows)])).style.format({
-        "Revenue": _mfmt, "Operating income": _mfmt, "FCF": _mfmt, "Shares (M)": "{:,.1f}",
-        "Rev growth": "{:+.1%}", "Gross margin": "{:.1%}", "Op margin": "{:+.1%}",
-        "Costs growth": "{:+.1%}", "Incremental margin": "{:+.1%}", "Net margin": "{:+.1%}",
-        "True SBC cost / rev": "{:.1%}", "Share change": "{:+.1%}"}, na_rep="—"),
-        width='stretch', hide_index=True)
+        "Revenue": cell(r.rev, _mfmt),
+        "Rev growth": cell(growth_pct(r.rev, rows[i - 1].rev) if i else None, "{:+.1%}"),
+        "Gross margin": cell(r.gm, "{:.1%}"),
+        "Operating income": cell(r.oi, _mfmt),
+        "Op margin": cell(r.opm, "{:+.1%}"),
+        "Costs growth": cell(growth_pct(r.costs, rows[i - 1].costs) if i else None, "{:+.1%}"),
+        "Incremental margin": cell(_incr_cells[i], "{:+.1%}"),
+        "Net margin": cell(r.nm, "{:+.1%}"),
+        "FCF": cell(r.fcf, _mfmt),
+        "True SBC cost / rev": cell(r.omega_pct, "{:.1%}"),
+        "Shares (M)": cell(r.shares, "{:,.1f}"),
+        "Share change": cell(growth_pct(r.shares, rows[i - 1].shares) if i else None, "{:+.1%}"),
+    } for i, r in enumerate(rows)]), width='stretch', hide_index=True)
 
     _gp_src = {r.gp_source for r in rows if r.gp_source}
     _missing_gp = [r.fy for r in rows if r.gp is None]
@@ -3583,17 +3623,14 @@ if years and ticker and st.session_state.get("inf_tk") == ticker:
             st.dataframe(pd.DataFrame(pre.get("tags", [])), width='stretch', hide_index=True)
         st.stop()
 
-    if _w_incr is not None and terminal > _w_incr + 1e-9:
+    if above_incremental(terminal, _w_incr):
         alerts.append(("warning",
                        f"Terminal margin of {terminal:.1%} is above the incremental margin of "
                        f"{_w_incr:.1%} the company achieved on each new revenue dollar over the window. "
                        "The path assumes leverage not yet demonstrated in the filings."))
-    for _fy, _n, _oi in below_line_years(rows):
-        alerts.append(("warning",
-                       f"FY{_fy}: net income {_n:,.0f}M exceeds operating income {_oi:,.0f}M. Something "
-                       "below the operating line — interest on cash, a tax benefit, a gain — is in net "
-                       "income, and ΔE is measured on that figure, so it is flattered. Operating margin, "
-                       "which the path projects, is not."))
+    _bl_note = below_line_note(below_line_years(rows))
+    if _bl_note:
+        alerts.append(("warning", _bl_note))
     if _measured is not None and len(_prof_fys) == 1 and not _dE_set_by_hand:
         alerts.append(("warning", f"ΔE is measured on a single profitable year, FY{_prof_fys[0]}. One year "
                                   "of stock-comp cost against one year of profit is a reading, not a rate."))
@@ -3634,22 +3671,26 @@ if years and ticker and st.session_state.get("inf_tk") == ticker:
     else:
         getattr(st, zkind)(f"**{zn}** at {ratio:.2f}x IV15 — implied {er_txt} a year.")
     _lad = ladder(par)
-    st.caption("Ladder: " + "  ·  ".join(f"IV{n} ${v:,.2f}" for n, v in _lad.items() if v == v))
+    st.caption(ladder_caption(_lad))
     st.caption(f"Stage 0: owners' earnings seeded at {OE0:,.0f}M (revenue {rev0:,.0f}M × margin {m0:.1%} × "
                f"(1 − {tax:.0%}) × ΔE {applied_dE:.1%}), growing {g0:.1%} a year for {int(s0_years)} years to "
                f"{rev0 * (1 + g_rev) ** int(s0_years) * terminal * (1 - tax) * applied_dE:,.0f}M "
-               f"(revenue {rev0 * (1 + g_rev) ** int(s0_years):,.0f}M at {terminal:.1%}). Then {tier_name}'s stages at {g1:.1%}.")
+               f"(revenue {rev0 * (1 + g_rev) ** int(s0_years):,.0f}M at {terminal:.1%}). Then {tier_name}'s stages at {g1:.1%}.\n\n"
+               "This is not tool 1's IV15 for the same ticker, and should not be. Tool 1 seeds owners' "
+               "earnings from forward net income × ΔE with no Stage 0; this page seeds from operating "
+               "income — above interest, tax and one-offs — and projects the margin. Same filings, same "
+               "year-by-year table, a different question.")
 
     # ── sensitivity ──
     st.write("**What the assumptions do to IV15** — terminal margin down the side, years across")
     _terms = [max(0.005, terminal - 0.05), terminal, terminal + 0.05]
     _yrs = list(dict.fromkeys([max(1, int(s0_years) - 2), int(s0_years), int(s0_years) + 2]))
     _grid = sensitivity(par, rev0, m0, tax, applied_dE, g_rev, _terms, _yrs, _gm_latest)
-    st.dataframe(numeric_frame(pd.DataFrame([{"Terminal margin": f"{mT:.1%}", **{f"{n}y": v for n, v in zip(_yrs, _grid[i])}}
-                               for i, mT in enumerate(_terms)])).style.format(
-        {f"{n}y": "${:,.2f}" for n in _yrs}, na_rep="above gross margin"), width='stretch', hide_index=True)
+    st.dataframe(pd.DataFrame([{"Terminal margin": f"{mT:.1%}",
+                                **{f"{n}y": cell(v, "${:,.2f}", "above gross margin") for n, v in zip(_yrs, _grid[i])}}
+                               for i, mT in enumerate(_terms)]), width='stretch', hide_index=True)
     st.caption("Every cell is the same engine call with one input moved. Market price for reference: "
-               f"${price:,.2f}.")
+               f"{d(price)}.")
 
     with st.expander("Notes and detail", expanded=False):
         for kind_, msg in alerts:
@@ -3684,7 +3725,7 @@ if years and ticker and st.session_state.get("inf_tk") == ticker:
             f"FILED   incremental, window    {_fmt_pct(_w_incr)}   pace {'—' if _pace is None else f'{_pace:+.1%}/yr'}\n"
             f"FILED   gross margin           {_fmt_pct(_gm_latest)}\n"
             f"FILED   runway                 {'no burn' if _rw is None else f'{_rw:.1f}y at {_burn:,.0f}M'}\n"
-            f"JUDGE   terminal margin        {terminal:.1%}   (seeded from {_t_src})\n"
+            f"JUDGE   terminal margin        {terminal:.1%}   (seed: {_t_src})\n"
             f"JUDGE   years to terminal      {int(s0_years)}\n"
             f"FILED   revenue growth         latest {_fmt_pct(_lat_g)}   3y CAGR {_fmt_pct(_cagr3)}\n"
             f"JUDGE   growth through stage 0 {g_rev:.1%}   after {g1:.1%}\n"
