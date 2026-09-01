@@ -2915,6 +2915,17 @@ class OpPooled:
     sum_base: float     # Σ operating income × (1 − tax)
     sum_G: float
     sum_omega: float
+    # Years in the pool whose share change could not be measured — no
+    # year-end count for the year or the one before. Carvana, 1 Sep 2026:
+    # no count in any of ten years, so V read zero everywhere, Ω came out
+    # at −1,751M (equity-raise proceeds read as option proceeds, minus
+    # withholding) and "ΔE" printed 185.4%. A ratio whose inputs are
+    # missing is not a measurement, and it must not seed the box.
+    missing_shares: list[int] = field(default_factory=list)
+
+    @property
+    def measurable(self) -> bool:
+        return not self.missing_shares
 
     @property
     def years(self) -> int:
@@ -2930,17 +2941,34 @@ class OpPooled:
 
 
 def operating_pool(years: list[Year], rows: list[TrendYear], since_fy: int | None,
-                   tax: float) -> OpPooled | None:
+                   tax: float, shares_by_fy: dict | None = None) -> OpPooled | None:
     by_fy = {r.fy: r for r in rows}
     kept = [(y, by_fy[y.fy]) for y in years
             if y.fy in by_fy and by_fy[y.fy].oi is not None and by_fy[y.fy].oi > 0
             and not y.excluded and (since_fy is None or y.fy >= since_fy)]
     if not kept:
         return None
+    sbf = shares_by_fy or {}
+    missing = ([y.fy for y, _ in kept if y.fy not in sbf or y.fy - 1 not in sbf]
+               if shares_by_fy is not None else [])
     return OpPooled(fys=[y.fy for y, _ in kept],
                     sum_base=sum(r.oi * (1.0 - tax) for _, r in kept),
                     sum_G=sum(y.G for y, _ in kept),
-                    sum_omega=sum(y.omega for y, _ in kept))
+                    sum_omega=sum(y.omega for y, _ in kept),
+                    missing_shares=missing)
+
+
+def shares_gate(shares: float) -> str:
+    """Nothing per share exists without a count, and the true SBC cost —
+    which needs the year-end count to price the shares delivered — cannot
+    be measured either. Carvana reads no count from any tag this reader
+    knows (a dual-class filer tagging each class with a dimension)."""
+    if shares > 0:
+        return ""
+    return ("No share count was read from any tag this reader knows — the notes above say which "
+            "years. Nothing per share can be computed, and the true SBC cost, which prices the "
+            "shares delivered at the year's average, cannot be measured without the year-end "
+            "count. Type the diluted count to continue; ΔE will still need setting by hand.")
 
 
 def profitable_pool(years: list[Year], since_fy: int | None = None) -> tuple[Pooled | None, list[int]]:
@@ -2970,6 +2998,13 @@ def dE_gate(box_dE: float, measured, fys: list[int]) -> tuple[str, float]:
     reader who types a positive ΔE takes Burry's judgement route and the
     assumptions block says so."""
     if box_dE <= 0:
+        if measured is not None and getattr(measured, "missing_shares", []):
+            _m = measured.missing_shares
+            return (f"ΔE cannot be measured: no year-end share count for FY{', FY'.join(str(f) for f in _m)}"
+                    + (" (or the year before)" if len(_m) == 1 else " (or the years before)")
+                    + ", so the shares delivered in those years priced at zero and the true SBC cost of "
+                    f"{measured.sum_omega:,.0f}M is not a measurement. The tag panel names what was read. "
+                    "Set ΔE yourself to price this; the assumptions block will record it as set by hand."), 0.0
         if measured is None:
             return ("No profitable year to measure ΔE on, and the box is at or below zero. "
                     "Set ΔE yourself to price this; the assumptions block will record it as "
@@ -3414,6 +3449,20 @@ def self_test() -> list[tuple[str, bool, str]]:
     _ub_r[3].oi = 5565.0
     out.append(("...no operating-profit year since the crossing → None",
                 operating_pool(_ub_y, _ub_r, 2026, 0.21) is None, ""))
+    _cv_y = [Year(fy=2024, N=404, G=90, dS=0, price=150, Ce=900), Year(fy=2025, N=800, G=97, dS=0, price=300, Ce=850)]
+    _cv_r = [TrendYear(2024, 13673.0, 990.0, None, "", None, None, 404, 0, None, ""),
+             TrendYear(2025, 20322.0, 1881.0, None, "", None, None, 800, 0, None, "")]
+    _cv = operating_pool(_cv_y, _cv_r, 2024, 0.21, shares_by_fy={})
+    out.append(("Carvana-shaped: no share count in any year → the pool is flagged unmeasurable, not a 185% ΔE",
+                _cv.missing_shares == [2024, 2025] and not _cv.measurable and _cv.dE > 1.25, f"raw {_cv.dE:.1%}, flagged"))
+    _cv_msg = dE_gate(0.0, _cv, _cv.fys)[0]
+    out.append(("...and the refusal names the missing years, not the 125% line",
+                _cv_msg.startswith("ΔE cannot be measured: no year-end share count for FY2024, FY2025"), _cv_msg[:80]))
+    out.append(("...a count for the year but not the one before still flags that year",
+                operating_pool(_cv_y, _cv_r, 2024, 0.21, shares_by_fy={2024: 200.0, 2025: 210.0}).missing_shares == [2024]
+                and operating_pool(_cv_y, _cv_r, 2024, 0.21, shares_by_fy={2023: 190.0, 2024: 200.0, 2025: 210.0}).measurable, ""))
+    out.append(("Shares gate: a zero count refuses before anything per share is printed",
+                shares_gate(0.0).startswith("No share count was read") and shares_gate(155.3) == "", ""))
     _gx = operating_pool([Year(fy=2025, N=447, G=50, dS=8, price=40)],
                          [TrendYear(2025, 616.0, 123.0, None, "", None, None, 447, 0, None, "")], 2025, 0.21)
     out.append(("...a tax-benefit year cannot flatter it: TGTX-shaped 447 net on 123 operating → ΔE on 97, not on 447",
@@ -3765,9 +3814,9 @@ if years and ticker and st.session_state.get("inf_tk") == ticker:
                           help="Normalised, not the filed rate. Burry normalises per company. Also the "
                                "rate ΔE below is measured at.") / 100.0
 
-    _measured = operating_pool(years, rows, _cross_fy, tax)
+    _measured = operating_pool(years, rows, _cross_fy, tax, pre.get("shares_by_fy", {}))
     _prof_fys = _measured.fys if _measured is not None else []
-    _dE_seed = _measured.dE if _measured is not None else 0.0
+    _dE_seed = _measured.dE if _measured is not None and _measured.measurable else 0.0
     dE_box = j2.number_input("ΔE (%)", value=round(_dE_seed * 100, 1), step=1.0,
                              help="Share of after-tax operating profit that reaches shareholders after the "
                                   "true cost of stock comp: (operating income × (1 − tax) + GAAP SBC − true "
@@ -3776,8 +3825,12 @@ if years and ticker and st.session_state.get("inf_tk") == ticker:
                                   "no tax benefit or gain below the operating line can flatter it; tool 1's "
                                   "ΔE on net income will read differently. Held constant through Stage 0, "
                                   "the conservative side.") / 100.0
-    _dE_set_by_hand = _measured is None or abs(dE_box - _measured.dE) > 5e-4
-    if _measured is not None:
+    _dE_set_by_hand = _measured is None or not _measured.measurable or abs(dE_box - _measured.dE) > 5e-4
+    if _measured is not None and not _measured.measurable:
+        j2.caption("Not measurable: no year-end share count for FY"
+                   + ", FY".join(str(f) for f in _measured.missing_shares)
+                   + " (or the year before), so the shares delivered priced at zero. Set it by hand.")
+    elif _measured is not None:
         j2.caption(f"Measured {_measured.dE:.1%} on after-tax operating income over "
                    f"FY{_prof_fys[0]}–FY{_prof_fys[-1]}"
                    + (" (one year)" if len(_prof_fys) == 1 else f" ({len(_prof_fys)} years)")
@@ -3805,13 +3858,14 @@ if years and ticker and st.session_state.get("inf_tk") == ticker:
                    f"{t.stage2_multiplier:.2f}x, terminal cap {t.terminal_growth_cap:.0%}.")
 
     # ── live gates on the boxes ──
+    _ref8b = shares_gate(shares)
     _ref9, applied_dE = dE_gate(dE_box, _measured, _prof_fys)
     _ref10 = gross_margin_gate(terminal, _gm_latest)
     _ref11 = runway_gate(int(s0_years), _rw, _burn, cash)
-    for _r in (_ref9, _ref10, _ref11):
+    for _r in (_ref8b, _ref9, _ref10, _ref11):
         if _r:
             st.error("**Refused.** " + _r)
-    if _ref9 or _ref10 or _ref11:
+    if _ref8b or _ref9 or _ref10 or _ref11:
         with st.expander("Notes and detail", expanded=False):
             for kind_, msg in alerts:
                 getattr(st, kind_)(msg)
@@ -3935,7 +3989,8 @@ if years and ticker and st.session_state.get("inf_tk") == ticker:
             f"JUDGE   growth through stage 0 {g_rev:.1%}   after {g1:.1%}\n"
             f"JUDGE   tax                    {tax:.0%}\n"
             f"JUDGE   ΔE                     {applied_dE:.1%}   "
-            + (f"set by hand (measured {_measured.dE:.1%}, FY{_prof_fys[0]}–{_prof_fys[-1]})" if _dE_set_by_hand and _measured is not None
+            + (f"set by hand (measured {_measured.dE:.1%}, FY{_prof_fys[0]}–{_prof_fys[-1]})" if _dE_set_by_hand and _measured is not None and _measured.measurable
+               else "set by hand (not measurable — share count missing)" if _dE_set_by_hand and _measured is not None
                else "set by hand (nothing to measure)" if _dE_set_by_hand
                else f"measured FY{_prof_fys[0]}–{_prof_fys[-1]}" + (" (capped)" if dE_was_capped(dE_box) else ""))
             + ", operating basis\n"
