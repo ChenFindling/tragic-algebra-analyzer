@@ -2877,27 +2877,52 @@ def net_to_common(N: float, n_tag: str, pdiv: float | None, pref: float | None
 
 def tangible_common(eq: float | None, pref: float | None, gw: float | None,
                     intan: float | None, last: dict[str, tuple[int, float]] | None = None
-                    ) -> tuple[float | None, str]:
-    """Equity − preferred − goodwill − intangibles, or a refusal naming the
-    line. A deduction the filer never tagged is genuinely zero. A deduction
-    the filer tagged in an earlier year and not this one is NOT zero, it is
-    unread — `last` carries {line: (fy, value)} for the year it was last
-    seen, so the refusal says what is missing and how big it was."""
+                    ) -> tuple[float | None, str, list[tuple[str, int, float]]]:
+    """Equity − preferred − goodwill − intangibles, the sentence that says
+    how, and the deductions that had to be carried.
+
+    A deduction the filer never tagged is genuinely zero. A deduction last
+    filed at ZERO has ended, and its absence afterwards is zero too —
+    Progressive redeemed its preferred in 2024, and filers drop the element
+    after one zero year. A deduction last filed at a non-zero value and not
+    tagged this year is neither: it is a stopped line, and BRIEF §3's rule
+    for stopped lines is to report the disagreement, never carry silently
+    or zero silently. Carrying it forward is the conservative side — a
+    lower book — so it is deducted as if unchanged and named in `carried`,
+    with the year and amount, so the page can print the size of what it
+    cannot place. Progressive, 1 Sep 2026: goodwill 228M last read FY2024
+    and intangibles 86M last read FY2022, 1% of a 30,000M base, refused
+    the whole page before this."""
     if eq is None:
-        return None, "shareholders' equity not read"
-    missing = []
+        return None, "shareholders' equity not read", []
+    ded, carried = 0.0, []
     for name, v in (("preferred stock", pref), ("goodwill", gw), ("intangibles", intan)):
-        # A line whose last filed value was ZERO has ended, and its absence
-        # afterwards is zero, not staleness. Progressive redeemed its
-        # preferred in February 2023; filers carry the element at 0 for one
-        # comparative year and then drop it, and without this the page would
-        # have refused every year after.
-        if v is None and last and name in last and last[name][1] != 0:
+        if v is not None:
+            ded += v
+        elif last and name in last and last[name][1] != 0:
             fy, val = last[name]
-            missing.append(f"{name} last read FY{fy} at {val:,.0f}M")
-    if missing:
-        return None, "; ".join(missing) + " — not tagged this year, so tangible equity is unread"
-    return eq - (pref or 0.0) - (gw or 0.0) - (intan or 0.0), "equity less preferred, goodwill and intangibles"
+            ded += val
+            carried.append((name, fy, val))
+    reason = "equity less preferred, goodwill and intangibles"
+    if carried:
+        reason += "; " + ", ".join(f"{n} carried from FY{fy} at {v:,.0f}M" for n, fy, v in carried) \
+                  + " (line stopped — deducted as if unchanged, the conservative side)"
+    return eq - ded, reason, carried
+
+
+def carry_sentence(rows: list) -> str:
+    """One warning for every year that carries a stopped deduction, with the
+    size of the disagreement per share in the latest year: if the line was
+    in fact written off, tangible book per share is that much higher."""
+    hit = [r for r in rows if r.carried]
+    if not hit:
+        return ""
+    yrs = "; ".join(f"FY{r.fy}: " + ", ".join(f"{n} {v:,.0f}M from FY{fy}" for n, fy, v in r.carried) for r in hit)
+    last = hit[-1]
+    size = sum(v for _, _, v in last.carried)
+    per = f" In FY{last.fy} that is {size:,.0f}M, {size / last.shares:.2f} per share: tangible book per share is at most that much higher than shown if the lines were written off." if last.shares else ""
+    return ("**A stopped balance-sheet line is carried forward here, deducted as if unchanged** — "
+            + yrs + "." + per + " The tag panel names the tag; the missing name is usually the whole fix.")
 
 
 def rote(n_common: float | None, tbv_now: float | None, tbv_prev: float | None) -> float | None:
@@ -2925,6 +2950,7 @@ class FinYear:
     aoci: float | None = None
     tbv: float | None = None       # tangible common equity, $M
     tbv_reason: str = ""
+    carried: list = field(default_factory=list)   # stopped deductions carried forward
     shares: float | None = None    # year-end, M
     wavg: float | None = None      # weighted-average diluted, M
     rote: float | None = None
@@ -2962,10 +2988,10 @@ def build_fin_years(years: list, fin: dict, bal: dict, shares_by_fy: dict,
                 seen[name] = (fy, b[key])
         f = fin.get(fy, {})
         nc, nr = net_to_common(y.N, n_tag, f.get("pdiv"), b["pref"])
-        tbv, tr = tangible_common(b["eq"], b["pref"], b["gw"], b["intan"],
-                                  {k: v for k, v in seen.items() if v[0] < fy})
+        tbv, tr, carried = tangible_common(b["eq"], b["pref"], b["gw"], b["intan"],
+                                           {k: v for k, v in seen.items() if v[0] < fy})
         r = FinYear(fy=fy, N=y.N, N_common=nc, n_reason=nr, eq=b["eq"], pref=b["pref"],
-                    gw=b["gw"], intan=b["intan"], aoci=b["aoci"], tbv=tbv, tbv_reason=tr,
+                    gw=b["gw"], intan=b["intan"], aoci=b["aoci"], tbv=tbv, tbv_reason=tr, carried=carried,
                     shares=shares_by_fy.get(fy), wavg=wavg_by_fy.get(fy),
                     div=abs(f.get("div") or 0.0), T=y.T, excluded=bool(y.excluded),
                     lines=f, bal=b)
@@ -3486,15 +3512,17 @@ def self_test() -> list[tuple[str, bool, str]]:
     # 4. Tangible common equity.
     ok("TBV: equity − preferred − goodwill − intangibles", tangible_common(1000, 100, 200, 50)[0] == 650)
     ok("TBV: deductions never tagged are zero", tangible_common(1000, None, None, None)[0] == 1000)
-    ok("TBV: goodwill tagged in an earlier year and not this one → refused, names the size",
-       tangible_common(1000, None, None, None, {"goodwill": (2022, 200.0)})[0] is None
-       and "200M" in tangible_common(1000, None, None, None, {"goodwill": (2022, 200.0)})[1])
+    _tc = tangible_common(1000, None, None, None, {"goodwill": (2022, 200.0)})
+    ok("TBV: goodwill tagged earlier and not this year → carried forward, deducted, named with year and size",
+       _tc[0] == 800 and "goodwill carried from FY2022 at 200M" in _tc[1] and _tc[2] == [("goodwill", 2022, 200.0)])
+    ok("TBV: a deduction read this year is never carried", tangible_common(1000, None, 150, None, {"goodwill": (2022, 200.0)})[2] == [])
     ok("TBV: no equity → refused", tangible_common(None, 0, 0, 0)[0] is None)
     ok("TBV: a deduction last filed at ZERO has ended — absence is zero, not staleness (PGR's redeemed preferred)",
        tangible_common(1000, None, None, None, {"preferred stock": (2023, 0.0)})[0] == 1000)
     _pg = build_fin_years([Year(fy=2022, N=10), Year(fy=2023, N=10), Year(fy=2024, N=10)], {},
                           {"eq": {2022: 900, 2023: 950, 2024: 1000}, "pref": {2022: 494, 2023: 0}}, {}, {}, N_TO_COMMON)
-    ok("Rows: preferred 494 → 0 → dropped reads TBV 406, 950, 1000", [r.tbv for r in _pg] == [406, 950, 1000])
+    ok("Rows: preferred 494 → 0 → dropped reads TBV 406, 950, 1000, nothing carried",
+       [r.tbv for r in _pg] == [406, 950, 1000] and not any(r.carried for r in _pg))
 
     # 5. ROTE on average tangible equity.
     ok("ROTE: net to common over the average of two year-ends", abs(rote(30, 120, 80) - 0.30) < 1e-12)
@@ -3510,13 +3538,23 @@ def self_test() -> list[tuple[str, bool, str]]:
     _sh = {2022: 10, 2023: 10, 2024: 10, 2025: 10}
     rows = build_fin_years(_ys, _fin, _bal, _sh, {}, "NetIncomeLoss")
     ok("Rows: FY2023 ROTE = (120−5)/avg(1100−100−50, 1000−100−50)", abs(rows[1].rote - 115 / 900) < 1e-12, f"{rows[1].rote:.4%}")
-    ok("Rows: FY2025 goodwill unread after FY2024 → TBV refused, ROTE refused",
-       rows[3].tbv is None and rows[3].rote is None and "FY2024" in rows[3].tbv_reason)
+    ok("Rows: FY2025 goodwill unread after FY2024 → carried at 50, TBV 1,300, ROTE stated",
+       rows[3].tbv == 1300 and rows[3].carried == [("goodwill", 2024, 50)] and abs(rows[3].rote - 175 / 1200) < 1e-12)
+    _cs = carry_sentence(rows)
+    ok("Carry sentence: names the year, the line, the amount and the per-share size",
+       "FY2025: goodwill 50M from FY2024" in _cs and "5.00 per share" in _cs and carry_sentence(rows[:3]) == "")
+    # PGR's shape: goodwill 228 to FY2024, intangibles 86 to FY2022, equity 30,323 in FY2025
+    _pgr = build_fin_years([Year(fy=f, N=1) for f in (2022, 2023, 2024, 2025)], {},
+                           {"eq": {2022: 15891, 2023: 20277, 2024: 25591, 2025: 30323}, "pref": {2022: 494, 2023: 494, 2024: 0},
+                            "gw": {2022: 228, 2023: 228, 2024: 228}, "intan": {2022: 86}}, {2025: 585.9}, {}, N_TO_COMMON)
+    ok("PGR shape: FY2025 TBV = 30,323 − 228 − 86 = 30,009, both lines carried, preferred ended at zero",
+       _pgr[-1].tbv == 30009 and [n for n, _, _ in _pgr[-1].carried] == ["goodwill", "intangibles"], f"{_pgr[-1].tbv}")
+    ok("PGR shape: 314M is 0.54 per share of disagreement", "0.54 per share" in carry_sentence(_pgr))
     ok("Rows: FY2022 ROTE refused (no prior year), TBV still stated", rows[0].rote is None and rows[0].tbv == 850)
     ok("Rows: TBVPS = TBV / year-end shares", rows[2].tbvps == 110.0)
     ok("Rows: dividends read positive from a negative cash-flow tag", rows[2].div == 25.0)
     m5, m10, n_ok = rote_medians(rows)
-    ok("Medians: two readable years, both medians on them", n_ok == 2 and m5 == m10)
+    ok("Medians: three readable years (FY2025 carried, not refused), both medians on them", n_ok == 3 and m5 == m10)
     ok("Terminal seed: the lower of the two medians", terminal_seed(0.28, 0.19) == 0.19 and terminal_seed(0.12, 0.15) == 0.12)
     ok("Terminal seed: refused when a median is missing", terminal_seed(0.28, None) is None)
 
@@ -3649,7 +3687,7 @@ def self_test() -> list[tuple[str, bool, str]]:
     # 13. Gates.
     ok("Gate: no share count → refused", "share count" in gate_shares(None) and gate_shares(23.3) == "")
     ok("Gate: negative tangible equity → refused, points to tool 1", "Tragic Algebra" in gate_tbv(-5.0, "", "insurer"))
-    ok("Gate: unread tangible equity → refused with the reason", "goodwill last read" in gate_tbv(None, "goodwill last read FY2024 at 200M", "bank"))
+    ok("Gate: unread tangible equity → refused with the reason", "not read" in gate_tbv(None, "shareholders' equity not read", "bank"))
     ok("Gate: positive tangible equity passes", gate_tbv(650.0, "", "bank") == "")
     ok("Gate: equity stale against net income → refused, names both years",
        "FY2023" in gate_equity_stale("2023", 2025) and "FY2025" in gate_equity_stale("2023", 2025) and gate_equity_stale("2025", 2025) == "")
@@ -3794,6 +3832,10 @@ if years and ticker and st.session_state.get("fin_tk") == ticker:
                        "investment yield already in the earnings, and is shown, not priced.")
         else:
             st.caption(f"Float not stated: {_lf[1]}.")
+        st.caption("Expense ratio here is acquisition-cost amortisation plus other underwriting "
+                   "expense over net premiums earned, GROSS of fee and other income. Progressive "
+                   "and Kinsale both net fees out of theirs, which puts the published combined "
+                   "ratio one to three points below this one; the loss ratio is the same on both.")
         if _uw[latest.fy]["cr"] is None:
             st.warning("**Combined ratio refused in the latest year.** " +
                        ("Premiums earned were not read." if latest.lines.get("nep") is None else
@@ -3855,6 +3897,9 @@ if years and ticker and st.session_state.get("fin_tk") == ticker:
     _unstated = [f"FY{r.fy}: {r.tbv_reason}" for r in rows if r.tbv is None]
     if _unstated:
         st.warning("**Tangible equity unread in some years** — " + "; ".join(_unstated) + ".")
+    _carry = carry_sentence(rows)
+    if _carry:
+        st.warning(_carry)
 
     # ══ 4. Tragic Algebra — tool 1's table, identical ═════════════════
     st.markdown("---")
