@@ -3885,8 +3885,11 @@ if years and ticker and st.session_state.get("fin_tk") == ticker:
                    "so every published ratio — loss included — sits below its cell here; and the "
                    "two-tag expense sum can run above the filed expense line when ceding-commission "
                    "offsets net into the line but not the tags (Kinsale FY2025: tags 352 against a "
-                   "filed 337). The published combined ratio lands one to three points under this "
-                   "column; the levels move together.")
+                   "filed 337). For filers whose expense line maps cleanly (Kinsale, Progressive) "
+                   "the published combined ratio lands one to three points under this column; a "
+                   "filer whose other-underwriting tag carries more than underwriting expense "
+                   "(Mercury, about fifteen points) sits much further below. The levels move "
+                   "together either way; compare trends here and levels in the 10-K.")
         if _uw[latest.fy]["cr"] is None:
             st.warning("**Combined ratio refused in the latest year.** " +
                        ("Premiums earned were not read." if latest.lines.get("nep") is None else
