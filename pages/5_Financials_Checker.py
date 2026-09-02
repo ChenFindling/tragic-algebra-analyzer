@@ -3913,10 +3913,15 @@ if years and ticker and st.session_state.get("fin_tk") == ticker:
             "FFO / share": cell(_ffops[r.fy], "{:.2f}"), "Dividend / share": cell(_dps.get(r.fy), "{:.2f}"),
             "Payout": pct(ratio_or_none(_dps.get(r.fy), _ffops[r.fy])), "Real estate": cell(r.bal.get("re"), _mf),
         } for r in rows]), width='stretch', hide_index=True)
-        st.caption(f"Nareit FFO from us-gaap tags; FY{latest.fy}: {_ffo[latest.fy][1]}. D&A is the "
-                   "filer's total line, which includes any non-real-estate depreciation. FFO per "
-                   "share is on weighted-average diluted shares, as the companies report it. AFFO "
-                   "is company-defined and not in us-gaap; the box below takes it from the 10-K.")
+        st.caption(f"Nareit FFO from us-gaap tags; FY{latest.fy}: {_ffo[latest.fy][1]}. D&A and "
+                   "impairments are the filer's TOTAL lines — non-real-estate depreciation and "
+                   "non-real-estate impairments included where the split is not tagged — and joint-"
+                   "venture and minority-interest adjustments are not read, so this column sits a "
+                   "cent or two from the published figure (Realty Income FY2025: 4.27 here against "
+                   "4.25 published, the gap being total impairments 471 against real-estate-only "
+                   "434, FF&E, JV and minority pieces). FFO per share is on weighted-average "
+                   "diluted shares, as the companies report it. AFFO is company-defined and not in "
+                   "us-gaap; the box below takes it from the 10-K.")
 
     # ══ 3. tangible book and the return on it ═════════════════════════
     st.markdown("---")
