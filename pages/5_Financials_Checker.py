@@ -2781,7 +2781,12 @@ def financial_class(sic: str, facts: dict) -> tuple[str, str]:
 FIN_BALANCE = {
     "eq":    ["StockholdersEquity",
               "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"],
-    "pref":  ["PreferredStockValue", "PreferredStockValueOutstanding"],
+    "pref":  ["PreferredStockValue", "PreferredStockValueOutstanding",
+              # JPMorgan, 1 Sep 2026: ~$27B of preferred under neither of the
+              # first two; dividends read, the stock line did not, and TBVPS
+              # printed $10/share high. Candidates for the big banks:
+              "PreferredStockLiquidationPreferenceValue",
+              "PreferredStockIncludingAdditionalPaidInCapital"],
     "gw":    ["Goodwill"],
     "intan": ["IntangibleAssetsNetExcludingGoodwill", "FiniteLivedIntangibleAssetsNet"],
     "aoci":  ["AccumulatedOtherComprehensiveIncomeLossNetOfTax"],
@@ -2797,7 +2802,8 @@ FIN_BALANCE = {
               "DebtSecuritiesAvailableForSaleExcludingAccruedInterest"],
     # banks
     "dep":   ["Deposits"],
-    "loans": ["LoansAndLeasesReceivableNetReportedAmount",
+    "loans": ["FinancingReceivableExceptAccruedInterestAfterAllowanceForCreditLoss",
+              "LoansAndLeasesReceivableNetReportedAmount",
               "LoansAndLeasesReceivableNetOfDeferredIncome", "NotesReceivableNet"],
     # REITs
     "re":    ["RealEstateInvestmentPropertyNet"],
@@ -2990,6 +2996,18 @@ def build_fin_years(years: list, fin: dict, bal: dict, shares_by_fy: dict,
         nc, nr = net_to_common(y.N, n_tag, f.get("pdiv"), b["pref"])
         tbv, tr, carried = tangible_common(b["eq"], b["pref"], b["gw"], b["intan"],
                                            {k: v for k, v in seen.items() if v[0] < fy})
+        # The mirror of net_to_common's third case. JPMorgan, 1 Sep 2026:
+        # preferred DIVIDENDS read 17 years, the preferred STOCK line zero,
+        # and tangible book printed $10/share high with nothing firing. If a
+        # preferred dividend is paid this year and no preferred-stock line
+        # was ever read (an ended-at-zero line is read), the deduction is
+        # missing, not zero, and tangible COMMON equity cannot be stated.
+        pdiv_v = f.get("pdiv")
+        if tbv is not None and b["pref"] is None and "preferred stock" not in seen and pdiv_v:
+            tbv, tr = None, (f"preferred dividends of {abs(pdiv_v):,.0f}M are paid this year but no "
+                             "preferred-stock line was read, so the deduction is missing, not zero, "
+                             "and tangible common equity cannot be stated — the tag panel's Preferred "
+                             "stock row names the tags tried")
         r = FinYear(fy=fy, N=y.N, N_common=nc, n_reason=nr, eq=b["eq"], pref=b["pref"],
                     gw=b["gw"], intan=b["intan"], aoci=b["aoci"], tbv=tbv, tbv_reason=tr, carried=carried,
                     shares=shares_by_fy.get(fy), wavg=wavg_by_fy.get(fy),
@@ -3521,6 +3539,26 @@ def self_test() -> list[tuple[str, bool, str]]:
        tangible_common(1000, None, None, None, {"preferred stock": (2023, 0.0)})[0] == 1000)
     _pg = build_fin_years([Year(fy=2022, N=10), Year(fy=2023, N=10), Year(fy=2024, N=10)], {},
                           {"eq": {2022: 900, 2023: 950, 2024: 1000}, "pref": {2022: 494, 2023: 0}}, {}, {}, N_TO_COMMON)
+    _jp = build_fin_years([Year(fy=2024, N=58471), Year(fy=2025, N=57048)],
+                          {2024: {"pdiv": -1259}, 2025: {"pdiv": -1099}},
+                          {"eq": {2024: 344758, 2025: 362438}, "gw": {2024: 52565, 2025: 52731},
+                           "intan": {2024: 1700, 2025: 1300}}, {2025: 2696.2}, {}, "NetIncomeLoss")
+    ok("JPM shape: preferred dividends read, preferred stock never tagged → TBV refused, not printed high",
+       all(r.tbv is None for r in _jp) and "preferred dividends of 1,099M" in _jp[-1].tbv_reason
+       and "cannot be stated" in _jp[-1].tbv_reason and all(r.rote is None for r in _jp))
+    ok("JPM shape: N to common still stated (the dividend IS read)", _jp[-1].N_common == 57048 - 1099)
+    ok("JPM shape: the gate carries the preferred sentence",
+       "preferred dividends" in gate_tbv(_jp[-1].tbv, _jp[-1].tbv_reason, "bank"))
+    _ok0 = build_fin_years([Year(fy=2024, N=100), Year(fy=2025, N=100)], {2025: {"pdiv": -5}},
+                           {"eq": {2024: 1000, 2025: 1100}, "pref": {2024: 0}}, {}, {}, "NetIncomeLoss")
+    ok("Mirror rule: preferred ended at zero earlier → a later dividend does not refuse (redemption-year trickle)",
+       _ok0[-1].tbv == 1100)
+    ok("Mirror rule: no dividend, no preferred line → nothing fires (Kinsale)",
+       build_fin_years([Year(fy=2025, N=100)], {2025: {}}, {"eq": {2025: 500}}, {}, {}, "NetIncomeLoss")[0].tbv == 500)
+    ok("Reader lists: the CECL loans tag and the two bank preferred tags are in FIN_BALANCE",
+       "FinancingReceivableExceptAccruedInterestAfterAllowanceForCreditLoss" in FIN_BALANCE["loans"]
+       and "PreferredStockLiquidationPreferenceValue" in FIN_BALANCE["pref"]
+       and "PreferredStockIncludingAdditionalPaidInCapital" in FIN_BALANCE["pref"])
     ok("Rows: preferred 494 → 0 → dropped reads TBV 406, 950, 1000, nothing carried",
        [r.tbv for r in _pg] == [406, 950, 1000] and not any(r.carried for r in _pg))
 
@@ -3832,10 +3870,14 @@ if years and ticker and st.session_state.get("fin_tk") == ticker:
                        "investment yield already in the earnings, and is shown, not priced.")
         else:
             st.caption(f"Float not stated: {_lf[1]}.")
-        st.caption("Expense ratio here is acquisition-cost amortisation plus other underwriting "
-                   "expense over net premiums earned, GROSS of fee and other income. Progressive "
-                   "and Kinsale both net fees out of theirs, which puts the published combined "
-                   "ratio one to three points below this one; the loss ratio is the same on both.")
+        st.caption("Ratios here are over net earned premiums alone, with the expense numerator "
+                   "summed from the acquisition-cost and other-underwriting tags. Kinsale and "
+                   "Progressive compute ALL their ratios over net earned premiums PLUS fee income, "
+                   "so every published ratio — loss included — sits below its cell here; and the "
+                   "two-tag expense sum can run above the filed expense line when ceding-commission "
+                   "offsets net into the line but not the tags (Kinsale FY2025: tags 352 against a "
+                   "filed 337). The published combined ratio lands one to three points under this "
+                   "column; the levels move together.")
         if _uw[latest.fy]["cr"] is None:
             st.warning("**Combined ratio refused in the latest year.** " +
                        ("Premiums earned were not read." if latest.lines.get("nep") is None else
