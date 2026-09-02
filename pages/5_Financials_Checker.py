@@ -3004,7 +3004,12 @@ def build_fin_years(years: list, fin: dict, bal: dict, shares_by_fy: dict,
         # missing, not zero, and tangible COMMON equity cannot be stated.
         pdiv_v = f.get("pdiv")
         if tbv is not None and b["pref"] is None and "preferred stock" not in seen and pdiv_v:
-            tbv, tr = None, (f"preferred dividends of {abs(pdiv_v):,.0f}M are paid this year but no "
+            # money_fmt picks the precision: Universal's preferred dividend is a
+            # few thousand dollars, and "{:,.0f}M" printed it as "preferred
+            # dividends of 0M are paid", which describes a zero that would not
+            # have refused (1 Sep 2026).
+            _pd = money_fmt([abs(pdiv_v)]).format(abs(pdiv_v))
+            tbv, tr = None, (f"preferred dividends of {_pd}M are paid this year but no "
                              "preferred-stock line was read, so the deduction is missing, not zero, "
                              "and tangible common equity cannot be stated — the tag panel's Preferred "
                              "stock row names the tags tried")
@@ -3544,7 +3549,7 @@ def self_test() -> list[tuple[str, bool, str]]:
                           {"eq": {2024: 344758, 2025: 362438}, "gw": {2024: 52565, 2025: 52731},
                            "intan": {2024: 1700, 2025: 1300}}, {2025: 2696.2}, {}, "NetIncomeLoss")
     ok("JPM shape: preferred dividends read, preferred stock never tagged → TBV refused, not printed high",
-       all(r.tbv is None for r in _jp) and "preferred dividends of 1,099M" in _jp[-1].tbv_reason
+       all(r.tbv is None for r in _jp) and "preferred dividends of 1,099" in _jp[-1].tbv_reason
        and "cannot be stated" in _jp[-1].tbv_reason and all(r.rote is None for r in _jp))
     ok("JPM shape: N to common still stated (the dividend IS read)", _jp[-1].N_common == 57048 - 1099)
     ok("JPM shape: the gate carries the preferred sentence",
@@ -3553,6 +3558,10 @@ def self_test() -> list[tuple[str, bool, str]]:
                            {"eq": {2024: 1000, 2025: 1100}, "pref": {2024: 0}}, {}, {}, "NetIncomeLoss")
     ok("Mirror rule: preferred ended at zero earlier → a later dividend does not refuse (redemption-year trickle)",
        _ok0[-1].tbv == 1100)
+    _tiny = build_fin_years([Year(fy=2016, N=99)], {2016: {"pdiv": -0.013}}, {"eq": {2016: 371}}, {}, {}, "NetIncomeLoss")
+    ok("Mirror rule: a thousands-sized preferred dividend refuses with its size, never '0M' (UVE FY2016)",
+       _tiny[0].tbv is None and "0.01" in _tiny[0].tbv_reason and "of 0M" not in _tiny[0].tbv_reason,
+       _tiny[0].tbv_reason[:60])
     ok("Mirror rule: no dividend, no preferred line → nothing fires (Kinsale)",
        build_fin_years([Year(fy=2025, N=100)], {2025: {}}, {"eq": {2025: 500}}, {}, {}, "NetIncomeLoss")[0].tbv == 500)
     ok("Reader lists: the CECL loans tag and the two bank preferred tags are in FIN_BALANCE",
