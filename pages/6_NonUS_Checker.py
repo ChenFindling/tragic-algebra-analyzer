@@ -2080,6 +2080,15 @@ PASTE_COLS = ["FY", "Net income", "GAAP SBC", "Buybacks", "Tax withheld",
               "Stock issued for acquisitions", "Revenue", "Exclude"]
 
 
+def _excl(v) -> bool:
+    """The Exclude cell, tolerant of CSV round-trips: only an actual yes
+    excludes. PAGE 6 EDIT (3 Sep 2026) — bool("False") is True in Python,
+    and the first dry-run of a saved CSV excluded every year it carried."""
+    if isinstance(v, str):
+        return v.strip().lower() in ("true", "yes", "1", "x")
+    return bool(v)
+
+
 def _cell(v) -> float | None:
     """Blank is NOT zero. None where the cell was left empty or unreadable."""
     if v is None or (isinstance(v, str) and not v.strip()):
@@ -2171,7 +2180,7 @@ def paste_build(rows: list[dict]) -> tuple[list[Year], list[str], list[str]]:
             Ce=abs(_cell(r.get("Option proceeds")) or 0.0),
             price=price or 0.0,
             A=abs(_cell(r.get("Stock issued for acquisitions")) or 0.0),
-            excluded="excluded by you" if bool(r.get("Exclude")) else ""))
+            excluded="excluded by you" if _excl(r.get("Exclude")) else ""))
 
     if len(years) < 4:
         errors.append(f"Only {len(years)} full year(s). ΔE is a pooled figure over roughly ten "
@@ -2230,6 +2239,27 @@ def paste_build(rows: list[dict]) -> tuple[list[Year], list[str], list[str]]:
                     "(millions vs thousands, or price in cents) rather than a valuation. "
                     "Check the row.")
     return years, notes, errors
+
+
+def calendar_avg(closes: dict[str, float]) -> dict[int, float]:
+    """Average of monthly closes per CALENDAR year, from 'YYYY-MM' keys.
+
+    PAGE 6 EDIT (3 Sep 2026). The paste grid knows fiscal years only as
+    integers, so the mapping assumes calendar fiscal years — true for CTS
+    Eventim and most of Europe. A filer with an odd year end should type
+    its prices; the caption says so. Years with only some months present
+    (the far end of Yahoo's history) average what exists, which the
+    engine tolerates the same way it tolerates tool 1's missing months.
+    """
+    by_year: dict[int, list[float]] = {}
+    for k, v in closes.items():
+        try:
+            y = int(k[:4])
+        except (ValueError, TypeError):
+            continue
+        if v and v > 0:
+            by_year.setdefault(y, []).append(float(v))
+    return {y: sum(vs) / len(vs) for y, vs in by_year.items() if vs}
 
 
 def paste_growth(revs: list[tuple[int, float]]) -> tuple[float, float | None, float | None, str]:
@@ -3729,6 +3759,20 @@ def self_test() -> list[tuple[str, bool, str]]:
                 paste_growth([])[0] == 0.08 and "placeholder" in paste_growth([])[3],
                 "8% with the note"))
 
+    # 24b (3 Sep 2026, EVD build): the calendar averager behind the paste
+    # price fetch. Twelve months average exactly; a partial far-end year
+    # averages what exists; junk keys and dead months are skipped.
+    _cl = {f"2023-{m:02d}": 100.0 + m for m in range(1, 13)}
+    _cl.update({"2015-11": 50.0, "2015-12": 54.0, "bad-key": 1.0, "2024-01": 0.0})
+    _ca = calendar_avg(_cl)
+    out.append(("A CSV round-trip's 'False' string does not exclude; only a real yes does",
+                not _excl("False") and not _excl("") and not _excl(None) and not _excl(0)
+                and _excl("True") and _excl("true") and _excl(True) and _excl("x"),
+                "bool('False') is True in Python; the parser is not fooled"))
+    out.append(("Calendar averages: full year exact, partial year honest, junk skipped",
+                abs(_ca[2023] - 106.5) < 1e-9 and abs(_ca[2015] - 52.0) < 1e-9
+                and 2024 not in _ca, f"2023 {_ca[2023]:.2f}, 2015 {_ca[2015]:.2f}"))
+
     # 25. The IFRS names are actually wired in — a wiring test, not a claim
     #     that the names are right: only a live tag panel can show that.
     out.append(("IFRS candidates are wired: revenue, diluted shares, cash, borrowings",
@@ -3872,9 +3916,61 @@ if PASTE:
     _p_debt = bc3.number_input("Total debt (M)", value=0.0, step=10.0,
                                help="Short-term plus long-term borrowings, latest year end.")
 
+    _p_sym = st.text_input(
+        "Price symbol (optional)", placeholder="EVD.DE",
+        help="A listing in the SAME currency as your figures. Its monthly closes "
+             "fill the average price of every year you left blank — a price you "
+             "typed always wins. Assumes calendar fiscal years; type prices "
+             "yourself for an odd year end. The quote's own currency field is "
+             "checked and a mismatch refuses the fetch rather than converting.").strip()
     if st.button("Compute", type="primary"):
         _rows = _edited.to_dict("records")
+        _px_notes: list[str] = []
+        _px_err = ""
+        if _p_sym:
+            try:
+                _cl, _sp, _pxc = _monthly_closes(_p_sym)
+            except Exception:
+                _cl, _pxc = {}, ""
+            if _cl and _pxc and _pxc != _p_ccy:
+                _px_err = ("Prices from " + _p_sym + " were refused: that listing quotes "
+                           f"in {_pxc} while your figures are in {_p_ccy}, and this page "
+                           "never converts a currency. Your typed prices are unaffected.")
+            elif _cl:
+                _avg = calendar_avg(_cl)
+                _filled = []
+                for _r in _rows:
+                    _fy = _cell(_r.get("FY"))
+                    if (_fy is not None and _cell(_r.get("Avg price")) is None
+                            and int(_fy) in _avg
+                            and _cell(_r.get("Net income")) is not None):
+                        _r["Avg price"] = round(_avg[int(_fy)], 2)
+                        _filled.append(int(_fy))
+                if _filled:
+                    _px_notes.append(
+                        "Average prices for " + ", ".join(f"FY{f}" for f in sorted(_filled))
+                        + f" are means of {_p_sym}'s monthly closes over each CALENDAR "
+                        "year, fetched at Compute time — the same monthly series the "
+                        "fetched pages use. Typed counts must be on today's post-split "
+                        "basis, because these closes are. Prices you typed yourself "
+                        "were left untouched.")
+                if abs(_p_now) < 1e-9:
+                    _cp = current_price(_p_sym)
+                    if _cp and (not _cp[1] or _cp[1] == _p_ccy):
+                        _p_now = float(_cp[0])
+                        _px_notes.append(
+                            f"The current price box was empty, so today's {_p_sym} "
+                            f"quote ({_p_now:,.2f} {_p_ccy}) seeded it. Type over it "
+                            "to use your own.")
+            elif _p_sym:
+                _px_notes.append(
+                    f"No price history could be fetched from {_p_sym} just now — "
+                    "usually a temporary failure at the price source. Blank price "
+                    "cells stay unpriced; typed prices are used as given.")
         _p_years, _p_notes, _p_errors = paste_build(_rows)
+        if _px_err:
+            _p_errors.append(_px_err)
+        _p_notes = _px_notes + _p_notes
         if not _p_name.strip():
             _p_errors.append("Give the company a name — the tables need a label.")
         if len(_p_ccy) != 3 or not _p_ccy.isalpha():
@@ -3911,7 +4007,7 @@ if PASTE:
                       "revenue": _p_rev_latest, "cagr3": _p_cagr3, "leases": 0.0,
                       "ticker": _p_name.strip().upper(), "shares": _p_shares,
                       "growth": _p_growth, "sic": "", "sic_desc": "", "financial": False,
-                      "currency": _p_ccy, "px_sym": "", "px_ccy": _p_ccy,
+                      "currency": _p_ccy, "px_sym": _p_sym, "px_ccy": _p_ccy,
                       "ads_ratio": 1.0, "typed": True, "price_seed": _p_now}
             st.session_state.update(nu_years=_p_years, nu_notes=_p_notes, nu_pre=_p_pre,
                                     nu_tk=_p_name.strip().upper())
