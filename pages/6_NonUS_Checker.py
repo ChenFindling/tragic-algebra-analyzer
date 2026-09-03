@@ -2030,6 +2030,24 @@ def resolve_ticker(ticker: str, cmap: dict) -> str | None:
     return None
 
 
+def price_mismatch_refusal(sym: str, px_ccy: str, ccy: str) -> str:
+    """The sentence for a price quote in the wrong currency.
+
+    PAGE 6 EDIT (3 Sep 2026, after the first live runs). Names the symbol,
+    both currencies, the fix, and the one way this actually happens in
+    practice: a symbol left in the box from the previous company. The form
+    keeps its fields between runs, so ASML's .AS symbol was still there
+    when GRAB was typed — the refusal is right, and it must say why.
+    """
+    return (f"cannot be priced from {sym}: that listing quotes in {px_ccy} while the "
+            f"filings are in {ccy}, and this page never converts a currency. If "
+            f"'{sym}' is left over from the previous company you looked at, clear the "
+            "price-symbol box — it keeps its value between runs. Otherwise give the "
+            f"symbol of a listing that trades in {ccy} (Amsterdam is .AS, Frankfurt "
+            ".DE, Paris .PA, London .L), or type the figures into the paste mode, "
+            "prices included.")
+
+
 def ads_gate(ccy: str, ads_ratio: float) -> str:
     """Non-empty when the ADS route is being misused, with the sentence.
 
@@ -2459,14 +2477,7 @@ def load(ticker: str, n_years: int = 10, price_symbol: str = "", ads_ratio: floa
     except Exception:
         closes, splits = {}, {}
     if closes and _px_ccy and _px_ccy != ccy:
-        closes, splits = {}, {}
-        notes.append(
-            f"**Prices refused.** {_px_sym} quotes in {_px_ccy} while the filings are in "
-            f"{ccy}, and this page never converts a currency. Every price-dependent figure "
-            "below — the stock-comp cost of share changes, market cap, P/IV15 — is therefore "
-            "unmeasured rather than wrong. Give the symbol of a listing that trades in "
-            f"{ccy} (Amsterdam is .AS, Frankfurt .DE), or paste average prices in the "
-            "paste mode.")
+        raise ValueError(f"{ticker} " + price_mismatch_refusal(_px_sym, _px_ccy, ccy))
     if closes and abs(ads_ratio - 1.0) > 1e-9:
         closes = {k: v / ads_ratio for k, v in closes.items()}
         notes.append(
@@ -3641,6 +3652,18 @@ def self_test() -> list[tuple[str, bool, str]]:
     out.append(("Per-ordinary price is the ADS price over the ratio (LEGN: 5.20/2)",
                 abs(5.20 / 2.0 - 2.60) < 1e-9, f"{5.20/2.0:.2f}"))
 
+    # 20b (3 Sep 2026, after the first live runs). Chen ran GRAB with
+    # asml.as still in the symbol box; the refusal was right and its
+    # explanation blamed a temporary price-source failure. The sentence
+    # must name the symbol, both currencies and the leftover-box cause.
+    _pm = price_mismatch_refusal("ASML.AS", "EUR", "USD")
+    out.append(("A wrong-currency quote is refused naming the symbol, both currencies "
+                "and the leftover-box cause",
+                "ASML.AS" in _pm and "EUR" in _pm and "USD" in _pm
+                and "left over from the previous company" in _pm
+                and "never converts" in _pm,
+                "sentence carries the diagnosis, not a retry hint"))
+
     # 21. The paste builder drives the identical engine: Burry's published
     #     Alphabet inputs typed as rows — share counts constructed so their
     #     differences are his dS — must reproduce the pinned figures above.
@@ -3916,21 +3939,23 @@ if not PASTE:
         ticker = st.text_input("Stock ticker",
                                placeholder="ASML · SAP · GRAB · LEGN — press Enter"
                                ).upper().strip()
-        f1, f2 = st.columns(2)
-        px_sym_in = f1.text_input(
+        px_sym_in = st.text_input(
             "Price symbol (optional)", placeholder="ASML.AS · SAP.DE",
-            help="Where prices come from. Leave blank to use the US listing — right for a "
-                 "USD filer, refused for a EUR one, because the quote's own currency field "
-                 "is checked against the filing currency and a mismatch drops prices "
-                 "rather than converting them. Amsterdam is .AS, Frankfurt .DE, Paris "
-                 ".PA, London .L.").strip()
-        ads_in = f2.number_input(
-            "ADS ratio (ordinary shares per ADS)", value=1.0, min_value=0.01, step=0.5,
-            help="USD filers only, and a judgement input — no filing tags it. The "
-                 "depositary section of the 20-F states it: Legend Biotech is 2. Prices "
-                 "are divided by it so every figure is per ORDINARY share; wrong ratio, "
-                 "wrong market cap, by exactly that factor. It converts units, never "
-                 "currency, so it is refused on a non-USD filer.")
+            help="Where prices come from — it keeps its value between runs, so clear it "
+                 "when you change company. Leave blank to use the US listing: right for "
+                 "a USD filer, refused for a EUR one, because the quote's own currency "
+                 "field is checked against the filing currency and a mismatch refuses "
+                 "prices rather than converting them. Amsterdam is .AS, Frankfurt .DE, "
+                 "Paris .PA, London .L.").strip()
+        with st.expander("ADS ratio — only for a USD filer priced as ADSs"):
+            ads_in = st.number_input(
+                "Ordinary shares per ADS", value=1.0, min_value=0.01, step=0.5,
+                help="A judgement input — no filing tags it. The depositary section of "
+                     "the 20-F states it: Legend Biotech is 2. Prices are divided by it "
+                     "so every figure is per ORDINARY share; wrong ratio, wrong market "
+                     "cap, by exactly that factor. It converts units, never currency, "
+                     "so it is refused on a non-USD filer. Leave at 1 unless the 20-F "
+                     "says otherwise.")
         submitted = st.form_submit_button("Evaluate", type="primary")
 
 tier_name = st.selectbox("Moat tier", list(AICT), index=2,
