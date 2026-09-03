@@ -2262,6 +2262,40 @@ def calendar_avg(closes: dict[str, float]) -> dict[int, float]:
     return {y: sum(vs) / len(vs) for y, vs in by_year.items() if vs}
 
 
+def paste_price_gate(years: list) -> tuple[str, str]:
+    """(error, note) for price coverage of typed years.
+
+    PAGE 6 EDIT (3 Sep 2026). Prices only matter where the share count
+    moved or cash bought shares back: V = T + P x dS. If no included year
+    has either, an unpriced table is fully measurable and the note says
+    why. If prices matter and NO included year is priced, dE would print
+    near 100% for any company at all — refused, same reasoning as the
+    fetched pages' coverage refusal. In between, dE is a floor, named.
+    """
+    inc = [y for y in years if not y.excluded]
+    if not inc:
+        return "", ""
+    matter = [y for y in inc if y.T > 0 or abs(y.dS) > 1e-9]
+    priced = [y for y in inc if y.price > 0]
+    if not matter:
+        return "", ("No year in this table has a share-count change or a buyback, so "
+                    "average prices cannot affect the true SBC cost — Ω is measurable "
+                    "without them and ΔE below is exact, not a floor. This is the "
+                    "no-dilution case (CTS Eventim's), said out loud rather than "
+                    "assumed.")
+    if not priced:
+        return (f"Every year is unpriced while {len(matter)} year(s) have share-count "
+                "changes or buybacks. The market value of shares handed to employees "
+                "is priced at zero, so ΔE would read near 100% for any company at "
+                "all. Give a price symbol above (a listing in the same currency) or "
+                "type average prices, then Compute again."), ""
+    if len(priced) < (len(inc) + 1) // 2:
+        return "", (f"Only {len(priced)} of {len(inc)} included years carry a price, "
+                    "and years without one contribute no share-change cost. Treat ΔE "
+                    "as a floor, not a measurement, until more years are priced.")
+    return "", ""
+
+
 def paste_growth(revs: list[tuple[int, float]]) -> tuple[float, float | None, float | None, str]:
     """(growth seed, raw latest, 3y cagr, note) from typed revenue.
 
@@ -3765,6 +3799,22 @@ def self_test() -> list[tuple[str, bool, str]]:
     _cl = {f"2023-{m:02d}": 100.0 + m for m in range(1, 13)}
     _cl.update({"2015-11": 50.0, "2015-12": 54.0, "bad-key": 1.0, "2024-01": 0.0})
     _ca = calendar_avg(_cl)
+    _evd_like = [Year(fy=2020 + i, N=100.0, price=0.0) for i in range(5)]
+    _ge, _gn = paste_price_gate(_evd_like)
+    out.append(("Unpriced years with no dilution and no buybacks compute, saying why",
+                _ge == "" and "cannot affect" in _gn and "exact, not a floor" in _gn,
+                "the no-dilution case is named, not assumed"))
+    _dil = [Year(fy=2020 + i, N=100.0, dS=2.0, price=0.0) for i in range(5)]
+    _ge2, _ = paste_price_gate(_dil)
+    out.append(("...but unpriced years WITH dilution are refused, same as the fetched pages",
+                "near" in _ge2 and "100%" in _ge2 and "price symbol" in _ge2,
+                "refusal names the fix"))
+    _half = [Year(fy=2020 + i, N=100.0, dS=2.0, price=(10.0 if i < 2 else 0.0))
+             for i in range(5)]
+    _ge3, _gn3 = paste_price_gate(_half)
+    out.append(("...and thin price coverage on a diluter is called a floor by name",
+                _ge3 == "" and "floor" in _gn3, "2 of 5 priced → floor note"))
+
     out.append(("A CSV round-trip's 'False' string does not exclude; only a real yes does",
                 not _excl("False") and not _excl("") and not _excl(None) and not _excl(0)
                 and _excl("True") and _excl("true") and _excl(True) and _excl("x"),
@@ -3863,7 +3913,21 @@ if PASTE:
                                  "included. Nothing is ever converted.").upper().strip()
     _p_now = pc3.number_input("Current share price", value=0.0, step=0.01, min_value=0.0,
                               help="Today's price on the home exchange, in the same "
-                                   "currency as the figures. The verdict divides by it.")
+                                   "currency as the figures. The verdict divides by it. "
+                                   "Leave 0 with a price symbol below and today's quote "
+                                   "seeds it at Compute.")
+    # PAGE 6 EDIT (3 Sep 2026, after Chen's EVD run): this box used to
+    # render just above the Compute button, below the balance inputs and
+    # off the bottom of the screen — Chen never saw it and the whole fetch
+    # never ran. An input that matters sits beside its siblings.
+    _p_sym = st.text_input(
+        "Price symbol (optional — fills blank average prices)", placeholder="EVD.DE",
+        help="A listing in the SAME currency as your figures. At Compute, its monthly "
+             "closes fill the average price of every year you left blank — a price you "
+             "typed always wins — and today's quote seeds the current price if it is 0. "
+             "Assumes calendar fiscal years; type prices yourself for an odd year end. "
+             "The quote's own currency field is checked and a mismatch refuses the "
+             "fetch rather than converting.").strip()
 
     st.markdown(
         "**One row per fiscal year, in millions of the currency** (shares in millions, "
@@ -3872,7 +3936,9 @@ if PASTE:
         "proceeds, acquisition stock and revenue it means zero, which is common. Add one "
         "EARLIER year with only its fiscal year and share count so the first full year has "
         "a real share change. Tick **Exclude** for a year you judge unusable (a split or a "
-        "share-funded deal the jump rule below did not catch)."
+        "share-funded deal the jump rule below did not catch). The three balance "
+        "boxes below the table are typed by hand — the CSV carries per-year rows "
+        "only, and the balance is one snapshot at the latest year end."
     )
     if "nu_paste_gen" not in st.session_state:
         st.session_state["nu_paste_gen"] = 0
@@ -3916,13 +3982,6 @@ if PASTE:
     _p_debt = bc3.number_input("Total debt (M)", value=0.0, step=10.0,
                                help="Short-term plus long-term borrowings, latest year end.")
 
-    _p_sym = st.text_input(
-        "Price symbol (optional)", placeholder="EVD.DE",
-        help="A listing in the SAME currency as your figures. Its monthly closes "
-             "fill the average price of every year you left blank — a price you "
-             "typed always wins. Assumes calendar fiscal years; type prices "
-             "yourself for an odd year end. The quote's own currency field is "
-             "checked and a mismatch refuses the fetch rather than converting.").strip()
     if st.button("Compute", type="primary"):
         _rows = _edited.to_dict("records")
         _px_notes: list[str] = []
@@ -3947,6 +4006,12 @@ if PASTE:
                         _r["Avg price"] = round(_avg[int(_fy)], 2)
                         _filled.append(int(_fy))
                 if _filled:
+                    # PAGE 6 EDIT (3 Sep 2026, after Chen's EVD run): the
+                    # fetched averages are written back into the grid, so
+                    # what the engine used is what the table shows — a grid
+                    # of blanks above a computed verdict is a mismatch.
+                    st.session_state["nu_paste_df"] = pd.DataFrame(_rows)[PASTE_COLS]
+                    st.session_state["nu_paste_gen"] += 1
                     _px_notes.append(
                         "Average prices for " + ", ".join(f"FY{f}" for f in sorted(_filled))
                         + f" are means of {_p_sym}'s monthly closes over each CALENDAR "
@@ -3971,6 +4036,11 @@ if PASTE:
         if _px_err:
             _p_errors.append(_px_err)
         _p_notes = _px_notes + _p_notes
+        _g_err, _g_note = paste_price_gate(_p_years)
+        if _g_err:
+            _p_errors.append(_g_err)
+        if _g_note:
+            _p_notes.insert(0, _g_note)
         if not _p_name.strip():
             _p_errors.append("Give the company a name — the tables need a label.")
         if len(_p_ccy) != 3 or not _p_ccy.isalpha():
