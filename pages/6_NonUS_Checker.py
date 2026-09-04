@@ -2030,6 +2030,56 @@ def resolve_ticker(ticker: str, cmap: dict) -> str | None:
     return None
 
 
+def _yahoo_search(q: str) -> list[str]:
+    """Candidate symbols for a company name, from the quote provider."""
+    try:
+        r = requests.get("https://query1.finance.yahoo.com/v1/finance/search",
+                         params={"q": q, "quotesCount": 8, "newsCount": 0},
+                         headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+        return [it.get("symbol", "") for it in r.json().get("quotes", [])
+                if it.get("symbol")]
+    except Exception:
+        return []
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def home_listing(name: str, ticker: str, ccy: str) -> str:
+    """The first discoverable listing that quotes in the filing currency.
+
+    PAGE 6 EDIT (4 Sep 2026). Search by company name, then by ticker;
+    probe each candidate with one quote request and read the response's
+    own currency field. First match wins and is named in the run's
+    notes; no match returns "" and the caller refuses honestly. The
+    probe IS the gate — nothing is trusted because of where it trades,
+    only because of what currency it answers in.
+    """
+    seen: set[str] = set()
+    for q in (name, ticker):
+        if not q:
+            continue
+        for sym in _yahoo_search(q):
+            if sym in seen or sym.upper() == ticker.upper():
+                continue
+            seen.add(sym)
+            cp = current_price(sym)
+            if cp and cp[1] == ccy:
+                return sym
+    return ""
+
+
+def no_home_listing_refusal(name: str, ccy: str) -> str:
+    """PAGE 6 EDIT (4 Sep 2026): the sentence for the Spotify case."""
+    return (f"files in {ccy}, but no listing quoting in {ccy} could be found — every "
+            "discoverable listing trades in another currency. Spotify is the canonical "
+            "case: EUR filings, one listing on earth, in New York, in dollars. This "
+            "page never converts a currency — Burry excludes ASML from his own index "
+            "for FX alone — so it cannot price this stock. If a home listing exists "
+            "that the search missed, type its symbol in the price-symbol box. "
+            "Otherwise the one honest route is the paste mode with average prices you "
+            f"convert into {ccy} yourself: then the FX judgement is yours, stated, "
+            "rather than the page's, silent.")
+
+
 def price_mismatch_refusal(sym: str, px_ccy: str, ccy: str) -> str:
     """The sentence for a price quote in the wrong currency.
 
@@ -2534,7 +2584,24 @@ def load(ticker: str, n_years: int = 10, price_symbol: str = "", ads_ratio: floa
     _ag = ads_gate(ccy, ads_ratio)
     if _ag:
         raise ValueError(f"{ticker} " + _ag)
-    _px_sym = (price_symbol or "").strip() or ticker
+    _px_sym = (price_symbol or "").strip()
+    if not _px_sym:
+        if ccy == "USD":
+            _px_sym = ticker
+        else:
+            # PAGE 6 EDIT (4 Sep 2026): the old default here was the US
+            # ticker, which quotes USD and so was guaranteed to be refused
+            # for every non-USD filer — Chen hit it three times in a row.
+            _name = str(facts.get("entityName") or "")
+            _px_sym = home_listing(_name, ticker, ccy)
+            if not _px_sym:
+                raise ValueError(f"{ticker} " + no_home_listing_refusal(_name or ticker, ccy))
+            notes.append(
+                f"Prices come from {_px_sym}, found automatically: the quote provider "
+                f"was searched for {_name or ticker}'s listings and each candidate was "
+                f"probed until one answered in {ccy}, the filing currency. The symbol "
+                "is in the assumptions block; type a different one in the price-symbol "
+                "box to override.")
     _px_ccy = ""
     try:
         closes, splits, _px_ccy = _monthly_closes(_px_sym)
@@ -3715,6 +3782,15 @@ def self_test() -> list[tuple[str, bool, str]]:
                 "units conversion, never currency"))
     out.append(("Per-ordinary price is the ADS price over the ratio (LEGN: 5.20/2)",
                 abs(5.20 / 2.0 - 2.60) < 1e-9, f"{5.20/2.0:.2f}"))
+
+    # 25 (4 Sep 2026, after the NVO/RACE/SPOT runs). The no-home-listing
+    #    refusal must name the currency, the Spotify case, and both exits.
+    _nh = no_home_listing_refusal("Spotify Technology S.A.", "EUR")
+    out.append(("A filer with no listing in its filing currency is refused naming "
+                "the case and both exits",
+                "EUR" in _nh and "Spotify" in _nh and "paste mode" in _nh
+                and "never converts" in _nh and "yours" in _nh,
+                "the FX judgement is the user's, stated, or nobody's"))
 
     # 20b (3 Sep 2026, after the first live runs). Chen ran GRAB with
     # asml.as still in the symbol box; the refusal was right and its
