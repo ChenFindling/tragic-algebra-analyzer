@@ -1736,6 +1736,58 @@ def _cover_asof(facts: dict) -> str:
     return best
 
 
+def confirm_band_splits(shares: dict[int, float],
+                        splits: dict[str, float]) -> tuple[dict[int, float], str]:
+    """Restate in-band split jumps that a market split event confirms.
+
+    PAGE 6 EDIT (4 Sep 2026). Only ratios split_adjust's band lets
+    through (1.6x to 2.85x, and their reciprocals), only on established
+    bases (> 25M shares), only rounding to a whole ratio within 12%, and
+    ONLY when the fetched price history carries a split event of that
+    same rounded ratio. Every earlier year is multiplied; iterates so
+    two boundaries restate independently.
+    """
+    if not shares or not splits:
+        return shares, ""
+    event_ratios = set()
+    for r in splits.values():
+        if r > 1:
+            event_ratios.add(float(round(r)))
+        elif r > 0:
+            event_ratios.add(1.0 / float(round(1.0 / r)))
+    out = dict(shares)
+    fys = sorted(out)
+    fixed = []
+    for i in range(len(fys) - 1, 0, -1):
+        a, b = out[fys[i - 1]], out[fys[i]]
+        if a <= 25e6 or b <= 0:
+            continue
+        ratio = b / a
+        m = 0.0
+        if 1.6 <= ratio <= 2.85 and abs(ratio / round(ratio) - 1) <= 0.12:
+            m = float(round(ratio))
+        elif 1 / 2.85 <= ratio <= 1 / 1.6 and abs((1 / ratio) / round(1 / ratio) - 1) <= 0.12:
+            m = 1.0 / float(round(1 / ratio))
+        if m and m in event_ratios:
+            for fy in fys[:i]:
+                out[fy] = out[fy] * m
+            fixed.append((fys[i], m))
+    if not fixed:
+        return shares, ""
+    what = ", ".join((f"{m:g}-for-1 at the FY{fy} boundary" if m > 1
+                      else f"1-for-{1/m:g} at the FY{fy} boundary")
+                     for fy, m in fixed)
+    return out, (
+        "A split hid inside the tolerance band: the share count jumps by about "
+        + what + " — a ratio the split detector deliberately tolerates because "
+        "organic changes reach it, but the price history itself records a split "
+        "event of exactly that ratio, so earlier counts were restated onto the "
+        "current basis. Without this, the jump year is excluded as a phantom "
+        "capital event and every earlier year prices pre-split counts against "
+        "split-adjusted prices. The boundary year is where filings stop "
+        "restating comparatives, not the split date itself.")
+
+
 def split_asof(share_fys, fy_ends: dict, cover_asof: str = "",
                use_cover: bool = False) -> str:
     """The date the share counts in use were filed as of. BRIEF ITEM 1c.
@@ -2054,6 +2106,7 @@ def home_listing(name: str, ticker: str, ccy: str) -> str:
     only because of what currency it answers in.
     """
     seen: set[str] = set()
+    matches: list[str] = []
     for q in (name, ticker):
         if not q:
             continue
@@ -2063,8 +2116,29 @@ def home_listing(name: str, ticker: str, ccy: str) -> str:
             seen.add(sym)
             cp = current_price(sym)
             if cp and cp[1] == ccy:
-                return sym
-    return ""
+                matches.append(sym)
+                if len(matches) >= 3:
+                    break
+        if len(matches) >= 3:
+            break
+    if not matches:
+        return ""
+    if len(matches) == 1:
+        return matches[0]
+    # Among currency matches, the one with the deepest monthly history
+    # wins: a primary home listing beats a thin secondary venue, and for
+    # a company with no home-currency primary at all (Spotify), the
+    # least-thin secondary is chosen and the coverage machinery judges it.
+    best, best_n = matches[0], -1
+    for sym in matches:
+        try:
+            _c, _sp, _pc = _monthly_closes(sym)
+            n = len(_c) if _pc == ccy else -1
+        except Exception:
+            n = -1
+        if n > best_n:
+            best, best_n = sym, n
+    return best
 
 
 def no_home_listing_refusal(name: str, ccy: str) -> str:
@@ -2659,6 +2733,13 @@ def load(ticker: str, n_years: int = 10, price_symbol: str = "", ads_ratio: floa
     if _route_extra:
         notes.append(_route_extra)
 
+    # PAGE 6 EDIT (4 Sep 2026): the 2:1 pass, market-confirmed. See
+    # confirm_band_splits — Novo Nordisk's 2023 2-for-1 sat inside the
+    # band and read as an acquisition until this.
+    shares_out, _cbs_note = confirm_band_splits(shares_out, splits)
+    if _cbs_note:
+        notes.append(_cbs_note)
+
     # NetIncomeLoss is profit attributable to the parent; ProfitLoss includes
     # what belongs to minority holders of consolidated subsidiaries. Filling
     # one from the other is right when the gap is a tagging change and slightly
@@ -2720,6 +2801,14 @@ def load(ticker: str, n_years: int = 10, price_symbol: str = "", ads_ratio: floa
     _unpriced = sum(1 for y in years if y.price <= 0)
     _pc = price_coverage_refusal(len(years), _unpriced, bool(closes))
     if _pc:
+        # PAGE 6 EDIT (4 Sep 2026): when prices came from a non-US venue,
+        # thin quote history at that venue is the usual cause and the
+        # refusal must say so instead of blaming the window's age.
+        if _px_sym.upper() != ticker.upper():
+            _pc += (f" On this page prices came from {_px_sym}; a secondary "
+                    f"listing often carries only a few years of quotes. If a "
+                    f"deeper {ccy} listing exists, type its symbol in the "
+                    "price-symbol box.")
         raise ValueError(f"{ticker} cannot be valued from these filings — " + _pc)
 
     # An IPO converts preferred to common and sells new stock in one go. Valuing
@@ -3054,7 +3143,8 @@ def load(ticker: str, n_years: int = 10, price_symbol: str = "", ads_ratio: floa
                    "read" if _treas else "not tagged"},
         {"Line": "— Shares: diluted average", "Years read": len(_wv),
          "Latest year": _latest_fy(_wv),
-         "XBRL tag": "WeightedAverageNumberOfDilutedSharesOutstanding",
+         "XBRL tag": (_wavg_ser[max(_wavg_ser)][0] if _wavg_ser
+                      else "WeightedAverageNumberOfDilutedSharesOutstanding"),
          "Status": "used" if _share_route.startswith("the weighted") else
                    "read" if _wv else "not tagged"},
     ] + [
@@ -3782,6 +3872,23 @@ def self_test() -> list[tuple[str, bool, str]]:
                 "units conversion, never currency"))
     out.append(("Per-ordinary price is the ADS price over the ratio (LEGN: 5.20/2)",
                 abs(5.20 / 2.0 - 2.60) < 1e-9, f"{5.20/2.0:.2f}"))
+
+    # 26 (4 Sep 2026, after the NVO run). A 2:1 split inside the band is
+    #     restated only when the market's own split events confirm it.
+    _nvo = {2019: 2380e6, 2020: 2330e6, 2021: 4600e6, 2022: 4480e6}
+    _fixed, _fn = confirm_band_splits(dict(_nvo), {"2023-09-13": 2.0})
+    out.append(("A 2:1 jump inside the band, confirmed by a split event, restates history",
+                abs(_fixed[2020] - 4660e6) < 1 and abs(_fixed[2019] - 4760e6) < 1
+                and abs(_fixed[2021] - 4600e6) < 1 and "2-for-1" in _fn,
+                f"2020 → {_fixed[2020]/1e6:,.0f}M, boundary named"))
+    _same, _no = confirm_band_splits(dict(_nvo), {})
+    out.append(("...the same jump with NO market split event stays as filed",
+                _same == _nvo and _no == "",
+                "an all-stock merger has no split event — the exclusion rule keeps it"))
+    _small, _ns = confirm_band_splits({2020: 10e6, 2021: 20e6}, {"2021-06-01": 2.0})
+    out.append(("...and a small base is never restated — listings double, splits don't",
+                _small == {2020: 10e6, 2021: 20e6} and _ns == "",
+                "25M-share floor holds"))
 
     # 25 (4 Sep 2026, after the NVO/RACE/SPOT runs). The no-home-listing
     #    refusal must name the currency, the Spotify case, and both exits.
