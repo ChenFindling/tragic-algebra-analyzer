@@ -2288,6 +2288,33 @@ def load(ticker: str, n_years: int = 10):
                 "withholding tag. Filers that retire shares on repurchase report it this way. "
                 "The amounts are withholding-sized, so they were accepted.")
 
+    if "ProceedsFromIssuanceOfCommonStock" in tag_sources.get("Ce", []):
+        # Carvana, 1 Sep 2026 (page 4's run): the broad issuance-proceeds tag
+        # was the only Ce name that answered, and it carried the ATM equity
+        # programme — hundreds of millions a year of capital raising read as
+        # option and ESPP proceeds. Omega came out at -1,751M over FY2024-25:
+        # the raise was credited to owners' earnings. Same disease, same cure
+        # as the treasury-as-withholding gate above: genuine employee proceeds
+        # are small next to the GAAP charge; a raise is not. Sized against the
+        # charge where there is one, net income where there is not. The gate
+        # runs only when the broad tag is a Ce source at all — the narrow
+        # names alone are never gated, matching the Cw gate's own behaviour.
+        _ce_capped = 0
+        for y in years:
+            if not y.Ce:
+                continue
+            if (y.Ce > 3 * y.G) if y.G > 0 else (y.Ce > 0.10 * abs(y.N)):
+                y.Ce, _ce_capped = 0.0, _ce_capped + 1
+        if _ce_capped:
+            notes.append(
+                f"An issuance-proceeds line was read as option and ESPP proceeds and rejected "
+                f"in {_ce_capped} year(s): it was more than three times the GAAP stock-comp "
+                "charge, or — where no charge was tagged to size it against — more than a "
+                "tenth of net income. Proceeds of that size are an equity raise — an offering "
+                "or an ATM programme — tagged under the broad issuance name, not employee "
+                "exercises, and crediting them to owners' earnings would book the raise as "
+                "profit. Those years' true SBC cost is computed without the credit.")
+
     # MOVED BELOW THE WITHHOLDING GUARD, 26 Aug 2026. `omega` is a live property
     # over `Cw`, so this ratio changes the moment the guard above zeroes a
     # rejected withholding line — and the note used to be computed before that
@@ -3761,6 +3788,18 @@ def self_test() -> list[tuple[str, bool, str]]:
     ok("Sanity: FIN_ROWS covers every FIN_BALANCE key once", sorted(k for _, k in FIN_ROWS) == sorted(FIN_BALANCE))
     ok("Sanity: the standalone SIC table names all three classes and the promotion rule",
        all(w in FINANCIAL_SIC_TABLE for w in ("banks", "insurers", "REITs", "deposits", "refused", "ordinary")))
+    # 16. The broad issuance-proceeds tag gated like the treasury line
+    #     (Carvana, 1 Sep 2026). A raise the size of Carvana's is rejected;
+    #     ordinary exercise proceeds and the small no-charge case survive.
+    def _ce_gate_keeps(Ce, G, N):
+        return not ((Ce > 3 * G) if G > 0 else (Ce > 0.10 * abs(N)))
+    out.append(("An ATM raise read as employee proceeds is rejected",
+                not _ce_gate_keeps(900.0, 80.0, 210.0) and not _ce_gate_keeps(600.0, 0.0, 450.0),
+                "CVNA-shaped: 900 against a charge of 80; 600 with no charge against 450 income"))
+    out.append(("...ordinary exercise proceeds are not",
+                _ce_gate_keeps(60.0, 100.0, 500.0) and _ce_gate_keeps(30.0, 0.0, 450.0),
+                "60 against a 100 charge; 30 with no charge against 450 income"))
+
     return out
 
 
