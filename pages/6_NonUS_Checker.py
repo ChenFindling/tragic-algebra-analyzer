@@ -2568,13 +2568,14 @@ def load(ticker: str, n_years: int = 10, price_symbol: str = "", ads_ratio: floa
     #   3. the weighted-average diluted count — fixes the LEVEL but not the
     #      CHANGE, because an average lags the buyback that caused it, so
     #      V = max(0, T + P·dS) turns into noise
+    _wv_src: list[str] = []
     _wavg_ser = _annual(facts, ["WeightedAverageNumberOfDilutedSharesOutstanding",
                                 "WeightedAverageNumberOfSharesOutstandingDiluted",
                                 "WeightedAverageNumberOfSharesOutstandingBasic"],
                         # PAGE 6 EDIT (3 Sep 2026): the IFRS EPS denominators,
                         # diluted before basic — same ordering judgement.
                         ["AdjustedWeightedAverageShares", "WeightedAverageShares"],
-                        None, True, unit=ccy)
+                        _wv_src, True, unit=ccy)
     _wv = {fy: v[2] for fy, v in _wavg_ser.items() if v[2] and v[2] > 0}
     _cover = _cover_shares(facts, series["N"])
     # Read separately from shares_out purely so the tag panel can report how many
@@ -3191,7 +3192,7 @@ def load(ticker: str, n_years: int = 10, price_symbol: str = "", ads_ratio: floa
                    "read" if _treas else "not tagged"},
         {"Line": "— Shares: diluted average", "Years read": len(_wv),
          "Latest year": _latest_fy(_wv),
-         "XBRL tag": (_wavg_ser[max(_wavg_ser)][0] if _wavg_ser
+         "XBRL tag": (_wv_src[0] if _wv_src
                       else "WeightedAverageNumberOfDilutedSharesOutstanding"),
          "Status": "used" if _share_route.startswith("the weighted") else
                    "read" if _wv else "not tagged"},
