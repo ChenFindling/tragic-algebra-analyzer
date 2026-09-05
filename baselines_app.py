@@ -3773,13 +3773,29 @@ def summary_line(rows: list[Row]) -> str:
 
 # ── The pins ──────────────────────────────────────────────────────────
 #
-# INTERNAL SET — ships unpinned. The first Run is the capture step
-# (settled with Chen, 6 Sep 2026): the page prints twelve capture blocks,
-# Chen pastes them back as text, and each is verified against the record
-# before it goes in — XPEL against ΔE 102.5/101.6 with any gap explained
-# by named gate-rejected Ce years, BBW's window showing the 2018 hole,
-# CROX against the seed-663.7 shape, PDEX against the FY2017–26 /
-# IV15-79.44 vintage. Only then does "every pin passes" mean anything.
+# INTERNAL SET — pinned from the 5 Sep 2026 capture run (Chen ran, pasted
+# the blocks as text; each verified against the record before pasting):
+# PDEX at the FY2017–26 / IV15-79.44 vintage; XPEL 101.60/102.53 against
+# the recorded 101.6/102.5 (the Ce gate rejected nothing on XPEL); CROX
+# latest N −81.198 = the recorded −81.2; TGTX 3y 56.67 = page 4's 56.7
+# and PLTR 3y −378.88 = page 4's −378.9 (cross-page agreement, the
+# shared-reader promise); BBW's window tuple shows the 2018 hole; KNSL
+# 3y 92.68 = the figure recorded 1 Sep as "92.7" (that record was the
+# 3-year figure — full-period 90.0 first captured here) with net cash
+# zeroed by the financial gate; AAPL 93.63 = the recorded 93.6.
+#
+# NFLX and BBW are HELD UNPINNED: their full-period ΔE moved from the
+# 29–30 Aug record (82.6 → 80.59 and 98.8 → 98.10), in the Ce gate's
+# direction but not yet decomposed into named rejected years — and a
+# move without decomposition stops the pinning (the PDEX rule). Their
+# tool-1 gate notes settle it; pin from a fresh capture then.
+#
+# GRAB's figures pin the KNOWN-UNREAD state on purpose (G = 0, net cash
+# = 0: the US-GAAP fill lists read nothing on an IFRS filer, exactly as
+# its banner warns). The day the shared reader learns IFRS names
+# (§5.5 E), these rows FAIL — correctly — and get re-pinned deliberately.
+# Same logic as RDDT's shares: a refusal pin is a pin on today's honest
+# behaviour, not an endorsement of the figures.
 #
 # IV15 is deliberately NOT pinned (Chen, 6 Sep 2026): the IVParams
 # assembly is inline UI code on tool 1, and rebuilding it here could
@@ -3787,14 +3803,146 @@ def summary_line(rows: list[Row]) -> str:
 # extracting that assembly into a testable helper. Every reader bug this
 # page hunts shows in Ω and ΔE before it shows in IV15.
 
-_INTERNAL = ["PDEX", "XPEL", "CROX", "TGTX", "BBW", "PLTR",   # figure pins
-             "KNSL", "RDDT", "GRAB",                          # refusal pins
-             "AAPL", "NFLX", "CLMB"]                          # added 6 Sep: AAPL/NFLX
-             # fetched for the master set anyway and the most-reconciled
-             # rows in the project; CLMB because its 4-for-1 restatement
-             # is exactly the class of thing reader changes break.
-
-PINS: list[Pin] = [Pin(ticker=t, pin_set="internal") for t in _INTERNAL] + [
+PINS: list[Pin] = [
+    Pin(ticker='PDEX', pin_set='internal', pinned='2026-09-05',
+        latest_fy=2026, window=(2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026),
+        core={
+            'G': 0.688,
+            'N': 13.662,
+            'T': 3.408,
+            'dE_3y': 106.49638888673734,
+            'dE_full': 100.59760136949944,
+            'net_cash': -8.017000000000001,
+            'omega_sum': 4.954140336490473,
+            'price': 45.67166614532471,
+            'shares': 3.186135,
+        },
+        refusals=()),
+    Pin(ticker='XPEL', pin_set='internal', pinned='2026-09-05',
+        latest_fy=2025, window=(2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025),
+        core={
+            'G': 2.753,
+            'N': 51.226,
+            'T': 2.999,
+            'dE_3y': 102.53257755622809,
+            'dE_full': 101.59631262452791,
+            'net_cash': 50.405812,
+            'omega_sum': 4.075751299437841,
+            'price': 36.55499982833862,
+            'shares': 27.604183,
+        },
+        refusals=()),
+    Pin(ticker='CROX', pin_set='internal', pinned='2026-09-05',
+        latest_fy=2025, window=(2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025),
+        core={
+            'G': 36.701,
+            'N': -81.198,
+            'T': 582.32,
+            'dE_3y': 100.92327592100871,
+            'dE_full': 97.878400824446,
+            'net_cash': -1100.531,
+            'omega_sum': 304.8536504332514,
+            'price': 94.18416659037273,
+            'shares': 50.2,
+        },
+        refusals=()),
+    Pin(ticker='TGTX', pin_set='internal', pinned='2026-09-05',
+        latest_fy=2025, window=(2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025),
+        core={
+            'G': 64.67,
+            'N': 447.179,
+            'T': 91.24,
+            'dE_3y': 56.67115057011536,
+            'net_cash': -44.539000000000016,
+            'omega_sum': 601.3755744286758,
+            'price': 34.7195831934611,
+            'shares': 155.305953,
+        },
+        refusals=()),
+    # BBW — held, see the block comment above. Full-period ΔE 98.8 → 98.10.
+    Pin(ticker='BBW', pin_set='internal'),
+    Pin(ticker='PLTR', pin_set='internal', pinned='2026-09-05',
+        latest_fy=2025, window=(2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025),
+        core={
+            'G': 684.033,
+            'N': 1625.033,
+            'T': 74.985,
+            'dE_3y': -378.88278539838456,
+            'net_cash': 7177.043000000001,
+            'omega_sum': 19660.783988132833,
+            'price': 140.20833460489908,
+            'shares': 2391.192,
+        },
+        refusals=()),
+    Pin(ticker='KNSL', pin_set='internal', pinned='2026-09-05',
+        latest_fy=2025, window=(2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025),
+        core={
+            'G': 17.884,
+            'N': 503.614,
+            'T': 89.998,
+            'dE_3y': 92.67941468119245,
+            'dE_full': 90.00631442308543,
+            'net_cash': 0.0,
+            'omega_sum': 239.35022448378183,
+            'price': 437.54500071207684,
+            'shares': 23.145751,
+        },
+        refusals=('fin_class:insurer',)),
+    Pin(ticker='RDDT', pin_set='internal', pinned='2026-09-05',
+        latest_fy=2025, window=(2022, 2023, 2024, 2025),
+        core={
+            'G': 343.18,
+            'N': 529.721,
+            'T': 0.0,
+            'net_cash': 2476.8109999999997,
+            'omega_sum': 273.412,
+            'price': 176.38916714986166,
+            'shares': 0.0,
+        },
+        refusals=('shares_read_nothing',)),
+    Pin(ticker='GRAB', pin_set='internal', pinned='2026-09-05',
+        latest_fy=2025, window=(2019, 2020, 2021, 2022, 2023, 2024, 2025),
+        core={
+            'G': 0.0,
+            'N': 268.0,
+            'T': 274.0,
+            'net_cash': 0.0,
+            'omega_sum': 500.0,
+            'price': 5.090833306312561,
+            'shares': 0.0,
+        },
+        refusals=('shares_read_nothing', 'note:foreign_filer')),
+    Pin(ticker='AAPL', pin_set='internal', pinned='2026-09-05',
+        latest_fy=2025, window=(2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025),
+        core={
+            'G': 12863.0,
+            'N': 112010.0,
+            'T': 90711.0,
+            'dE_3y': 94.22577096520112,
+            'dE_full': 93.63020948587395,
+            'net_cash': 41742.0,
+            'omega_sum': 128245.80265914675,
+            'price': 227.653078519381,
+            'shares': 14773.26,
+        },
+        refusals=()),
+    # NFLX — held, see the block comment above. Full-period ΔE 82.6 → 80.59.
+    Pin(ticker='NFLX', pin_set='internal'),
+    Pin(ticker='CLMB', pin_set='internal', pinned='2026-09-05',
+        latest_fy=2025, window=(2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025),
+        core={
+            'G': 4.775,
+            'N': 21.33,
+            'T': 2.05,
+            'dE_3y': 89.54375440808366,
+            'dE_full': 85.7590401249931,
+            'net_cash': 36.372,
+            'omega_sum': 38.62808518735687,
+            'price': 28.62291669845581,
+            'shares': 18.442472,
+        },
+        refusals=()),
+] + [
     # MASTER SET — Burry's NDX-97 per-company ΔE as published (AP SBC
     # pp. 41–42, extracted in burry-audit.md; windows as he published
     # them). Compared by his-window pooling above, ±1.5 points.
@@ -4034,6 +4182,34 @@ def baselines_self_test() -> list[tuple[str, bool, str]]:
     row = evaluate_master(googl, s_x, "")
     out.append(("...and the master detail counts it inside his window",
                 "1 year(s) excluded" in row.detail, row.detail[:90]))
+
+    # 10b. The live pin table is itself a fixture — the property promised
+    #      when the comparator shipped, real the day the first pins landed:
+    #      every pasted pin identity-checks against its own figures, and
+    #      every pinned key, edited by one step ($1 on filed figures),
+    #      fails alone and by name.
+    live = [p for p in PINS if p.pin_set == "internal" and p.latest_fy]
+
+    def _self_summary(p, core):
+        return Summary(ticker=p.ticker, latest_fy=p.latest_fy, window=p.window,
+                       core=dict(core), refusals=p.refusals, years=[], excluded={})
+    ok_id = bool(live)
+    for p in live:
+        v = evaluate_internal(p, _self_summary(p, p.core), "", today).verdict
+        ok_id &= v in ("PASS", "REFUSED AS PINNED")
+    out.append((f"Live table: all {len(live)} pasted pins compare clean "
+                "against their own figures", ok_id, f"{len(live)} pins"))
+    ok_pert, n_keys = bool(live), 0
+    for p in live:
+        for key in p.core:
+            step = 1e-6 if key in FILED_KEYS else tol_for(p, key) * 1.2
+            bad = [k for k, _, okk in
+                   compare(p, _self_summary(p, {**p.core, key: p.core[key] + step}))
+                   if not okk]
+            ok_pert &= bad == [key]
+            n_keys += 1
+    out.append((f"Live table: each of {n_keys} pinned keys, edited by one step, "
+                "fails alone and by name", ok_pert, "the §1 perturbation, per key"))
 
     # 11. The verdict summary line counts every bucket the brief names.
     rows = [Row("a", "internal", "", "PASS"), Row("b", "internal", "", "FAIL"),
