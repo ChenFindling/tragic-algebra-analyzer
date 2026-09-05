@@ -3439,6 +3439,57 @@ def d(x, dp=2):
     return f"\\${x:,.{dp}f}"
 
 
+def _page_footer() -> None:
+    """The glossary, the self-test button and the disclaimer. A refused
+    ticker st.stop()s before the bottom of the script, and these used to
+    die with it (Chen, GRAB, 5 Sep 2026) — the reader on a refused page is
+    exactly the reader who may want to run the checks. Called before every
+    stop and once at the bottom."""
+    st.divider()
+    _r1, _r2 = st.columns(2)
+    with _r1:
+        with st.expander("What the numbers mean", expanded=False):
+            st.markdown(
+                "**ΔE** — the share of each reported dollar of profit that actually reaches "
+                "shareholders once the true cost of stock compensation is charged. Below about "
+                "87%, a company needs 15% reported growth just to hold value per share steady.\n\n"
+                "**IV15** — the price at which the stock would return roughly 15% a year over "
+                "15+ years. A buy target from a cash flow model, not an earnings multiple.\n\n"
+                "**IV8 to IV10** — closer to what the business is actually worth. Buybacks below "
+                "that range add value per share; above it they destroy it.\n\n"
+                "**Expected return** — what today's price implies you'd earn annually, held long "
+                "term. The most useful single figure, since it needs no target return chosen "
+                "in advance.\n\n"
+                "**Moat tier** — sets how long growth lasts and how fast it fades, not the "
+                "starting rate. Fortress holds growth 8 years; Wood gets 2."
+            )
+
+    with _r2:
+        with st.expander("Verify the engine"):
+            st.caption(
+                "These run the formulas on **Burry's own published inputs** and check the output "
+                "against his published results. They confirm the maths is right.\n\n"
+                "They will not match what you get by entering a ticker above. A live run uses "
+                "today's filings, today's share count, growth seeded from revenue, and the tier "
+                "defaults — different inputs, so a different answer. Both land in a similar range; "
+                "they are simply answering different questions."
+            )
+            if st.button("Run checks"):
+                _results = self_test()
+                _sev, _line = test_summary(_results)
+                getattr(st, _sev)(_line)
+                for name, ok, got in _results:
+                    st.write(("✅ " if ok else "❌ ") + f"{name} — {got}")
+                st.caption("Tolerances: dollar figures within $1, ratios within half a point. "
+                           "Burry rounds published prices and share counts, so exact equality "
+                           "is not achievable and would be a suspicious thing to claim.")
+
+    st.caption(
+        "Research aid, not financial advice. Outputs depend on estimates you supply. Method "
+        "follows Michael Burry's published writing; this project is independent and is not "
+        "affiliated with or endorsed by him or Scion Asset Management."
+    )
+
 # Each page needs its own config. Streamlit only runs the entrypoint when you
 # land on it, so arriving here by deep link — which is what shared links do —
 # would otherwise leave the default favicon and title. Must be the first
@@ -3584,6 +3635,7 @@ if mode == "Watchlist":
         with st.expander(f"{len(failed)} could not be read"):
             for f in failed:
                 st.write("· " + f)
+    _page_footer()
     st.stop()
 
 if "years" not in st.session_state:
@@ -3876,6 +3928,7 @@ if years and ticker and st.session_state.get("tk") == ticker:
         with st.expander("Notes and detail — why nothing was read", expanded=True):
             for kind_, msg in alerts:
                 getattr(st, kind_)(msg)
+        _page_footer()
         st.stop()
 
     mcap = shares * price / 1000.0
@@ -3910,10 +3963,12 @@ if years and ticker and st.session_state.get("tk") == ticker:
 
     if iv15 != iv15:
         st.error("Required return must exceed the tier's terminal growth cap.")
+        _page_footer()
         st.stop()
     if iv15 < 0:
         st.error(f"**Not investible.** No share price — not even one cent — delivers 15% a year "
                  f"to a long-term shareholder in {tk} on these inputs.")
+        _page_footer()
         st.stop()
 
     ratio = price / iv15
@@ -3945,6 +4000,7 @@ if years and ticker and st.session_state.get("tk") == ticker:
         with st.expander("Notes and detail", expanded=True):
             for kind_, msg in alerts:
                 getattr(st, kind_)(msg)
+        _page_footer()
         st.stop()
 
     if pre.get("financial"):
@@ -4140,47 +4196,4 @@ if years and ticker and st.session_state.get("tk") == ticker:
 #  competes with the answer and the nav stays clean.
 # ══════════════════════════════════════════════════════════════════════
 
-st.divider()
-_r1, _r2 = st.columns(2)
-with _r1:
-    with st.expander("What the numbers mean", expanded=False):
-        st.markdown(
-            "**ΔE** — the share of each reported dollar of profit that actually reaches "
-            "shareholders once the true cost of stock compensation is charged. Below about "
-            "87%, a company needs 15% reported growth just to hold value per share steady.\n\n"
-            "**IV15** — the price at which the stock would return roughly 15% a year over "
-            "15+ years. A buy target from a cash flow model, not an earnings multiple.\n\n"
-            "**IV8 to IV10** — closer to what the business is actually worth. Buybacks below "
-            "that range add value per share; above it they destroy it.\n\n"
-            "**Expected return** — what today's price implies you'd earn annually, held long "
-            "term. The most useful single figure, since it needs no target return chosen "
-            "in advance.\n\n"
-            "**Moat tier** — sets how long growth lasts and how fast it fades, not the "
-            "starting rate. Fortress holds growth 8 years; Wood gets 2."
-        )
-
-with _r2:
-    with st.expander("Verify the engine"):
-        st.caption(
-            "These run the formulas on **Burry's own published inputs** and check the output "
-            "against his published results. They confirm the maths is right.\n\n"
-            "They will not match what you get by entering a ticker above. A live run uses "
-            "today's filings, today's share count, growth seeded from revenue, and the tier "
-            "defaults — different inputs, so a different answer. Both land in a similar range; "
-            "they are simply answering different questions."
-        )
-        if st.button("Run checks"):
-            _results = self_test()
-            _sev, _line = test_summary(_results)
-            getattr(st, _sev)(_line)
-            for name, ok, got in _results:
-                st.write(("✅ " if ok else "❌ ") + f"{name} — {got}")
-            st.caption("Tolerances: dollar figures within $1, ratios within half a point. "
-                       "Burry rounds published prices and share counts, so exact equality "
-                       "is not achievable and would be a suspicious thing to claim.")
-
-st.caption(
-    "Research aid, not financial advice. Outputs depend on estimates you supply. Method "
-    "follows Michael Burry's published writing; this project is independent and is not "
-    "affiliated with or endorsed by him or Scion Asset Management."
-)
+_page_footer()
