@@ -2579,8 +2579,9 @@ def load(ticker: str, n_years: int = 10):
         notes.append(f"{sic_desc or 'Financial company'} (SIC {sic}). {fin_reason} Investments "
                      "here back policyholder or depositor liabilities rather than belonging to "
                      "shareholders, so net cash has been set to zero. The Tragic Algebra below "
-                     "is real; the valuation frame is not — a "
-                     f"{fin_class} is priced on tangible book, returns and payout, which is the "
+                     "is real; the valuation frame is not — "
+                     f"{ {'bank': 'a bank', 'insurer': 'an insurer', 'reit': 'a REIT'}[fin_class] } "
+                     "is priced on tangible book, returns and payout, which is the "
                      "Financials Checker page's job. The verdict here is withheld.")
         cash_total = debt_total = net_cash = 0.0
     elif fin_class == "refused":
@@ -3868,6 +3869,13 @@ if years and ticker and st.session_state.get("tk") == ticker:
             "nothing undimensioned exists to read. Type the diluted count from the 10-K cover "
             "page to continue; ΔE will still need setting by hand, and the assumptions block "
             "will record both as set by hand.")
+        # GRAB, 5 Sep 2026: this sentence says "the notes above say which
+        # years" and the notes expander renders after the verdict, which a
+        # stopped page never reaches — the reader was pointed at notes that
+        # were never shown. Render them before stopping.
+        with st.expander("Notes and detail — why nothing was read", expanded=True):
+            for kind_, msg in alerts:
+                getattr(st, kind_)(msg)
         st.stop()
 
     mcap = shares * price / 1000.0
