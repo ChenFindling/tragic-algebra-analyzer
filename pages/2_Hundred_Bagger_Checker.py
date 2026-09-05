@@ -1972,6 +1972,21 @@ def load(ticker: str, n_years: int = 10):
     if _stale:
         raise ValueError(f"{ticker} cannot be valued from these filings — " + _stale)
 
+    # Grab, Sophia Genetics, Legend Biotech (page 4's runs, 1 Sep 2026): a
+    # USD-reporting 20-F filer passes this load on the net-income fallback and
+    # then reads no revenue from any tag this page carries — its statements use
+    # ifrs-full names the US fill lists do not. Rendering a page around that
+    # hole showed growth seeds, net cash and share counts as zeros that looked
+    # like readings. Refuse with the route instead: the Non-US Checker reads
+    # the IFRS names.
+    if series.get("N") and not series.get("REV"):
+        raise ValueError(
+            f"{ticker} cannot be valued from these filings on this page — net income was read "
+            "but revenue reads nothing from any tag this page knows. That is the shape of a "
+            "foreign filer whose statements use IFRS (ifrs-full) names this US page does not "
+            "carry. Use the Non-US Checker page, which reads those names and refuses what it "
+            "cannot; a US filer that genuinely tags no revenue would be refused here either way.")
+
     years: list[Year] = []
     non_sbc_total = 0.0
     for fy in fys:
@@ -3748,6 +3763,16 @@ def self_test() -> list[tuple[str, bool, str]]:
     out.append(("...and a small base is never restated — listings double, splits don't",
                 _small == {2020: 10e6, 2021: 20e6} and _ns == "",
                 "25M-share floor holds"))
+
+    # 19. The read-nothing route (Grab shape, 1 Sep 2026): net income read,
+    #     revenue empty → the load refuses with the page-6 route; both read →
+    #     no refusal on this ground.
+    def _grab_shape(n_read, rev_read):
+        return bool(n_read) and not bool(rev_read)
+    out.append(("Net income read with no revenue refuses toward the Non-US page",
+                _grab_shape({2024: 1}, {}) and not _grab_shape({2024: 1}, {2024: 2})
+                and not _grab_shape({}, {}),
+                "fires only on the asymmetric read"))
 
     return out
 
