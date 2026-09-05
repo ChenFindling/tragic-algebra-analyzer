@@ -968,6 +968,37 @@ def confirm_band_splits(shares: dict[int, float],
         "restating comparatives, not the split date itself.")
 
 
+
+def foreign_filer_note(net_income_tag: str, unread: list[str]) -> str:
+    """Say plainly that this is an IFRS filer and which lines went unread.
+
+    Written after Shell plc, 26 Aug 2026 — the first foreign filer either page
+    had been pointed at. Net income and revenue read correctly and every other
+    line silently did not: no stock-comp tag, no balance-sheet tag, no share
+    count. The page printed a complete, confident valuation in which net cash
+    read 0 against roughly $77B of real debt, and six of ten years charged
+    their whole buyback as stock compensation, with nothing saying a word.
+
+    This is not IFRS support. It is the refusal that should exist before
+    support is attempted: the tool's premise is that it never prints a number
+    it cannot stand behind, and a reader that knows US-GAAP tag names cannot
+    stand behind an IFRS filing.
+    """
+    if not net_income_tag.startswith("ProfitLoss"):
+        return ""
+    head = ("**This is a foreign private issuer reporting under IFRS.** Net income was read "
+            f"from {net_income_tag}, which is right, but this reader knows US-GAAP tag names "
+            "for the other lines and an IFRS filing does not use them. ")
+    if not unread:
+        return head + ("Check each line in the tag panel before trusting any figure below. "
+                       "The Non-US Checker page reads the IFRS names this page does not — "
+                       "prefer it for this ticker.")
+    return head + ("Nothing at all was read for: " + ", ".join(unread) + ". Those lines are "
+                   "wrong rather than missing — a line that reads nothing is treated as a "
+                   "zero. Treat the whole page as unverified and do not use the valuation. "
+                   "The Non-US Checker page reads the IFRS names this page does not — use it "
+                   "for this ticker.")
+
 MAX_SPLIT = 200.0   # no real split comes near this; see split_adjust
 
 
@@ -1951,6 +1982,15 @@ def load(ticker: str, n_years: int = 10):
                "the whole group's rather than shareholders' alone. "
                if "ProfitLoss" in _nsrc[1:] else "")
             + "The tag panel shows which tags answered.")
+
+    # Ported from tool 1 (Shell, 26 Aug; route added 5 Sep): an IFRS filer
+    # whose net income reads via ProfitLoss gets the banner naming what went
+    # unread, and the route to the Non-US Checker.
+    _ff = foreign_filer_note(_nsrc[0] if _nsrc else "",
+                             [_l for _l, _e in (("stock compensation", not series.get("G")),
+                                                ("the share count", not shares_out)) if _e])
+    if _ff:
+        notes.insert(0, _ff)
 
     fys = sorted(series["N"])[-n_years:]
     # Below this there is no history to reason about. Toyota returned two years
@@ -3773,6 +3813,19 @@ def self_test() -> list[tuple[str, bool, str]]:
                 _grab_shape({2024: 1}, {}) and not _grab_shape({2024: 1}, {2024: 2})
                 and not _grab_shape({}, {}),
                 "fires only on the asymmetric read"))
+
+    # 10d. Shell plc, and the four things it showed.
+    _sh = foreign_filer_note("ProfitLossAttributableToOwnersOfParent",
+                             ["stock compensation", "the share count", "the balance sheet"])
+    out.append(("An IFRS filer is told it is one, before any figure below it",
+                "foreign private issuer" in _sh and "do not use the valuation" in _sh,
+                "banner fires on ProfitLoss-family tags"))
+    out.append(("...and a US-GAAP filer never sees that banner",
+                foreign_filer_note("NetIncomeLoss", ["the balance sheet"]) == "",
+                "silent on NetIncomeLoss"))
+    out.append(("...and an IFRS filer that read everything is not told to distrust it",
+                "unverified" not in foreign_filer_note("ProfitLoss", []),
+                "no unread lines, no refusal"))
 
     return out
 
