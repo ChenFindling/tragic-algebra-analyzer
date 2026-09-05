@@ -3970,6 +3970,50 @@ def plain(x: float) -> str:
     return money(x).replace("\\", "")
 
 
+def _page_footer() -> None:
+    """Glossary, self-test button, disclaimer — rendered even on a refused
+    ticker (Chen, GRAB, 5 Sep 2026): st.stop() used to kill them."""
+    st.divider()
+    _r1, _r2 = st.columns(2)
+    with _r1:
+        with st.expander("What the numbers mean"):
+            st.markdown(
+                "**Needs** — the annual growth in owners' earnings that turns today's price into a "
+                "hundredfold over your holding period, after the exit multiple you assume and the "
+                "dilution along the way.\n\n"
+                "**Can fund** — return on capital multiplied by the share of earnings retained, plus "
+                "the lift from any stock retired. The fastest a business compounds per share without "
+                "outside money. A company earning 100% on capital and paying all of it out funds "
+                "almost no growth, which is why this is the number to read rather than ROIC "
+                "itself.\n\n"
+                "**Has delivered** — the better of its revenue and owners'-earnings growth over the "
+                "window. History is not a ceiling, but a price that requires a rate the company has "
+                "never reached is a bet on an inflection.\n\n"
+                "**ROIC** — Burry's fully-adjusted return on invested capital, computed on owners' "
+                "earnings over capital genuinely at work: deployable cash removed, operational cash "
+                "left in.")
+
+    with _r2:
+        with st.expander("Verify the engine"):
+            st.caption(
+                "Three kinds of check. The Alphabet lines re-run **Burry's published inputs** through "
+                "this page's copy of the Tragic Algebra engine and confirm it still matches tool 1 to "
+                "the dollar. The Mayer lines check the 100x arithmetic against the figures his book "
+                "leads with. The rest are wiring and verdict tests.\n\n"
+                "There is no published ROIC to validate against the way Alphabet validates owners' "
+                "earnings, so that test proves the plumbing is right, not that the framework is.")
+            if st.button("Run checks"):
+                _results = self_test()
+                _sev, _line = test_summary(_results)
+                getattr(st, _sev)(_line)
+                for name, ok, got in _results:
+                    st.write(("✅ " if ok else "❌ ") + f"{name} — {got}")
+
+    st.caption(
+        "Research aid, not financial advice. Outputs depend on estimates you supply. Method follows "
+        "Christopher Mayer's published framework and Michael Burry's published ROIC formula; this "
+        "project is independent and is not affiliated with or endorsed by either of them.")
+
 st.set_page_config(
     page_title="100-Bagger Checker — Mayer's criteria and Burry's ROIC",
     page_icon="💯",
@@ -4125,6 +4169,7 @@ if years and ticker and st.session_state.get("hb_tk") == ticker:
         with st.expander("Notes and detail — why nothing was read", expanded=True):
             for kind_, msg in alerts:
                 getattr(st, kind_)(msg)
+        _page_footer()
         st.stop()
 
     c4, c5, c6 = st.columns(3)
@@ -4766,43 +4811,4 @@ if years and ticker and st.session_state.get("hb_tk") == ticker:
 #  REFERENCE
 # ══════════════════════════════════════════════════════════════════════
 
-st.divider()
-_r1, _r2 = st.columns(2)
-with _r1:
-    with st.expander("What the numbers mean"):
-        st.markdown(
-            "**Needs** — the annual growth in owners' earnings that turns today's price into a "
-            "hundredfold over your holding period, after the exit multiple you assume and the "
-            "dilution along the way.\n\n"
-            "**Can fund** — return on capital multiplied by the share of earnings retained, plus "
-            "the lift from any stock retired. The fastest a business compounds per share without "
-            "outside money. A company earning 100% on capital and paying all of it out funds "
-            "almost no growth, which is why this is the number to read rather than ROIC "
-            "itself.\n\n"
-            "**Has delivered** — the better of its revenue and owners'-earnings growth over the "
-            "window. History is not a ceiling, but a price that requires a rate the company has "
-            "never reached is a bet on an inflection.\n\n"
-            "**ROIC** — Burry's fully-adjusted return on invested capital, computed on owners' "
-            "earnings over capital genuinely at work: deployable cash removed, operational cash "
-            "left in.")
-
-with _r2:
-    with st.expander("Verify the engine"):
-        st.caption(
-            "Three kinds of check. The Alphabet lines re-run **Burry's published inputs** through "
-            "this page's copy of the Tragic Algebra engine and confirm it still matches tool 1 to "
-            "the dollar. The Mayer lines check the 100x arithmetic against the figures his book "
-            "leads with. The rest are wiring and verdict tests.\n\n"
-            "There is no published ROIC to validate against the way Alphabet validates owners' "
-            "earnings, so that test proves the plumbing is right, not that the framework is.")
-        if st.button("Run checks"):
-            _results = self_test()
-            _sev, _line = test_summary(_results)
-            getattr(st, _sev)(_line)
-            for name, ok, got in _results:
-                st.write(("✅ " if ok else "❌ ") + f"{name} — {got}")
-
-st.caption(
-    "Research aid, not financial advice. Outputs depend on estimates you supply. Method follows "
-    "Christopher Mayer's published framework and Michael Burry's published ROIC formula; this "
-    "project is independent and is not affiliated with or endorsed by either of them.")
+_page_footer()
