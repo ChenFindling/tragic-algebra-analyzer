@@ -500,7 +500,12 @@ CONCEPTS = {
             "PaymentsForRepurchaseOfCommonStockAndRestrictedStockUnits",
             "StockRepurchasedAndRetiredDuringPeriodValue",
             "StockRepurchasedDuringPeriodValue"],
-           ["PaymentsToAcquireOrRedeemEntitysShares"]),
+           # PaymentsToAcquireOrRedeemEntitysShares verified live on Novo
+           # Nordisk and SAP. PurchaseOfTreasuryShares verified 4 Sep 2026 by
+           # browser on Ferrari (CIK 1648416), whose buybacks read ZERO years
+           # without it while the company retired billions — the ceiling note
+           # fired honestly, and this name is the fix.
+           ["PaymentsToAcquireOrRedeemEntitysShares", "PurchaseOfTreasuryShares"]),
     "Cw": (["PaymentsRelatedToTaxWithholdingForShareBasedCompensation",
             "TreasuryStockValueAcquiredCostMethod"], []),
     "Ce": (["ProceedsFromIssuanceOfSharesUnderIncentiveAndShareBasedCompensationPlans",
@@ -592,7 +597,12 @@ BALANCE = {
     # much by filer to guess; candidates go in only from a real filing.
     "ltd":  ["LongTermDebtNoncurrent", "LongTermDebt",
              "DebtLongtermAndShorttermCombinedAmount",
-             "NoncurrentBorrowings", "Borrowings"],
+             # LongtermBorrowings verified 4 Sep 2026 by browser on
+             # TotalEnergies (CIK 879764) — the filer whose unread debt let
+             # net cash print +$26B of fiction and forced the debt guard.
+             # Narrow long-term portion, so it sits BEFORE the whole-balance
+             # Borrowings.
+             "NoncurrentBorrowings", "LongtermBorrowings", "Borrowings"],
     "std":  ["LongTermDebtCurrent", "DebtCurrent", "ShortTermBorrowings", "CommercialPaper"],
     # Not debt in Burry's sense — his ROIC formula subtracts long-term operating
     # leases from capital rather than treating them as borrowings. Shown so a
@@ -1217,6 +1227,28 @@ def sent_to_tool1(facts: dict) -> str:
                 "reports full US GAAP and belongs there too. This page is only for filings the "
                 "ordinary reader cannot read: IFRS taxonomies and non-dollar currencies.")
     return ""
+
+
+def debt_unread_note(cash_years: int, ltd_years: int, std_years: int) -> str:
+    """Non-empty when cash answered and no debt line did.
+
+    PAGE 6 EDIT (4 Sep 2026). Net cash = cash minus debt, and a debt line
+    that reads nothing is treated as zero. When cash reads and debt is
+    silent, net cash is an upper bound wearing the costume of a
+    measurement — and it feeds IV15 directly. The warning names the fix
+    the page already has: the Total debt box is editable, and the balance
+    sheet in the annual report has the number.
+    """
+    if cash_years <= 0 or ltd_years > 0 or std_years > 0:
+        return ""
+    return ("**Net cash here may be fiction.** Cash was read from the filings but NO "
+            "debt line answered — none of the borrowing tags this reader knows are in "
+            "the filing — so debt is standing at zero and net cash is an upper bound, "
+            "not a measurement. For a capital-intensive company that is almost "
+            "certainly wrong in the flattering direction, and net cash feeds IV15 "
+            "directly. Open the balance sheet in the annual report, find total "
+            "financial debt, and type it into the Total debt box before trusting the "
+            "verdict; the tag panel names which lines went unread.")
 
 
 def nonus_financial_refusal(sic: str, sic_desc: str) -> str:
@@ -2981,6 +3013,12 @@ def load(ticker: str, n_years: int = 10, price_symbol: str = "", ads_ratio: floa
     debt_total = g(BALANCE["ltd"]) + g(BALANCE["std"])
     lease_total = g(BALANCE["lease"])
     net_cash = cash_total - debt_total
+    # PAGE 6 EDIT (4 Sep 2026): the TTE guard — cash read, debt silent.
+    _dun = debt_unread_note(
+        _bal_n.get(BALANCE["cash"][0], 0), _bal_n.get(BALANCE["ltd"][0], 0),
+        _bal_n.get(BALANCE["std"][0], 0))
+    if _dun:
+        notes.insert(0, _dun)
     # Say so when a first-preference tag was passed over for a fresher one.
     # Usually the switch just repairs a gap between two names for the same
     # line. Once it does not: Progressive's cash comes from the
@@ -3873,6 +3911,17 @@ def self_test() -> list[tuple[str, bool, str]]:
     out.append(("Per-ordinary price is the ADS price over the ratio (LEGN: 5.20/2)",
                 abs(5.20 / 2.0 - 2.60) < 1e-9, f"{5.20/2.0:.2f}"))
 
+    # 29 (4 Sep 2026, after the TTE run). Cash read + debt silent must
+    #     warn loudly; any debt read, or no cash read, must stay silent.
+    _d1 = debt_unread_note(12, 0, 0)
+    out.append(("Cash read with no debt line answering warns that net cash may be fiction",
+                "fiction" in _d1 and "upper bound" in _d1 and "Total debt box" in _d1,
+                "TotalEnergies: +$26B of net cash against unread borrowings"))
+    out.append(("...and any debt read, or no cash read, keeps the guard silent",
+                debt_unread_note(12, 7, 0) == "" and debt_unread_note(0, 0, 0) == ""
+                and debt_unread_note(12, 0, 3) == "",
+                "fires only on the asymmetric read"))
+
     # 26 (4 Sep 2026, after the NVO run). A 2:1 split inside the band is
     #     restated only when the market's own split events confirm it.
     _nvo = {2019: 2380e6, 2020: 2330e6, 2021: 4600e6, 2022: 4480e6}
@@ -4013,8 +4062,10 @@ def self_test() -> list[tuple[str, bool, str]]:
                 and "AdjustedWeightedAverageShares" in CONCEPTS["SHD"][1]
                 and "CashAndCashEquivalents" in BALANCE["cash"]
                 and "Borrowings" in BALANCE["ltd"]
-                and "ProceedsFromExerciseOfOptions" in CONCEPTS["Ce"][1],
-                "all five present"))
+                and "ProceedsFromExerciseOfOptions" in CONCEPTS["Ce"][1]
+                and "PurchaseOfTreasuryShares" in CONCEPTS["T"][1]
+                and "LongtermBorrowings" in BALANCE["ltd"],
+                "all seven present — two browser-verified 4 Sep"))
 
     # 26. The rewritten IFRS banner names the currency and the four lines
     #     with no standard IFRS name, and still escalates on unread cores.
