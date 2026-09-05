@@ -2720,7 +2720,8 @@ def load(ticker: str, n_years: int = 10):
                           "ticker": ticker,
                           "shares": diluted, "growth": growth, "sic": sic,
                           "sic_desc": sic_desc, "financial": fin_class in ("bank", "insurer", "reit", "refused"),
-                          "fin_class": fin_class, "fin_reason": fin_reason}
+                          "fin_class": fin_class, "fin_reason": fin_reason,
+                          "sh_cov": (_cov_n, len(_win_cov))}
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -3421,6 +3422,14 @@ def self_test() -> list[tuple[str, bool, str]]:
                 and financial_class("6141", _fx([]))[0] == "refused",
                 "Ryan Specialty ordinary; Schwab-shaped promotes; a lender is not priced"))
 
+    # 21. The META caption (5 Sep 2026): no share counts anywhere → the ΔE
+    #     radio must say so instead of offering the polluted pools.
+    out.append(("ΔE caption refuses when no year has a share count",
+                dE_caption(0.604, True, True) == "n/a — no share counts read"
+                and dE_caption(0.833, True, False) == "83.3%"
+                and dE_caption(0.0, False, False) == "n/a — losses",
+                "no-counts beats defined; the other two branches unchanged"))
+
     return out
 
 
@@ -3437,6 +3446,18 @@ def self_test() -> list[tuple[str, bool, str]]:
 def d(x, dp=2):
     """Escaped dollar amount, safe inside markdown."""
     return f"\\${x:,.{dp}f}"
+
+
+def dE_caption(dE: float, defined: bool, no_counts: bool) -> str:
+    """The ΔE radio caption. META, 5 Sep 2026 (Chen): a dual-class filer with
+    no share count in ANY year still displayed pooled ΔE (60.4%/56.4%) as
+    selectable figures — but with every year's share change reading zero, the
+    whole buyback is charged as cost and the pools are meaningless (his META
+    is 83.3%). A number the page cannot stand behind must not be offered as a
+    choice."""
+    if no_counts:
+        return "n/a — no share counts read"
+    return f"{dE:.1%}" if defined else "n/a — losses"
 
 
 def _page_footer() -> None:
@@ -3695,15 +3716,16 @@ if years and ticker and st.session_state.get("tk") == ticker:
     st.markdown("---")
     st.subheader("Inputs")
 
+    _no_counts = pre.get("sh_cov", (1, 1))[0] == 0
     use_recent = st.radio(
         "Apply ΔE from", ["Last 3 years", "Full period"], horizontal=True,
-        captions=[f"{recent.dE:.1%}" if recent.dE_defined else "n/a — losses",
-                  f"{pooled.dE:.1%}" if pooled.dE_defined else "n/a — losses"],
+        captions=[dE_caption(recent.dE, recent.dE_defined, _no_counts),
+                  dE_caption(pooled.dE, pooled.dE_defined, _no_counts)],
         help="ΔE is the share of reported profit that actually reaches shareholders. The long "
              "window is the diagnostic; where capital policy has changed, the recent one is "
              "what will apply going forward.") == "Last 3 years"
     use_dE = recent.dE if use_recent else pooled.dE
-    dE_ok = dE_projectable(recent if use_recent else pooled)
+    dE_ok = dE_projectable(recent if use_recent else pooled) and not _no_counts
     # The measurement above is left as filed; only what gets projected is held
     # to 100%. See the dE ceiling block near the top of the file.
     applied_dE = seed_dE(use_dE) if dE_ok else use_dE
