@@ -3705,7 +3705,15 @@ if years and ticker and st.session_state.get("tk") == ticker:
             f"{d(net_cash/shares)} per share of the IV15 below."))
 
     if shares <= 0:
-        st.error("Enter the diluted share count — everything divides by it.")
+        st.error(
+            "**No share count was read from any tag this reader knows** — the notes above say "
+            "which years. Nothing per share can be computed, and the true SBC cost, which prices "
+            "the shares delivered at the year's average, cannot be measured without the year-end "
+            "count. The usual shape is a dual-class filer (Carvana, Ryan Specialty, Reddit): "
+            "per-class counts carry a class dimension that EDGAR's companyfacts API strips, so "
+            "nothing undimensioned exists to read. Type the diluted count from the 10-K cover "
+            "page to continue; ΔE will still need setting by hand, and the assumptions block "
+            "will record both as set by hand.")
         st.stop()
 
     mcap = shares * price / 1000.0
