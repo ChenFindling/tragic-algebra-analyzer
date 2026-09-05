@@ -4118,6 +4118,13 @@ if years and ticker and st.session_state.get("hb_tk") == ticker:
             "nothing undimensioned exists to read. Type the diluted count from the 10-K cover "
             "page to continue; ΔE will still need setting by hand, and the assumptions block "
             "will record both as set by hand.")
+        # GRAB, 5 Sep 2026: this sentence says "the notes above say which
+        # years" and the notes expander renders after the verdict, which a
+        # stopped page never reaches — the reader was pointed at notes that
+        # were never shown. Render them before stopping.
+        with st.expander("Notes and detail — why nothing was read", expanded=True):
+            for kind_, msg in alerts:
+                getattr(st, kind_)(msg)
         st.stop()
 
     c4, c5, c6 = st.columns(3)
