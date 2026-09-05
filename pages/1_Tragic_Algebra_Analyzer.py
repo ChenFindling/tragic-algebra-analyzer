@@ -567,6 +567,100 @@ def _sic(cik: str) -> tuple[str, str]:
         return "", ""
 
 
+
+# ── The financial gate ─────────────────────────────────────────────────
+#
+# STANDALONE BLOCK. financial_class() and the tables it reads are written
+# so tool 1's session can paste them in unchanged — they use only the SIC
+# string and the raw companyfacts dict. Every other page's banner follows
+# what this decides.
+#
+# SIC names the class the filer is EXPECTED to be; the filing confirms
+# it, because SIC misdescribes financials constantly: Schwab is 6211 (a
+# broker) with $300B of deposits, Discover is 6141 (a lender) and a bank,
+# Compass is 6531 and a brokerage of houses. A class is only assigned when
+# the balance sheet carries the line that defines it.
+
+BANK_SIC = {6021, 6022, 6029, 6035, 6036, 6712}
+INSURER_SIC = {6311, 6321, 6324, 6331, 6351, 6361, 6399}
+REIT_SIC = {6798}
+# Lenders, finance companies, functions related to deposit banking, and
+# brokers: a bank when the filing carries deposits and net interest
+# income, otherwise a float business this page does not price (v2).
+PROMOTABLE_SIC = {6099, 6211} | set(range(6111, 6200))
+# Fee businesses inside the 6000s that tool 1 prices as ordinary companies
+# with net cash READ: insurance agents and brokers, asset managers,
+# real-estate services and operators, royalty owners and lessors.
+ORDINARY_SIC = {6411, 6282, 6792, 6794, 6795} | set(range(6500, 6554))
+
+DEPOSIT_TAGS = ["Deposits", "DepositsDomestic", "InterestBearingDepositLiabilities"]
+NII_TAGS = ["InterestIncomeExpenseNet",
+            "InterestIncomeExpenseAfterProvisionForLoanLoss"]
+PREMIUM_TAGS = ["PremiumsEarnedNet", "PremiumsEarnedNetPropertyAndCasualty",
+                "PremiumsEarnedNetLife"]
+REIT_PROPERTY_TAGS = ["RealEstateInvestmentPropertyNet", "RealEstateInvestmentPropertyAtCost"]
+
+FINANCIAL_SIC_TABLE = (
+    "This page prices banks (SIC 6021-6036, 6712) whose filings carry deposits and net "
+    "interest income; insurers (6311-6399) whose filings carry premiums earned; and "
+    "equity REITs (6798) whose filings carry real estate. Lenders, finance companies and "
+    "brokers (6099, 6111-6199, 6211) are priced as banks when they hold deposits and "
+    "refused when they do not. Insurance agents (6411), asset managers (6282), real-estate "
+    "services and operators (6500-6553) and royalty owners (6792-6795) are ordinary "
+    "businesses and belong to the Tragic Algebra Analyzer with net cash read. Exchanges "
+    "and dealers (6200, 6221), blank-check companies (6770), investors n.e.c. (6799), "
+    "mortgage REITs and anything else in 6000-6799 are refused.")
+
+
+def _tags_present(facts: dict, concepts: list[str]) -> bool:
+    """Does the filing tag any of these concepts at all? Presence, not a
+    read: the gate asks what kind of balance sheet this is, and a line that
+    was tagged in any annual filing answers that even if it later stopped."""
+    tax = facts.get("facts", {}).get("us-gaap", {})
+    return any(c in tax and tax[c].get("units") for c in concepts)
+
+
+def financial_class(sic: str, facts: dict) -> tuple[str, str]:
+    """(class, reason). class is one of bank, insurer, reit, ordinary,
+    refused. `ordinary` means tool 1 prices it as a normal business; this
+    page does not."""
+    if not (sic and sic.isdigit()):
+        return "ordinary", "No SIC code on file; not treated as a financial."
+    code = int(sic)
+    if not 6000 <= code <= 6799:
+        return "ordinary", f"SIC {sic} is outside 6000-6799; not a financial."
+    has_bank = _tags_present(facts, DEPOSIT_TAGS) and _tags_present(facts, NII_TAGS)
+    has_prem = _tags_present(facts, PREMIUM_TAGS)
+    has_re = _tags_present(facts, REIT_PROPERTY_TAGS)
+    if code in BANK_SIC:
+        if has_bank:
+            return "bank", f"SIC {sic} and the filing carries deposits and net interest income."
+        return "refused", (f"SIC {sic} says bank, but the filing carries no deposits or net "
+                           "interest income line this reader knows. Not priced.")
+    if code in INSURER_SIC:
+        if has_prem:
+            return "insurer", f"SIC {sic} and the filing carries premiums earned."
+        return "refused", (f"SIC {sic} says insurer, but the filing carries no premiums-earned "
+                           "line this reader knows. Not priced.")
+    if code in REIT_SIC:
+        if has_re:
+            return "reit", f"SIC {sic} and the filing carries real estate."
+        return "refused", (f"SIC {sic} with no real estate on the balance sheet — a mortgage "
+                           "REIT, which is a levered bond book. Not priced on this page.")
+    if code in PROMOTABLE_SIC:
+        if has_bank:
+            return "bank", (f"SIC {sic} is a lender or broker code, but the filing carries "
+                            "deposits and net interest income — a bank in substance.")
+        return "refused", (f"SIC {sic} — a lender, finance company or broker funded without "
+                           "deposits. Its float is the product, and this page does not price "
+                           "float businesses (Tool A v2).")
+    if code in ORDINARY_SIC:
+        return "ordinary", (f"SIC {sic} — a fee business, not a balance-sheet one. The Tragic "
+                            "Algebra Analyzer prices it as an ordinary company with net cash read.")
+    return "refused", (f"SIC {sic} — an exchange, dealer, blank-check company or holding "
+                       "structure this page does not price.")
+
+
 def is_financial(sic: str) -> bool:
     """SIC 6000-6799: banks, insurers, brokers, REITs. For these, investments
     back policyholder or depositor liabilities and are not shareholder cash, so
@@ -2305,7 +2399,11 @@ def load(ticker: str, n_years: int = 10):
                 "Either means it is an ordinary repurchase, and charging it as withholding "
                 "would count the same dollars twice — once as cash out, once as the market value "
                 "of shares delivered.")
-        else:
+        elif any(y.Cw for y in years):
+            # JPM, 1 Sep 2026 (page 5's run): the treasury tag was in the
+            # sources but no year survived the filters, so this "accepted"
+            # sentence fired alongside "no tax-withholding line found" three
+            # notes later. Accepted means values exist.
             notes.append(
                 "Tax withholding was read from a treasury-stock line rather than the usual "
                 "withholding tag. Filers that retire shares on repurchase report it this way. "
@@ -2473,13 +2571,23 @@ def load(ticker: str, n_years: int = 10):
                      "lease obligations — real commitments, but Burry's framework handles leases "
                      "inside the capital base rather than as borrowings, so they are not "
                      "subtracted here.")
-    if is_financial(sic):
-        notes.append(f"{sic_desc or 'Financial company'} (SIC {sic}). Investments here back "
-                     "policyholder or depositor liabilities rather than belonging to "
-                     "shareholders, so net cash has been set to zero. The Tragic Algebra still "
-                     "works, but treat the valuation as indicative — this framework was built "
-                     "for software, and insurers, banks and REITs need book-value and "
-                     "combined-ratio thinking it does not contain.")
+    fin_class, fin_reason = financial_class(sic, facts)
+    if fin_class in ("bank", "insurer", "reit"):
+        # KNSL, 1 Sep 2026: the old banner disclaimed the number and the
+        # verdict still printed a fat pitch on 18% premium growth at a
+        # software exit. The Financials Checker exists now; route, withhold.
+        notes.append(f"{sic_desc or 'Financial company'} (SIC {sic}). {fin_reason} Investments "
+                     "here back policyholder or depositor liabilities rather than belonging to "
+                     "shareholders, so net cash has been set to zero. The Tragic Algebra below "
+                     "is real; the valuation frame is not — a "
+                     f"{fin_class} is priced on tangible book, returns and payout, which is the "
+                     "Financials Checker page's job. The verdict here is withheld.")
+        cash_total = debt_total = net_cash = 0.0
+    elif fin_class == "refused":
+        notes.append(f"{sic_desc or 'Financial company'} (SIC {sic}). {fin_reason} Net cash has "
+                     "been set to zero and the verdict is withheld — the Tragic Algebra below "
+                     "is real, the valuation frame is not, and no page in this kit prices this "
+                     "class yet.")
         cash_total = debt_total = net_cash = 0.0
 
     # First in the list, because it governs how every other note reads.
@@ -2610,7 +2718,8 @@ def load(ticker: str, n_years: int = 10):
                           # a real market cap.
                           "ticker": ticker,
                           "shares": diluted, "growth": growth, "sic": sic,
-                          "sic_desc": sic_desc, "financial": is_financial(sic)}
+                          "sic_desc": sic_desc, "financial": fin_class in ("bank", "insurer", "reit", "refused"),
+                          "fin_class": fin_class, "fin_reason": fin_reason}
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -3296,6 +3405,21 @@ def self_test() -> list[tuple[str, bool, str]]:
                 and not _grab_shape({}, {}),
                 "fires only on the asymmetric read"))
 
+    # 20. The financial gate (pasted from page 5, its decisions verbatim):
+    #     substance confirms SIC, ordinary fee businesses go back to tool 1,
+    #     deposit-holding brokers promote, float businesses without deposits
+    #     are refused.
+    _fx = lambda tags: {"facts": {"us-gaap": {t: {"units": {"USD": []}} for t in tags}}}
+    out.append(("A 6331 filer with premiums is an insurer; without them, refused",
+                financial_class("6331", _fx(["PremiumsEarnedNet"]))[0] == "insurer"
+                and financial_class("6331", _fx([]))[0] == "refused",
+                "KNSL lands insurer; a shell with the code does not"))
+    out.append(("6411 is ordinary, 6211 with deposits promotes to bank, 6141 without is refused",
+                financial_class("6411", _fx([]))[0] == "ordinary"
+                and financial_class("6211", _fx(["Deposits", "InterestIncomeExpenseNet"]))[0] == "bank"
+                and financial_class("6141", _fx([]))[0] == "refused",
+                "Ryan Specialty ordinary; Schwab-shaped promotes; a lender is not priced"))
+
     return out
 
 
@@ -3798,7 +3922,9 @@ if years and ticker and st.session_state.get("tk") == ticker:
 
     v1, v2, v3 = st.columns(3)
     v1.metric("IV15", f"${iv15:,.2f}", f"market ${price:,.2f}")
-    v2.metric("Price / IV15", f"{ratio:.2f}x", "not usable" if _broken else zn)
+    v2.metric("Price / IV15", f"{ratio:.2f}x",
+              "not usable" if _broken else
+              ("verdict withheld" if pre.get("financial") else zn))
     v3.metric("Expected return", er_txt,
               "no score — see below" if _broken else f"score {valuation_points(ratio)}/35")
     if _broken:
@@ -3813,6 +3939,14 @@ if years and ticker and st.session_state.get("tk") == ticker:
                 getattr(st, kind_)(msg)
         st.stop()
 
+    if pre.get("financial"):
+        st.warning(
+            f"**Verdict withheld — {pre.get('fin_class', 'financial')}.** "
+            + pre.get("fin_reason", "")
+            + " The ladder above is indicative only: net cash is zeroed and the frame prices "
+              "operating earnings, not a balance-sheet business. Use the Financials Checker "
+              "page for the verdict.")
+        kind = "info"
     verdict = {
         "success": f"**Fat pitch.** {tk} trades below its IV15 of {d(iv15)}, implying about "
                    f"{er_txt} a year held long term.",
@@ -3821,7 +3955,8 @@ if years and ticker and st.session_state.get("tk") == ticker:
         "error":   f"**Out field.** At {ratio:.2f}x its IV15 of {d(iv15)}, {tk} offers only "
                    f"about {er_txt} a year.",
     }[kind]
-    getattr(st, kind)(verdict)
+    if not pre.get("financial"):
+        getattr(st, kind)(verdict)
 
     st.write("**Entry bands** — set alerts at each")
     st.dataframe(
