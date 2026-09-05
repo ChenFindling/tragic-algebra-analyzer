@@ -603,7 +603,8 @@ BALANCE = {
              # Narrow long-term portion, so it sits BEFORE the whole-balance
              # Borrowings.
              "NoncurrentBorrowings", "LongtermBorrowings", "Borrowings"],
-    "std":  ["LongTermDebtCurrent", "DebtCurrent", "ShortTermBorrowings", "CommercialPaper"],
+    "std":  ["LongTermDebtCurrent", "DebtCurrent", "ShortTermBorrowings", "CommercialPaper",
+             "ShorttermBorrowings"],
     # Not debt in Burry's sense — his ROIC formula subtracts long-term operating
     # leases from capital rather than treating them as borrowings. Shown so a
     # retailer's zero-debt line doesn't look like a failed lookup.
@@ -3019,6 +3020,15 @@ def load(ticker: str, n_years: int = 10, price_symbol: str = "", ads_ratio: floa
         _bal_n.get(BALANCE["std"][0], 0))
     if _dun:
         notes.insert(0, _dun)
+    # PAGE 6 EDIT (4 Sep 2026): the double-count hazard, named when live.
+    if ("Borrowings" in _bal.get(BALANCE["ltd"][0], [])
+            and "ShorttermBorrowings" in _bal.get(BALANCE["std"][0], [])):
+        notes.append(
+            "Long-term debt was read from Borrowings, which is the WHOLE debt balance, "
+            "and short-term debt from ShorttermBorrowings — the current portion may be "
+            "counted twice. Net cash is therefore understated, the conservative "
+            "direction, but check the two figures against the balance sheet before "
+            "leaning on it.")
     # Say so when a first-preference tag was passed over for a fresher one.
     # Usually the switch just repairs a gap between two names for the same
     # line. Once it does not: Progressive's cash comes from the
@@ -4064,8 +4074,9 @@ def self_test() -> list[tuple[str, bool, str]]:
                 and "Borrowings" in BALANCE["ltd"]
                 and "ProceedsFromExerciseOfOptions" in CONCEPTS["Ce"][1]
                 and "PurchaseOfTreasuryShares" in CONCEPTS["T"][1]
-                and "LongtermBorrowings" in BALANCE["ltd"],
-                "all seven present — two browser-verified 4 Sep"))
+                and "LongtermBorrowings" in BALANCE["ltd"]
+                and "ShorttermBorrowings" in BALANCE["std"],
+                "all eight present — three browser-verified 4 Sep"))
 
     # 26. The rewritten IFRS banner names the currency and the four lines
     #     with no standard IFRS name, and still escalates on unread cores.
