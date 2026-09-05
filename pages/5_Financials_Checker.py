@@ -1643,6 +1643,58 @@ def _cover_asof(facts: dict) -> str:
     return best
 
 
+def confirm_band_splits(shares: dict[int, float],
+                        splits: dict[str, float]) -> tuple[dict[int, float], str]:
+    """Restate in-band split jumps that a market split event confirms.
+
+    PORTED FROM PAGE 6, 5 Sep 2026 (its 4 Sep edit). Only ratios split_adjust's band lets
+    through (1.6x to 2.85x, and their reciprocals), only on established
+    bases (> 25M shares), only rounding to a whole ratio within 12%, and
+    ONLY when the fetched price history carries a split event of that
+    same rounded ratio. Every earlier year is multiplied; iterates so
+    two boundaries restate independently.
+    """
+    if not shares or not splits:
+        return shares, ""
+    event_ratios = set()
+    for r in splits.values():
+        if r > 1:
+            event_ratios.add(float(round(r)))
+        elif r > 0:
+            event_ratios.add(1.0 / float(round(1.0 / r)))
+    out = dict(shares)
+    fys = sorted(out)
+    fixed = []
+    for i in range(len(fys) - 1, 0, -1):
+        a, b = out[fys[i - 1]], out[fys[i]]
+        if a <= 25e6 or b <= 0:
+            continue
+        ratio = b / a
+        m = 0.0
+        if 1.6 <= ratio <= 2.85 and abs(ratio / round(ratio) - 1) <= 0.12:
+            m = float(round(ratio))
+        elif 1 / 2.85 <= ratio <= 1 / 1.6 and abs((1 / ratio) / round(1 / ratio) - 1) <= 0.12:
+            m = 1.0 / float(round(1 / ratio))
+        if m and m in event_ratios:
+            for fy in fys[:i]:
+                out[fy] = out[fy] * m
+            fixed.append((fys[i], m))
+    if not fixed:
+        return shares, ""
+    what = ", ".join((f"{m:g}-for-1 at the FY{fy} boundary" if m > 1
+                      else f"1-for-{1/m:g} at the FY{fy} boundary")
+                     for fy, m in fixed)
+    return out, (
+        "A split hid inside the tolerance band: the share count jumps by about "
+        + what + " — a ratio the split detector deliberately tolerates because "
+        "organic changes reach it, but the price history itself records a split "
+        "event of exactly that ratio, so earlier counts were restated onto the "
+        "current basis. Without this, the jump year is excluded as a phantom "
+        "capital event and every earlier year prices pre-split counts against "
+        "split-adjusted prices. The boundary year is where filings stop "
+        "restating comparatives, not the split date itself.")
+
+
 def split_asof(share_fys, fy_ends: dict, cover_asof: str = "",
                use_cover: bool = False) -> str:
     """The date the share counts in use were filed as of. BRIEF ITEM 1c.
@@ -2152,6 +2204,14 @@ def load(ticker: str, n_years: int = 10):
         notes.append(share_route_note(*_route_note, factor=_split_factor))
     if _route_extra:
         notes.append(_route_extra)
+
+    # PORTED FROM PAGE 6, 5 Sep 2026: the 2:1 pass, market-confirmed. See
+    # confirm_band_splits — Novo Nordisk's 2023 2-for-1 sat inside the
+    # band and read as an acquisition until this; a US filer with a plain
+    # 2:1 hits the identical mislabel.
+    shares_out, _cbs_note = confirm_band_splits(shares_out, splits)
+    if _cbs_note:
+        notes.append(_cbs_note)
 
     # NetIncomeLoss is profit attributable to the parent; ProfitLoss includes
     # what belongs to minority holders of consolidated subsidiaries. Filling
@@ -3799,6 +3859,23 @@ def self_test() -> list[tuple[str, bool, str]]:
     out.append(("...ordinary exercise proceeds are not",
                 _ce_gate_keeps(60.0, 100.0, 500.0) and _ce_gate_keeps(30.0, 0.0, 450.0),
                 "60 against a 100 charge; 30 with no charge against 450 income"))
+
+    # 18. Ported from page 6 (its tests, verbatim): a market-confirmed 2:1
+    #     inside the tolerance band restates; no event or a small base does not.
+    _nvo = {2019: 2380e6, 2020: 2330e6, 2021: 4600e6, 2022: 4480e6}
+    _fixed, _fn = confirm_band_splits(dict(_nvo), {"2023-09-13": 2.0})
+    out.append(("A 2:1 jump inside the band, confirmed by a split event, restates history",
+                abs(_fixed[2020] - 4660e6) < 1 and abs(_fixed[2019] - 4760e6) < 1
+                and abs(_fixed[2021] - 4600e6) < 1 and "2-for-1" in _fn,
+                f"2020 → {_fixed[2020]/1e6:,.0f}M, boundary named"))
+    _same, _no = confirm_band_splits(dict(_nvo), {})
+    out.append(("...the same jump with NO market split event stays as filed",
+                _same == _nvo and _no == "",
+                "an all-stock merger has no split event — the exclusion rule keeps it"))
+    _small, _ns = confirm_band_splits({2020: 10e6, 2021: 20e6}, {"2021-06-01": 2.0})
+    out.append(("...and a small base is never restated — listings double, splits don't",
+                _small == {2020: 10e6, 2021: 20e6} and _ns == "",
+                "25M-share floor holds"))
 
     return out
 
