@@ -3739,7 +3739,7 @@ def evaluate_master(pin: Pin, s: Summary | None, err: str) -> Row:
                    f"published {pin.his_dE}%{full_txt}. No verdict — per the brief, "
                    "a mismatch is reported, never forced.")
     his_years = [y for y in s.years if lo <= y.fy <= hi]
-    n_exc = sum(1 for y in his_years if y.excluded)
+    exc = [(y.fy, y.excluded) for y in his_years if y.excluded]
     try:
         p = pool(his_years)
     except ValueError:
@@ -3750,8 +3750,24 @@ def evaluate_master(pin: Pin, s: Summary | None, err: str) -> Row:
         return Row(pin.ticker, "master", f"his FY{lo}–{hi}", "NOT COMPARABLE",
                    "ΔE undefined over his window (ΣN not positive)" + full_txt)
     ours = p.dE * 100
-    exc_txt = f"; {n_exc} year(s) excluded by this reader inside his window" if n_exc else ""
     delta = ours - pin.his_dE
+    if exc:
+        # NOT COMPARABLE, never a verdict (Chen, 6 Sep 2026): a verdict only
+        # means something when both pools contain the same years. His pool
+        # includes these years (ADI FY2021: the all-stock Maxim deal, handled
+        # his way); this reader excludes them by rule — so a FAIL would punish
+        # a deliberate, documented exclusion. Same doctrine as WINDOW
+        # MISMATCH, one level down. The delta stays visible as information:
+        # it is the measured size of the acquisition-year difference — the
+        # Salesforce decomposition in miniature, worth seeing, wrong to grade.
+        named = "; ".join(f"FY{fy} excluded here: {reason.rstrip('.')}"
+                          for fy, reason in exc)
+        pools_it = "he pools it" if len(exc) == 1 else "he pools them"
+        return Row(pin.ticker, "master", f"his FY{lo}–{hi}", "NOT COMPARABLE",
+                   f"his {pin.his_dE}% vs {ours:.2f}% over the years both can pool "
+                   f"(Δ {delta:+.2f} pts, information only — populations differ). "
+                   f"{named}; {pools_it}. No verdict — a verdict only means "
+                   f"something when both pools contain the same years{full_txt}")
     band = pin.tol.get("his_dE", MASTER_DE_TOL)   # per-row override: an out-of-band
     # name whose cause is DECOMPOSED (which guard, which years, how many
     # dollars) may carry a stated wider band — per row, in the pin, with the
@@ -3759,7 +3775,7 @@ def evaluate_master(pin: Pin, s: Summary | None, err: str) -> Row:
     # make an unexplained delta go away.
     band_txt = f"±{band}" + (" (row's own band)" if band != MASTER_DE_TOL else "")
     line = (f"his {pin.his_dE}% vs {ours:.2f}% over his window "
-            f"(Δ {delta:+.2f} pts, band {band_txt}){exc_txt}{full_txt}")
+            f"(Δ {delta:+.2f} pts, band {band_txt}){full_txt}")
     return Row(pin.ticker, "master", f"his FY{lo}–{hi}",
                "PASS" if abs(delta) <= band else "FAIL", line)
 
@@ -4179,9 +4195,21 @@ def baselines_self_test() -> list[tuple[str, bool, str]]:
                 abs(s_x.core["omega_sum"]
                     - (s.core["omega_sum"] - ys[4].omega)) < 1e-9,
                 "FY2020 out of the sum"))
+    # NOT COMPARABLE on exclusions inside his window (Chen's spec, 6 Sep
+    # 2026): the ADI shape — a year inside his window carrying an exclusion
+    # on our side — must land NOT COMPARABLE and never FAIL, with the year
+    # named, its reason quoted, and the delta shown as information; and the
+    # SAME pin with no exclusion must compare normally, so the state is
+    # driven by the exclusion, not the ticker.
     row = evaluate_master(googl, s_x, "")
-    out.append(("...and the master detail counts it inside his window",
-                "1 year(s) excluded" in row.detail, row.detail[:90]))
+    out.append(("Master: a year excluded inside his window → NOT COMPARABLE, "
+                "never FAIL, year and reason named",
+                row.verdict == "NOT COMPARABLE" and "FY2020" in row.detail
+                and "capital event" in row.detail and "Δ" in row.detail
+                and "information only" in row.detail, row.detail[:90]))
+    out.append(("...and the same pin with no exclusion compares normally",
+                evaluate_master(googl, s, "").verdict == "PASS",
+                "state driven by the exclusion, not the ticker"))
 
     # 10b. The live pin table is itself a fixture — the property promised
     #      when the comparator shipped, real the day the first pins landed:
