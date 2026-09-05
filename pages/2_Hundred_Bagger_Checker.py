@@ -3913,6 +3913,17 @@ if years and ticker and st.session_state.get("hb_tk") == ticker:
         help="Seeded exactly as the IV15 tool seeds its box: latest net income times pooled ΔE. "
              "Both pages should show the same figure for the same ticker.")
     mcap = shares * price
+    if shares <= 0:
+        st.error(
+            "**No share count was read from any tag this reader knows** — the notes above say "
+            "which years. Nothing per share can be computed, and the true SBC cost, which prices "
+            "the shares delivered at the year's average, cannot be measured without the year-end "
+            "count. The usual shape is a dual-class filer (Carvana, Ryan Specialty, Reddit): "
+            "per-class counts carry a class dimension that EDGAR's companyfacts API strips, so "
+            "nothing undimensioned exists to read. Type the diluted count from the 10-K cover "
+            "page to continue; ΔE will still need setting by hand, and the assumptions block "
+            "will record both as set by hand.")
+        st.stop()
 
     c4, c5, c6 = st.columns(3)
     horizon = c4.slider("Holding period (years)", 5, 30, 20, 1,
