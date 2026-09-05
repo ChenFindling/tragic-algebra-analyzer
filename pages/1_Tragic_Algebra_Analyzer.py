@@ -3430,6 +3430,21 @@ def self_test() -> list[tuple[str, bool, str]]:
                 and dE_caption(0.0, False, False) == "n/a — losses",
                 "no-counts beats defined; the other two branches unchanged"))
 
+    # 22. The note that explains an unprojectable ΔE must not claim a ceiling
+    #     breach when the reason is missing share counts (META, 5 Sep: the
+    #     ceiling branch fired saying "60.4% is above 100%"). Pure branch
+    #     check on the same predicate order the page uses.
+    def _dE_note_kind(no_counts, defined, val):
+        if no_counts: return "no-counts"
+        if not defined: return "undefined"
+        if val < 0: return "negative"
+        return "ceiling"
+    out.append(("ΔE explanation picks no-counts before the ceiling",
+                _dE_note_kind(True, True, 0.604) == "no-counts"
+                and _dE_note_kind(False, True, 1.30) == "ceiling"
+                and _dE_note_kind(False, False, 0.0) == "undefined",
+                "60.4% with no counts is explained by the counts, not the ceiling"))
+
     return out
 
 
@@ -3869,7 +3884,13 @@ if years and ticker and st.session_state.get("tk") == ticker:
                 "and its sub-10%-of-revenue SBC target.")
 
     if not dE_ok:
-        if not (pooled.dE_defined and recent.dE_defined):
+        if _no_counts:
+            alerts.append(("error",
+                "ΔE cannot be measured: no year in this window has a share count, so the "
+                "shares delivered each year priced at zero and the pooled figures charge the "
+                "whole buyback as cost. The tag panel names what was read. Set owners' "
+                "earnings by hand; the assumptions block will record it as set by hand."))
+        elif not (pooled.dE_defined and recent.dE_defined):
             alerts.append(("error",
                 "ΔE is undefined because cumulative net income is negative. A ratio against a "
                 "negative denominator flips sign, so the percentages shown are not usable. Set "
