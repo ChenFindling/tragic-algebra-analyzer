@@ -1688,10 +1688,14 @@ def foreign_filer_note(net_income_tag: str, unread: list[str]) -> str:
             f"from {net_income_tag}, which is right, but this reader knows US-GAAP tag names "
             "for the other lines and an IFRS filing does not use them. ")
     if not unread:
-        return head + "Check each line in the tag panel before trusting any figure below."
+        return head + ("Check each line in the tag panel before trusting any figure below. "
+                       "The Non-US Checker page reads the IFRS names this page does not — "
+                       "prefer it for this ticker.")
     return head + ("Nothing at all was read for: " + ", ".join(unread) + ". Those lines are "
                    "wrong rather than missing — a line that reads nothing is treated as a "
-                   "zero. Treat the whole page as unverified and do not use the valuation.")
+                   "zero. Treat the whole page as unverified and do not use the valuation. "
+                   "The Non-US Checker page reads the IFRS names this page does not — use it "
+                   "for this ticker.")
 
 
 def growth_trend_phrase(cagr3: float, latest: float) -> str:
