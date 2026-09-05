@@ -1345,10 +1345,10 @@ def _instant(facts: dict, concepts: list[str], unit: str = "USD",
     When the first-preference concept exists and is passed over, the loser and
     the winner are recorded in `skipped` so the caller can say so.
     """
-    for taxonomy in ("us-gaap", "dei", "ifrs-full"):
-        tax = facts.get("facts", {}).get(taxonomy, {})
-        cands: list[tuple[str, dict[int, float]]] = []
-        for concept in concepts:
+    cands: list[tuple[str, dict[int, float]]] = []
+    for concept in concepts:
+        for taxonomy in ("us-gaap", "dei", "ifrs-full"):
+            tax = facts.get("facts", {}).get(taxonomy, {})
             if concept not in tax:
                 continue
             out: dict[int, tuple[str, float]] = {}
@@ -1362,16 +1362,16 @@ def _instant(facts: dict, concepts: list[str], unit: str = "USD",
                     out[fy] = (filed, float(row["val"]))
             if out:
                 cands.append((concept, {k: v[1] for k, v in out.items()}))
-        if not cands:
-            continue
-        latest = max(max(s) for _, s in cands) if prefer_recent else max(cands[0][1])
-        for concept, s in cands:
-            if max(s) == latest:
-                if sources is not None:
-                    sources.append(concept)
-                if skipped is not None and concept != cands[0][0]:
-                    skipped.append((cands[0][0], max(cands[0][1]), concept, latest))
-                return s
+    if not cands:
+        return {}
+    latest = max(max(s) for _, s in cands) if prefer_recent else max(cands[0][1])
+    for concept, s in cands:
+        if max(s) == latest:
+            if sources is not None:
+                sources.append(concept)
+            if skipped is not None and concept != cands[0][0]:
+                skipped.append((cands[0][0], max(cands[0][1]), concept, latest))
+            return s
     return {}
 
 
@@ -3921,6 +3921,32 @@ def self_test() -> list[tuple[str, bool, str]]:
                 "units conversion, never currency"))
     out.append(("Per-ordinary price is the ADS price over the ratio (LEGN: 5.20/2)",
                 abs(5.20 / 2.0 - 2.60) < 1e-9, f"{5.20/2.0:.2f}"))
+
+    # 33 (4 Sep 2026, after the TM run). A transition filer: us-gaap cash
+    #     dies at FY2020, ifrs cash lives to FY2025. prefer_recent must
+    #     pick the living series and record the skip; without
+    #     prefer_recent, list order wins as before.
+    def _irow(fy, v):
+        return {"end": f"{fy}-12-31", "form": "20-F", "filed": f"{fy + 1}-02-01",
+                "val": v}
+    _tm = {"facts": {
+        "us-gaap": {"CashAndCashEquivalentsAtCarryingValue":
+                    {"units": {"JPY": [_irow(y, 100.0) for y in range(2014, 2021)]}}},
+        "ifrs-full": {"CashAndCashEquivalents":
+                      {"units": {"JPY": [_irow(y, 200.0) for y in range(2020, 2026)]}}}}}
+    _sk: list = []
+    _got = _instant(_tm, ["CashAndCashEquivalentsAtCarryingValue",
+                          "CashAndCashEquivalents"], "JPY", None, _sk,
+                    prefer_recent=True)
+    out.append(("A transition filer's dead us-gaap tag yields to the living IFRS one",
+                max(_got) == 2025 and _got[2025] == 200.0 and bool(_sk)
+                and _sk[0][0] == "CashAndCashEquivalentsAtCarryingValue",
+                f"read to FY{max(_got)}, skip recorded — Toyota's balance was 5y stale"))
+    _got2 = _instant(_tm, ["CashAndCashEquivalentsAtCarryingValue",
+                           "CashAndCashEquivalents"], "JPY")
+    out.append(("...and without prefer_recent, concept order still wins as designed",
+                max(_got2) == 2020 and _got2[2020] == 100.0,
+                "first-in-list-with-data, across taxonomies"))
 
     # 29 (4 Sep 2026, after the TTE run). Cash read + debt silent must
     #     warn loudly; any debt read, or no cash read, must stay silent.
