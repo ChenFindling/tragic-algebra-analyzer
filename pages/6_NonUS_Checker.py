@@ -2911,7 +2911,11 @@ def load(ticker: str, n_years: int = 10, price_symbol: str = "", ads_ratio: floa
                 "Either means it is an ordinary repurchase, and charging it as withholding "
                 "would count the same dollars twice — once as cash out, once as the market value "
                 "of shares delivered.")
-        else:
+        elif any(y.Cw for y in years):
+            # JPM, 1 Sep 2026 (page 5's run): the treasury tag was in the
+            # sources but no year survived the filters, so this "accepted"
+            # sentence fired alongside "no tax-withholding line found" three
+            # notes later. Accepted means values exist.
             notes.append(
                 "Tax withholding was read from a treasury-stock line rather than the usual "
                 "withholding tag. Filers that retire shares on repurchase report it this way. "
