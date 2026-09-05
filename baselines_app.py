@@ -3594,8 +3594,12 @@ def vintage_status(pin: Pin, s: Summary) -> str:
 
 
 def core_value(s: Summary, key: str):
-    """Look a pinned key up in a summary. 'omega:2024' reads one year."""
+    """Look a pinned key up in a summary. 'omega:2024' reads one year —
+    from core if present (synthetic summaries), else from the Year list
+    (live runs, where summarize does not emit per-year omega keys)."""
     if key.startswith("omega:"):
+        if key in s.core:
+            return s.core[key]
         fy = int(key.split(":")[1])
         for y in s.years:
             if y.fy == fy:
@@ -3875,8 +3879,29 @@ PINS: list[Pin] = [
             'shares': 155.305953,
         },
         refusals=()),
-    # BBW — held, see the block comment above. Full-period ΔE 98.8 → 98.10.
-    Pin(ticker='BBW', pin_set='internal'),
+    # BBW — REDUCED pin (6 Sep 2026): dE_full and omega_sum are deliberately
+    # NOT pinned. Cause decomposed: the price request is range=11y ROLLING, and
+    # BBW's FY2016 (Feb 2015 – Jan 2016) began 11.6 years ago, so its average
+    # price is a shrinking partial window (5 months and falling) that loses a
+    # month roughly monthly — the 29 Aug → 5 Sep move (98.8 → 98.10) was the
+    # Aug-2015 bar dropping (FY2016 V = 25.9 + P×(−1.5), unfloored, ∂Ω/∂P =
+    # 1.5M/$). Endgame ~Feb 2027: FY2016's last priced month rolls off, price
+    # reads 0, V becomes the full T (25.9 vs 5.7) — an ~8-point silent ΔE drop.
+    # QUEUED: shared-reader fix, all six files (derive the price range from the
+    # window's earliest start, or flag partial-coverage years). dE_3y spans
+    # FY2024–26, fully priced, stable — pinned.
+    Pin(ticker='BBW', pin_set='internal', pinned='2026-09-05',
+        latest_fy=2026, window=(2016, 2017, 2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026),
+        core={
+            'G': 2.93,
+            'N': 52.203,
+            'T': 27.735,
+            'dE_3y': 97.76456082219417,
+            'net_cash': 28.212999999999997,
+            'price': 51.747499783833824,
+            'shares': 12.808954,
+        },
+        refusals=()),
     Pin(ticker='PLTR', pin_set='internal', pinned='2026-09-05',
         latest_fy=2025, window=(2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025),
         core={
@@ -3942,8 +3967,34 @@ PINS: list[Pin] = [
             'shares': 14773.26,
         },
         refusals=()),
-    # NFLX — held, see the block comment above. Full-period ΔE 82.6 → 80.59.
-    Pin(ticker='NFLX', pin_set='internal'),
+    # NFLX — REDUCED pin (6 Sep 2026): dE_full, dE_3y and omega_sum are
+    # deliberately NOT pinned — they embody a diagnosed gate defect. The Ce
+    # gate, once armed by the broad issuance tag being ANY source (it fills
+    # only NFLX's 2007–2010, outside the window), gates EVERY year's Ce —
+    # including years filled by the narrow ProceedsFromStockOptionsExercised
+    # tag, which is employee exercises by definition. FY2024's genuine
+    # exercise wave ($832.887M vs 3×G = $817.76M, filed facts) was zeroed as
+    # if it were an ATM, moving pooled ΔE 82.60 → 80.59. Conservative
+    # direction, still wrong. QUEUED: both gates (Ce and the Cw treasury gate
+    # it copies) must gate only years the broad/treasury tag actually
+    # supplied — per-year sources from _annual; all six files. Acceptance
+    # figures for the fix, pre-registered at this vintage: dE_full 82.60,
+    # dE_3y 83.09. FY2025's own Ω (2,381 on the page) is gate-independent
+    # (its 667.0 of proceeds sits under the 1,105 threshold) but is known
+    # only at display precision, so it is NOT pinned — an omega:2025 pin
+    # needs summarize to emit per-year Ω in the capture block first (small
+    # future addition; core_value already reads such keys).
+    Pin(ticker='NFLX', pin_set='internal', pinned='2026-09-05',
+        latest_fy=2025, window=(2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025),
+        core={
+            'G': 368.449,
+            'N': 10981.201,
+            'T': 9127.167,
+            'net_cash': -5400.476999999999,
+            'price': 110.55633290608723,
+            'shares': 4222.16215,
+        },
+        refusals=()),
     Pin(ticker='CLMB', pin_set='internal', pinned='2026-09-05',
         latest_fy=2025, window=(2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025),
         core={
