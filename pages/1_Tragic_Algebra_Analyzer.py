@@ -1092,7 +1092,8 @@ def price_coverage_refusal(n_years: int, unpriced: int, have_history: bool) -> s
 def _annual(facts: dict, us: list[str], ifrs: list[str],
             sources: list[str] | None = None,
             fill: bool = False,
-            prefer_recent: bool = False) -> dict[int, tuple[str, str, float]]:
+            prefer_recent: bool = False,
+            origin: dict[int, str] | None = None) -> dict[int, tuple[str, str, float]]:
     """{fy: (start, end, value)} for full-year facts from annual reports only.
 
     Three filters that matter: the period must be roughly a year (so quarterly
@@ -1143,6 +1144,14 @@ def _annual(facts: dict, us: list[str], ifrs: list[str],
                     out.update(fresh)
                     if sources is not None:
                         sources.append(concept)
+                    if origin is not None:
+                        # NFLX, 5 Sep 2026 (the Baselines app's first catch):
+                        # the Ce gate armed on the broad tag because it filled
+                        # 2007-2010, then zeroed FY2024's genuine exercises
+                        # supplied by the NARROW tag. Which concept filled
+                        # which year is the fact the gates need.
+                        for fy in fresh:
+                            origin[fy] = concept
             else:
                 cands.append((concept, got))
         # Without fill, ONE concept answers for the whole line, so choosing the
@@ -1163,8 +1172,26 @@ def _annual(facts: dict, us: list[str], ifrs: list[str],
                 if max(got) == latest:
                     if sources is not None:
                         sources.append(concept)
+                    if origin is not None:
+                        for k in got:
+                            origin[k] = concept
                     return {k: (v[1], v[2], v[3]) for k, v in got.items()}
     return {k: (v[1], v[2], v[3]) for k, v in out.items()}
+
+
+def broad_gate_fires(origin_tag: str | None, broad: str,
+                     v: float, G: float, N: float) -> bool:
+    """Whether a size-gated cash line should be zeroed for one year.
+
+    Fires only when BOTH hold: this year's value was supplied by the broad
+    tag itself (NFLX, 5 Sep 2026 — a gate armed by out-of-window broad
+    fills must never zero a narrow-supplied year: FY2024's $832.9M of
+    genuine option exercises against a 3x charge line of $817.8M), and the
+    value is raise-sized or repurchase-sized next to the charge (3x G, or a
+    tenth of net income where no charge was tagged)."""
+    if origin_tag != broad:
+        return False
+    return (v > 3 * G) if G > 0 else (v > 0.10 * abs(N))
 
 
 def currency_facts(facts: dict, concepts: list[str]) -> dict[str, int]:
@@ -2031,8 +2058,9 @@ def load(ticker: str, n_years: int = 10):
     sic, sic_desc = _sic(cmap[ticker])
 
     tag_sources: dict[str, list[str]] = {k: [] for k in CONCEPTS}
+    tag_origin: dict[str, dict[int, str]] = {k: {} for k in CONCEPTS}
     series = {k: _annual(facts, us, ifrs, tag_sources[k], k in FILL_KEYS,
-                         k in RECENCY_KEYS)
+                         k in RECENCY_KEYS, tag_origin[k])
               for k, (us, ifrs) in CONCEPTS.items()}
     # Ask the currency question ALWAYS, not only when nothing was found. A
     # foreign filer with a couple of USD convenience translations used to sail
@@ -2388,7 +2416,9 @@ def load(ticker: str, n_years: int = 10):
         for y in years:
             if not y.Cw:
                 continue
-            if (y.Cw > 3 * y.G) if y.G > 0 else (y.Cw > 0.10 * abs(y.N)):
+            if broad_gate_fires(tag_origin["Cw"].get(y.fy),
+                                "TreasuryStockValueAcquiredCostMethod",
+                                y.Cw, y.G, y.N):
                 y.Cw, capped = 0.0, capped + 1
         capped_any = capped > 0
         if capped:
@@ -2424,7 +2454,9 @@ def load(ticker: str, n_years: int = 10):
         for y in years:
             if not y.Ce:
                 continue
-            if (y.Ce > 3 * y.G) if y.G > 0 else (y.Ce > 0.10 * abs(y.N)):
+            if broad_gate_fires(tag_origin["Ce"].get(y.fy),
+                                "ProceedsFromIssuanceOfCommonStock",
+                                y.Ce, y.G, y.N):
                 y.Ce, _ce_capped = 0.0, _ce_capped + 1
         if _ce_capped:
             notes.append(
@@ -2722,6 +2754,21 @@ def load(ticker: str, n_years: int = 10):
                           "sic_desc": sic_desc, "financial": fin_class in ("bank", "insurer", "reit", "refused"),
                           "fin_class": fin_class, "fin_reason": fin_reason,
                           "sh_cov": (_cov_n, len(_win_cov))}
+
+
+# Lives ABOVE the UI line on purpose (6 Sep 2026): self-test 21 calls it,
+# and the Baselines app copies everything above the UI banner verbatim —
+# a test's dependency below that line is a name the copy cannot see.
+def dE_caption(dE: float, defined: bool, no_counts: bool) -> str:
+    """The ΔE radio caption. META, 5 Sep 2026 (Chen): a dual-class filer with
+    no share count in ANY year still displayed pooled ΔE (60.4%/56.4%) as
+    selectable figures — but with every year's share change reading zero, the
+    whole buyback is charged as cost and the pools are meaningless (his META
+    is 83.3%). A number the page cannot stand behind must not be offered as a
+    choice."""
+    if no_counts:
+        return "n/a — no share counts read"
+    return f"{dE:.1%}" if defined else "n/a — losses"
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -3445,6 +3492,27 @@ def self_test() -> list[tuple[str, bool, str]]:
                 and _dE_note_kind(False, False, 0.0) == "undefined",
                 "60.4% with no counts is explained by the counts, not the ceiling"))
 
+    # 23. The gates act per year on the tag that supplied it (NFLX, 5 Sep
+    #     2026, the Baselines app's first catch). A narrow-supplied year is
+    #     never zeroed however the gate got armed; a broad-supplied year of
+    #     the same size is; and the no-charge branch keys on net income.
+    out.append(("A narrow-supplied year survives an armed gate; a broad one does not",
+                not broad_gate_fires("ProceedsFromStockOptionsExercised",
+                                     "ProceedsFromIssuanceOfCommonStock",
+                                     832.887, 272.588, 5407.9)
+                and broad_gate_fires("ProceedsFromIssuanceOfCommonStock",
+                                     "ProceedsFromIssuanceOfCommonStock",
+                                     832.887, 272.588, 5407.9),
+                "NFLX FY2024: 832.9 vs 3x272.6 — origin decides, not arming"))
+    out.append(("...and the PDEX/CVNA broad-supplied shapes still gate",
+                broad_gate_fires("ProceedsFromIssuanceOfCommonStock",
+                                 "ProceedsFromIssuanceOfCommonStock", 2.2, 0.19, 5.0)
+                and broad_gate_fires("ProceedsFromIssuanceOfCommonStock",
+                                     "ProceedsFromIssuanceOfCommonStock", 600.0, 0.0, 450.0)
+                and not broad_gate_fires(None,
+                                         "ProceedsFromIssuanceOfCommonStock", 600.0, 0.0, 450.0),
+                "broad-supplied years zeroed; an unknown-origin year is left alone"))
+
     return out
 
 
@@ -3461,18 +3529,6 @@ def self_test() -> list[tuple[str, bool, str]]:
 def d(x, dp=2):
     """Escaped dollar amount, safe inside markdown."""
     return f"\\${x:,.{dp}f}"
-
-
-def dE_caption(dE: float, defined: bool, no_counts: bool) -> str:
-    """The ΔE radio caption. META, 5 Sep 2026 (Chen): a dual-class filer with
-    no share count in ANY year still displayed pooled ΔE (60.4%/56.4%) as
-    selectable figures — but with every year's share change reading zero, the
-    whole buyback is charged as cost and the pools are meaningless (his META
-    is 83.3%). A number the page cannot stand behind must not be offered as a
-    choice."""
-    if no_counts:
-        return "n/a — no share counts read"
-    return f"{dE:.1%}" if defined else "n/a — losses"
 
 
 def _page_footer() -> None:
