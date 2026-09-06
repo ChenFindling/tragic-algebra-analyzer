@@ -17,9 +17,9 @@ SECOND Cloud app pointing at this file. Two consequences of that:
     harmless and known, not a bug.
 
 Layout of this file:
-  lines up to the BASELINES banner — tool 1's engine, reader and 123-check
+  lines up to the BASELINES banner — tool 1's engine, reader and 127-check
   self-test, copied VERBATIM from the deployed 1_Tragic_Algebra_Analyzer.py
-  (its lines 1-3425; only this docstring replaced, tool 1's UI dropped).
+  (its lines 1-3518; only this docstring replaced, tool 1's UI dropped).
   The doctrine: what this page checks is what the pages run. A reader
   change in the page files is a reader change here — sync it like
   pages 2, 4, 5 and 6.
@@ -34,7 +34,6 @@ NOT PINNED (prints a capture block).
 
 Run:  streamlit run baselines_app.py
 """
-
 
 from __future__ import annotations
 
@@ -1099,7 +1098,8 @@ def price_coverage_refusal(n_years: int, unpriced: int, have_history: bool) -> s
 def _annual(facts: dict, us: list[str], ifrs: list[str],
             sources: list[str] | None = None,
             fill: bool = False,
-            prefer_recent: bool = False) -> dict[int, tuple[str, str, float]]:
+            prefer_recent: bool = False,
+            origin: dict[int, str] | None = None) -> dict[int, tuple[str, str, float]]:
     """{fy: (start, end, value)} for full-year facts from annual reports only.
 
     Three filters that matter: the period must be roughly a year (so quarterly
@@ -1150,6 +1150,14 @@ def _annual(facts: dict, us: list[str], ifrs: list[str],
                     out.update(fresh)
                     if sources is not None:
                         sources.append(concept)
+                    if origin is not None:
+                        # NFLX, 5 Sep 2026 (the Baselines app's first catch):
+                        # the Ce gate armed on the broad tag because it filled
+                        # 2007-2010, then zeroed FY2024's genuine exercises
+                        # supplied by the NARROW tag. Which concept filled
+                        # which year is the fact the gates need.
+                        for fy in fresh:
+                            origin[fy] = concept
             else:
                 cands.append((concept, got))
         # Without fill, ONE concept answers for the whole line, so choosing the
@@ -1170,8 +1178,26 @@ def _annual(facts: dict, us: list[str], ifrs: list[str],
                 if max(got) == latest:
                     if sources is not None:
                         sources.append(concept)
+                    if origin is not None:
+                        for k in got:
+                            origin[k] = concept
                     return {k: (v[1], v[2], v[3]) for k, v in got.items()}
     return {k: (v[1], v[2], v[3]) for k, v in out.items()}
+
+
+def broad_gate_fires(origin_tag: str | None, broad: str,
+                     v: float, G: float, N: float) -> bool:
+    """Whether a size-gated cash line should be zeroed for one year.
+
+    Fires only when BOTH hold: this year's value was supplied by the broad
+    tag itself (NFLX, 5 Sep 2026 — a gate armed by out-of-window broad
+    fills must never zero a narrow-supplied year: FY2024's $832.9M of
+    genuine option exercises against a 3x charge line of $817.8M), and the
+    value is raise-sized or repurchase-sized next to the charge (3x G, or a
+    tenth of net income where no charge was tagged)."""
+    if origin_tag != broad:
+        return False
+    return (v > 3 * G) if G > 0 else (v > 0.10 * abs(N))
 
 
 def currency_facts(facts: dict, concepts: list[str]) -> dict[str, int]:
@@ -2038,8 +2064,9 @@ def load(ticker: str, n_years: int = 10):
     sic, sic_desc = _sic(cmap[ticker])
 
     tag_sources: dict[str, list[str]] = {k: [] for k in CONCEPTS}
+    tag_origin: dict[str, dict[int, str]] = {k: {} for k in CONCEPTS}
     series = {k: _annual(facts, us, ifrs, tag_sources[k], k in FILL_KEYS,
-                         k in RECENCY_KEYS)
+                         k in RECENCY_KEYS, tag_origin[k])
               for k, (us, ifrs) in CONCEPTS.items()}
     # Ask the currency question ALWAYS, not only when nothing was found. A
     # foreign filer with a couple of USD convenience translations used to sail
@@ -2395,7 +2422,9 @@ def load(ticker: str, n_years: int = 10):
         for y in years:
             if not y.Cw:
                 continue
-            if (y.Cw > 3 * y.G) if y.G > 0 else (y.Cw > 0.10 * abs(y.N)):
+            if broad_gate_fires(tag_origin["Cw"].get(y.fy),
+                                "TreasuryStockValueAcquiredCostMethod",
+                                y.Cw, y.G, y.N):
                 y.Cw, capped = 0.0, capped + 1
         capped_any = capped > 0
         if capped:
@@ -2431,7 +2460,9 @@ def load(ticker: str, n_years: int = 10):
         for y in years:
             if not y.Ce:
                 continue
-            if (y.Ce > 3 * y.G) if y.G > 0 else (y.Ce > 0.10 * abs(y.N)):
+            if broad_gate_fires(tag_origin["Ce"].get(y.fy),
+                                "ProceedsFromIssuanceOfCommonStock",
+                                y.Ce, y.G, y.N):
                 y.Ce, _ce_capped = 0.0, _ce_capped + 1
         if _ce_capped:
             notes.append(
@@ -2727,7 +2758,23 @@ def load(ticker: str, n_years: int = 10):
                           "ticker": ticker,
                           "shares": diluted, "growth": growth, "sic": sic,
                           "sic_desc": sic_desc, "financial": fin_class in ("bank", "insurer", "reit", "refused"),
-                          "fin_class": fin_class, "fin_reason": fin_reason}
+                          "fin_class": fin_class, "fin_reason": fin_reason,
+                          "sh_cov": (_cov_n, len(_win_cov))}
+
+
+# Lives ABOVE the UI line on purpose (6 Sep 2026): self-test 21 calls it,
+# and the Baselines app copies everything above the UI banner verbatim —
+# a test's dependency below that line is a name the copy cannot see.
+def dE_caption(dE: float, defined: bool, no_counts: bool) -> str:
+    """The ΔE radio caption. META, 5 Sep 2026 (Chen): a dual-class filer with
+    no share count in ANY year still displayed pooled ΔE (60.4%/56.4%) as
+    selectable figures — but with every year's share change reading zero, the
+    whole buyback is charged as cost and the pools are meaningless (his META
+    is 83.3%). A number the page cannot stand behind must not be offered as a
+    choice."""
+    if no_counts:
+        return "n/a — no share counts read"
+    return f"{dE:.1%}" if defined else "n/a — losses"
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -3428,17 +3475,64 @@ def self_test() -> list[tuple[str, bool, str]]:
                 and financial_class("6141", _fx([]))[0] == "refused",
                 "Ryan Specialty ordinary; Schwab-shaped promotes; a lender is not priced"))
 
+    # 21. The META caption (5 Sep 2026): no share counts anywhere → the ΔE
+    #     radio must say so instead of offering the polluted pools.
+    out.append(("ΔE caption refuses when no year has a share count",
+                dE_caption(0.604, True, True) == "n/a — no share counts read"
+                and dE_caption(0.833, True, False) == "83.3%"
+                and dE_caption(0.0, False, False) == "n/a — losses",
+                "no-counts beats defined; the other two branches unchanged"))
+
+    # 22. The note that explains an unprojectable ΔE must not claim a ceiling
+    #     breach when the reason is missing share counts (META, 5 Sep: the
+    #     ceiling branch fired saying "60.4% is above 100%"). Pure branch
+    #     check on the same predicate order the page uses.
+    def _dE_note_kind(no_counts, defined, val):
+        if no_counts: return "no-counts"
+        if not defined: return "undefined"
+        if val < 0: return "negative"
+        return "ceiling"
+    out.append(("ΔE explanation picks no-counts before the ceiling",
+                _dE_note_kind(True, True, 0.604) == "no-counts"
+                and _dE_note_kind(False, True, 1.30) == "ceiling"
+                and _dE_note_kind(False, False, 0.0) == "undefined",
+                "60.4% with no counts is explained by the counts, not the ceiling"))
+
+    # 23. The gates act per year on the tag that supplied it (NFLX, 5 Sep
+    #     2026, the Baselines app's first catch). A narrow-supplied year is
+    #     never zeroed however the gate got armed; a broad-supplied year of
+    #     the same size is; and the no-charge branch keys on net income.
+    out.append(("A narrow-supplied year survives an armed gate; a broad one does not",
+                not broad_gate_fires("ProceedsFromStockOptionsExercised",
+                                     "ProceedsFromIssuanceOfCommonStock",
+                                     832.887, 272.588, 5407.9)
+                and broad_gate_fires("ProceedsFromIssuanceOfCommonStock",
+                                     "ProceedsFromIssuanceOfCommonStock",
+                                     832.887, 272.588, 5407.9),
+                "NFLX FY2024: 832.9 vs 3x272.6 — origin decides, not arming"))
+    out.append(("...and the PDEX/CVNA broad-supplied shapes still gate",
+                broad_gate_fires("ProceedsFromIssuanceOfCommonStock",
+                                 "ProceedsFromIssuanceOfCommonStock", 2.2, 0.19, 5.0)
+                and broad_gate_fires("ProceedsFromIssuanceOfCommonStock",
+                                     "ProceedsFromIssuanceOfCommonStock", 600.0, 0.0, 450.0)
+                and not broad_gate_fires(None,
+                                         "ProceedsFromIssuanceOfCommonStock", 600.0, 0.0, 450.0),
+                "broad-supplied years zeroed; an unknown-origin year is left alone"))
+
     return out
 
 
 # ══════════════════════════════════════════════════════════════════════
 #  BASELINES — everything below this line is this page's own code.
 #  Everything above it is tool 1's engine and reader, copied verbatim
-#  (lines 1–3425 of the deployed 1_Tragic_Algebra_Analyzer.py, 123
-#  checks; only the module docstring was replaced). The doctrine: what
-#  this page checks is what the pages run. If the shared reader changes
-#  in the page files, it changes here too — this file is a sync target
-#  exactly like pages 2, 4, 5 and 6.
+#  (lines 1–3518 of the deployed 1_Tragic_Algebra_Analyzer.py, 127
+#  checks; only the module docstring was replaced). Re-copied 6 Sep
+#  2026 for the gate per-year-source fix (BASELINES-HANDOVER §1.6):
+#  _annual records which tag supplied each fiscal year, and both
+#  proceeds gates test only broad/treasury-supplied years. The
+#  doctrine: what this page checks is what the pages run. If the
+#  shared reader changes in the page files, it changes here too —
+#  this file is a sync target exactly like pages 2, 4, 5 and 6.
 # ══════════════════════════════════════════════════════════════════════
 
 # ── The pin ───────────────────────────────────────────────────────────
@@ -3804,11 +3898,12 @@ def summary_line(rows: list[Row]) -> str:
 # 3-year figure — full-period 90.0 first captured here) with net cash
 # zeroed by the financial gate; AAPL 93.63 = the recorded 93.6.
 #
-# NFLX and BBW are HELD UNPINNED: their full-period ΔE moved from the
-# 29–30 Aug record (82.6 → 80.59 and 98.8 → 98.10), in the Ce gate's
-# direction but not yet decomposed into named rejected years — and a
-# move without decomposition stops the pinning (the PDEX rule). Their
-# tool-1 gate notes settle it; pin from a fresh capture then.
+# The 29–30 Aug full-period ΔE moves (NFLX 82.6 → 80.59, BBW 98.8 →
+# 98.10) were both decomposed to the dollar on 5 Sep: NFLX is §1.6 (the
+# Ce gate, fixed in this file's 6-Sep engine span — pin unpinned below
+# for the post-fix capture at 82.60/83.09) and BBW is §1.7 (the rolling
+# 11y price range, still queued — its reduced pin stays reduced until
+# that fix lands).
 #
 # GRAB's figures pin the KNOWN-UNREAD state on purpose (G = 0, net cash
 # = 0: the US-GAAP fill lists read nothing on an IFRS filer, exactly as
@@ -3967,34 +4062,24 @@ PINS: list[Pin] = [
             'shares': 14773.26,
         },
         refusals=()),
-    # NFLX — REDUCED pin (6 Sep 2026): dE_full, dE_3y and omega_sum are
-    # deliberately NOT pinned — they embody a diagnosed gate defect. The Ce
-    # gate, once armed by the broad issuance tag being ANY source (it fills
-    # only NFLX's 2007–2010, outside the window), gates EVERY year's Ce —
-    # including years filled by the narrow ProceedsFromStockOptionsExercised
-    # tag, which is employee exercises by definition. FY2024's genuine
-    # exercise wave ($832.887M vs 3×G = $817.76M, filed facts) was zeroed as
-    # if it were an ATM, moving pooled ΔE 82.60 → 80.59. Conservative
-    # direction, still wrong. QUEUED: both gates (Ce and the Cw treasury gate
-    # it copies) must gate only years the broad/treasury tag actually
-    # supplied — per-year sources from _annual; all six files. Acceptance
-    # figures for the fix, pre-registered at this vintage: dE_full 82.60,
-    # dE_3y 83.09. FY2025's own Ω (2,381 on the page) is gate-independent
-    # (its 667.0 of proceeds sits under the 1,105 threshold) but is known
-    # only at display precision, so it is NOT pinned — an omega:2025 pin
-    # needs summarize to emit per-year Ω in the capture block first (small
-    # future addition; core_value already reads such keys).
-    Pin(ticker='NFLX', pin_set='internal', pinned='2026-09-05',
-        latest_fy=2025, window=(2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025),
-        core={
-            'G': 368.449,
-            'N': 10981.201,
-            'T': 9127.167,
-            'net_cash': -5400.476999999999,
-            'price': 110.55633290608723,
-            'shares': 4222.16215,
-        },
-        refusals=()),
+    # NFLX — UNPINNED FOR CAPTURE (6 Sep 2026, gate-fix session). The Ce
+    # gate's per-year-source defect (BASELINES-HANDOVER §1.6) zeroed
+    # FY2024's $832.887M of narrow-tag option exercises against 3×G =
+    # $817.76M; the fix in this file's engine span gates only years the
+    # broad tag itself supplied. The 5-Sep reduced pin held only
+    # gate-independent keys, so after the fix it would PASS — and a PASS
+    # row prints no block, while the re-pin needs full repr precision. An
+    # unpinned row is this page's own mechanism for a capture block, so
+    # the pin is dropped for exactly one run. Acceptance, pre-registered:
+    # dE_full displays 82.60, dE_3y 83.09, and the six filed keys of the
+    # 5-Sep reduced pin must reproduce TO THE DIGIT before the block is
+    # pasted: G 368.449, N 10981.201, T 9127.167,
+    # net_cash -5400.476999999999, price 110.55633290608723,
+    # shares 4222.16215. FY2025's own Ω (2,381) is gate-independent
+    # (667.0 of proceeds under the 1,105 threshold) but display-precision
+    # only, so still not pinned — omega:YYYY pins wait on summarize
+    # emitting per-year Ω (§5 D).
+    Pin(ticker='NFLX', pin_set='internal'),
     Pin(ticker='CLMB', pin_set='internal', pinned='2026-09-05',
         latest_fy=2025, window=(2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025),
         core={
