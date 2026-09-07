@@ -1010,8 +1010,9 @@ def price_coverage_refusal(n_years: int, unpriced: int, have_history: bool) -> s
             "anything about the filer, so it is worth trying again in a minute.")
     return (
         f"{unpriced} of the {n_years} years in this window have no share price. The price "
-        "history runs about eleven years, so a window reaching further back leaves its early "
-        "years unpriced. The market value of shares delivered floors at zero in those years, "
+        "request covers the window's own span, so this is the provider's history running "
+        "out rather than the window reaching past it. The market value of shares delivered "
+        "floors at zero in those years, "
         "the true stock-comp cost becomes withholding minus option proceeds — negative where "
         "options were exercised — and ΔE stops being a measurement of anything.")
 
@@ -1249,8 +1250,18 @@ def _instant(facts: dict, concepts: list[str], unit: str = "USD",
 
 
 @st.cache_data(ttl=86400, show_spinner=False)
-def _monthly_closes(ticker: str) -> tuple[dict[str, float], dict[str, float]]:
-    """Monthly closes for ~11 years keyed 'YYYY-MM', plus split events.
+def _monthly_closes(ticker: str, start: str | None = None
+                    ) -> tuple[dict[str, float], dict[str, float]]:
+    """Monthly closes keyed 'YYYY-MM', plus split events.
+
+    The request reaches back to `start`'s month — the window's earliest
+    fiscal-year start — or eleven years, whichever is EARLIER; never less
+    than eleven, so every bar and split event the old rolling request
+    returned is still returned, and a deep window gets its missing months.
+    The rolling `range=11y` this replaces silently clipped the oldest
+    window year: BBW's FY2016 average was a shrinking partial window that
+    would have priced at zero ~Feb 2027 and turned V_2016 into the full
+    buyback figure with no note (BASELINES-HANDOVER §1.7).
 
     The splits come back on the SAME request, which is why they are returned
     here rather than fetched separately: one round trip, one cache entry, and
@@ -1260,9 +1271,12 @@ def _monthly_closes(ticker: str) -> tuple[dict[str, float], dict[str, float]]:
     one that happened yesterday. The share counts in this file come from
     filings and are not. See the reconciliation in load().
     """
+    _p1 = _price_fetch_start(start, dt.date.today())
+    _e1 = int(dt.datetime(_p1.year, _p1.month, 1, tzinfo=dt.timezone.utc).timestamp())
+    _e2 = int(dt.datetime.now(dt.timezone.utc).timestamp())
     r = requests.get(
         f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
-        "?interval=1mo&range=11y&events=split",
+        f"?interval=1mo&period1={_e1}&period2={_e2}&events=split",
         headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
     res = r.json()["chart"]["result"][0]
     closes = res["indicators"]["quote"][0]["close"]
@@ -1307,6 +1321,76 @@ def _avg_price(closes: dict[str, float], start: str, end: str) -> float | None:
             vals.append(v)
         d = (d.replace(day=1) + dt.timedelta(days=32)).replace(day=1)
     return statistics.fmean(vals) if vals else None
+
+
+def _price_fetch_start(start: str | None, today) -> "dt.date":
+    """First month the price request asks for.
+
+    The month of `start` (the window's earliest fiscal-year start) or eleven
+    years back, whichever is EARLIER. The floor is the point: the request may
+    extend past the old rolling eleven years but never fetch less, so every
+    monthly bar and split event the old request returned is still returned —
+    which is what lets a deploy of this change promise that no filer whose
+    window sits inside eleven years moves by a cent.
+    """
+    eleven = dt.date(today.year - 11, today.month, 1)
+    if not start:
+        return eleven
+    return min(dt.date.fromisoformat(start).replace(day=1), eleven)
+
+
+def _priced_months(closes: dict[str, float], start: str, end: str) -> tuple[int, int]:
+    """(months with a close, months in the period) — the same walk
+    _avg_price takes, counting instead of averaging, so the two can never
+    disagree about which months a year's average stands on."""
+    s, e = dt.date.fromisoformat(start), dt.date.fromisoformat(end)
+    priced = expected = 0
+    m = s
+    while m <= e:
+        if closes.get(f"{m.year:04d}-{m.month:02d}"):
+            priced += 1
+        expected += 1
+        m = (m.replace(day=1) + dt.timedelta(days=32)).replace(day=1)
+    return priced, expected
+
+
+def partial_price_note(rows: list[tuple[int, int, int, bool]]) -> str:
+    """One consolidated note naming every window year whose average price
+    stands on fewer months than the fiscal year has. A partial average was
+    SILENT before, and the silence was the defect: BBW's FY2016 drifted
+    month by month with nothing on the page saying so.
+
+    rows: (fy, priced, expected, nothing_before), where nothing_before means
+    no month before the fiscal year's start has a price. The flag tells the
+    two partial truths apart — listed mid-year is not the same fact as
+    months missing from the history, and the sentence must say which. A year
+    with no priced month and nothing before it is PRE-listing: not partial,
+    not named here — zero-priced years are Gate 2's business.
+    """
+    parts = []
+    for fy, priced, expected, nothing_before in rows:
+        if priced >= expected:
+            continue
+        if priced == 0:
+            if nothing_before:
+                continue
+            parts.append(
+                f"FY{fy} has no priced month although the history covers earlier "
+                "months — a hole at the price provider, so its shares delivered "
+                "are valued at zero")
+        elif nothing_before:
+            parts.append(
+                f"FY{fy}'s average covers {priced} of {expected} months: priced "
+                "from its first trading month")
+        else:
+            parts.append(
+                f"FY{fy}'s average price covers {priced} of {expected} months — "
+                "months are missing inside the year")
+    if not parts:
+        return ""
+    return ("; ".join(parts)
+            + ". Those years' stock-comp costs are priced over the months that exist.")
+
 
 
 @st.cache_data(ttl=900, show_spinner=False)
@@ -2155,8 +2239,12 @@ def load(ticker: str, n_years: int = 10):
             "stock-comp cost is the whole buyback and their owners' earnings are understated. "
             "Treat the year-by-year table as partial.")
 
+    # The request must reach the window's own start: a rolling eleven-year
+    # range silently clipped the oldest year's average (BBW FY2016, §1.7).
+    _px_win = sorted(series["N"])[-n_years:]
+    _px_start = series["N"][_px_win[0]][0] if _px_win else None
     try:
-        closes, splits = _monthly_closes(ticker)
+        closes, splits = _monthly_closes(ticker, _px_start)
     except Exception:
         closes, splits = {}, {}
 
@@ -2286,6 +2374,17 @@ def load(ticker: str, n_years: int = 10):
     _pc = price_coverage_refusal(len(years), _unpriced, bool(closes))
     if _pc:
         raise ValueError(f"{ticker} cannot be valued from these filings — " + _pc)
+
+    # No silent partial averages: name every window year whose average stands
+    # on fewer months than the fiscal year has, and say WHICH partial truth
+    # it is — listed mid-year, or months missing from the history (§1.7).
+    if closes:
+        _first_px = min(closes)
+        _pp = partial_price_note(
+            [(fy,) + _priced_months(closes, series["N"][fy][0], series["N"][fy][1])
+             + (_first_px >= series["N"][fy][0][:7],) for fy in fys])
+        if _pp:
+            notes.append(_pp)
 
     # An IPO converts preferred to common and sells new stock in one go. Valuing
     # that at the market price treats a capital raise as compensation, which is
@@ -3844,6 +3943,33 @@ def self_test() -> list[tuple[str, bool, str]]:
                                          "ProceedsFromIssuanceOfCommonStock", 600.0, 0.0, 450.0),
                 "broad-supplied years zeroed; an unknown-origin year is left alone"))
 
+
+    # ── §1.7 price-range roll (queue B): the request reaches the window ──
+    _prd = dt.date(2026, 9, 7)
+    out.append(("Price fetch start: deep window extends, short window floors at 11y",
+                _price_fetch_start("2015-02-01", _prd) == dt.date(2015, 2, 1)
+                and _price_fetch_start("2019-06-15", _prd) == dt.date(2015, 9, 1)
+                and _price_fetch_start(None, _prd) == dt.date(2015, 9, 1),
+                "BBW's Feb-2015 window start wins; anything inside 11y floors"))
+    _prc = {f"2015-{_m:02d}": 10.0 + _m for _m in range(2, 13)}
+    _prc["2016-01"] = 22.0
+    out.append(("Priced months: full year 12/12, clipped tail 5/12",
+                _priced_months(_prc, "2015-02-01", "2016-01-31") == (12, 12)
+                and _priced_months({k: v for k, v in _prc.items() if k >= "2015-09"},
+                                   "2015-02-01", "2016-01-31") == (5, 12),
+                "the same walk _avg_price takes"))
+    out.append(("BBW shape: a fully covered FY2016 averages all twelve months",
+                abs(_avg_price(_prc, "2015-02-01", "2016-01-31")
+                    - statistics.fmean(_prc.values())) < 1e-9,
+                f"{_avg_price(_prc, '2015-02-01', '2016-01-31'):.4f}"))
+    out.append(("Partial note: listing wording vs missing-months wording",
+                "first trading month" in partial_price_note([(2020, 3, 12, True)])
+                and "missing inside the year" in partial_price_note([(2019, 9, 12, False)]),
+                "the two partial truths read differently"))
+    out.append(("Partial note: silent on full and pre-listing years; a provider hole is named",
+                partial_price_note([(2024, 12, 12, True), (2016, 0, 10, True)]) == ""
+                and "no priced month" in partial_price_note([(2018, 0, 12, False)]),
+                "zero-priced pre-listing years are Gate 2's business"))
     return out
 
 
