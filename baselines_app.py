@@ -17,9 +17,9 @@ SECOND Cloud app pointing at this file. Two consequences of that:
     harmless and known, not a bug.
 
 Layout of this file:
-  lines up to the BASELINES banner — tool 1's engine, reader and 127-check
+  lines up to the BASELINES banner — tool 1's engine, reader and 132-check
   self-test, copied VERBATIM from the deployed 1_Tragic_Algebra_Analyzer.py
-  (its lines 1-3518; only this docstring replaced, tool 1's UI dropped).
+  (its lines 1-3644; only this docstring replaced, tool 1's UI dropped).
   The doctrine: what this page checks is what the pages run. A reader
   change in the page files is a reader change here — sync it like
   pages 2, 4, 5 and 6.
@@ -1089,8 +1089,9 @@ def price_coverage_refusal(n_years: int, unpriced: int, have_history: bool) -> s
             "anything about the filer, so it is worth trying again in a minute.")
     return (
         f"{unpriced} of the {n_years} years in this window have no share price. The price "
-        "history runs about eleven years, so a window reaching further back leaves its early "
-        "years unpriced. The market value of shares delivered floors at zero in those years, "
+        "request covers the window's own span, so this is the provider's history running "
+        "out rather than the window reaching past it. The market value of shares delivered "
+        "floors at zero in those years, "
         "the true stock-comp cost becomes withholding minus option proceeds — negative where "
         "options were exercised — and ΔE stops being a measurement of anything.")
 
@@ -1328,8 +1329,18 @@ def _instant(facts: dict, concepts: list[str], unit: str = "USD",
 
 
 @st.cache_data(ttl=86400, show_spinner=False)
-def _monthly_closes(ticker: str) -> tuple[dict[str, float], dict[str, float]]:
-    """Monthly closes for ~11 years keyed 'YYYY-MM', plus split events.
+def _monthly_closes(ticker: str, start: str | None = None
+                    ) -> tuple[dict[str, float], dict[str, float]]:
+    """Monthly closes keyed 'YYYY-MM', plus split events.
+
+    The request reaches back to `start`'s month — the window's earliest
+    fiscal-year start — or eleven years, whichever is EARLIER; never less
+    than eleven, so every bar and split event the old rolling request
+    returned is still returned, and a deep window gets its missing months.
+    The rolling `range=11y` this replaces silently clipped the oldest
+    window year: BBW's FY2016 average was a shrinking partial window that
+    would have priced at zero ~Feb 2027 and turned V_2016 into the full
+    buyback figure with no note (BASELINES-HANDOVER §1.7).
 
     The splits come back on the SAME request, which is why they are returned
     here rather than fetched separately: one round trip, one cache entry, and
@@ -1339,9 +1350,12 @@ def _monthly_closes(ticker: str) -> tuple[dict[str, float], dict[str, float]]:
     one that happened yesterday. The share counts in this file come from
     filings and are not. See the reconciliation in load().
     """
+    _p1 = _price_fetch_start(start, dt.date.today())
+    _e1 = int(dt.datetime(_p1.year, _p1.month, 1, tzinfo=dt.timezone.utc).timestamp())
+    _e2 = int(dt.datetime.now(dt.timezone.utc).timestamp())
     r = requests.get(
         f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
-        "?interval=1mo&range=11y&events=split",
+        f"?interval=1mo&period1={_e1}&period2={_e2}&events=split",
         headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
     res = r.json()["chart"]["result"][0]
     closes = res["indicators"]["quote"][0]["close"]
@@ -1386,6 +1400,76 @@ def _avg_price(closes: dict[str, float], start: str, end: str) -> float | None:
             vals.append(v)
         d = (d.replace(day=1) + dt.timedelta(days=32)).replace(day=1)
     return statistics.fmean(vals) if vals else None
+
+
+def _price_fetch_start(start: str | None, today) -> "dt.date":
+    """First month the price request asks for.
+
+    The month of `start` (the window's earliest fiscal-year start) or eleven
+    years back, whichever is EARLIER. The floor is the point: the request may
+    extend past the old rolling eleven years but never fetch less, so every
+    monthly bar and split event the old request returned is still returned —
+    which is what lets a deploy of this change promise that no filer whose
+    window sits inside eleven years moves by a cent.
+    """
+    eleven = dt.date(today.year - 11, today.month, 1)
+    if not start:
+        return eleven
+    return min(dt.date.fromisoformat(start).replace(day=1), eleven)
+
+
+def _priced_months(closes: dict[str, float], start: str, end: str) -> tuple[int, int]:
+    """(months with a close, months in the period) — the same walk
+    _avg_price takes, counting instead of averaging, so the two can never
+    disagree about which months a year's average stands on."""
+    s, e = dt.date.fromisoformat(start), dt.date.fromisoformat(end)
+    priced = expected = 0
+    m = s
+    while m <= e:
+        if closes.get(f"{m.year:04d}-{m.month:02d}"):
+            priced += 1
+        expected += 1
+        m = (m.replace(day=1) + dt.timedelta(days=32)).replace(day=1)
+    return priced, expected
+
+
+def partial_price_note(rows: list[tuple[int, int, int, bool]]) -> str:
+    """One consolidated note naming every window year whose average price
+    stands on fewer months than the fiscal year has. A partial average was
+    SILENT before, and the silence was the defect: BBW's FY2016 drifted
+    month by month with nothing on the page saying so.
+
+    rows: (fy, priced, expected, nothing_before), where nothing_before means
+    no month before the fiscal year's start has a price. The flag tells the
+    two partial truths apart — listed mid-year is not the same fact as
+    months missing from the history, and the sentence must say which. A year
+    with no priced month and nothing before it is PRE-listing: not partial,
+    not named here — zero-priced years are Gate 2's business.
+    """
+    parts = []
+    for fy, priced, expected, nothing_before in rows:
+        if priced >= expected:
+            continue
+        if priced == 0:
+            if nothing_before:
+                continue
+            parts.append(
+                f"FY{fy} has no priced month although the history covers earlier "
+                "months — a hole at the price provider, so its shares delivered "
+                "are valued at zero")
+        elif nothing_before:
+            parts.append(
+                f"FY{fy}'s average covers {priced} of {expected} months: priced "
+                "from its first trading month")
+        else:
+            parts.append(
+                f"FY{fy}'s average price covers {priced} of {expected} months — "
+                "months are missing inside the year")
+    if not parts:
+        return ""
+    return ("; ".join(parts)
+            + ". Those years' stock-comp costs are priced over the months that exist.")
+
 
 
 @st.cache_data(ttl=900, show_spinner=False)
@@ -2235,8 +2319,12 @@ def load(ticker: str, n_years: int = 10):
             "stock-comp cost is the whole buyback and their owners' earnings are understated. "
             "Treat the year-by-year table as partial.")
 
+    # The request must reach the window's own start: a rolling eleven-year
+    # range silently clipped the oldest year's average (BBW FY2016, §1.7).
+    _px_win = sorted(series["N"])[-n_years:]
+    _px_start = series["N"][_px_win[0]][0] if _px_win else None
     try:
-        closes, splits = _monthly_closes(ticker)
+        closes, splits = _monthly_closes(ticker, _px_start)
     except Exception:
         closes, splits = {}, {}
 
@@ -2366,6 +2454,17 @@ def load(ticker: str, n_years: int = 10):
     _pc = price_coverage_refusal(len(years), _unpriced, bool(closes))
     if _pc:
         raise ValueError(f"{ticker} cannot be valued from these filings — " + _pc)
+
+    # No silent partial averages: name every window year whose average stands
+    # on fewer months than the fiscal year has, and say WHICH partial truth
+    # it is — listed mid-year, or months missing from the history (§1.7).
+    if closes:
+        _first_px = min(closes)
+        _pp = partial_price_note(
+            [(fy,) + _priced_months(closes, series["N"][fy][0], series["N"][fy][1])
+             + (_first_px >= series["N"][fy][0][:7],) for fy in fys])
+        if _pp:
+            notes.append(_pp)
 
     # An IPO converts preferred to common and sells new stock in one go. Valuing
     # that at the market price treats a capital raise as compensation, which is
@@ -2940,7 +3039,7 @@ def self_test() -> list[tuple[str, bool, str]]:
                 "the threshold is MORE than half, not half"))
     out.append(("A price-source failure refuses differently from a window that predates history",
                 "temporary failure" in price_coverage_refusal(10, 10, False)
-                and "eleven years" in price_coverage_refusal(10, 10, True),
+                and "provider's history" in price_coverage_refusal(10, 10, True),
                 "two causes, two messages — one is worth retrying, the other is not"))
     out.append(("A dE at or below 100% is projected exactly as measured",
                 seed_dE(0.925) == 0.925 and not dE_was_capped(0.925)
@@ -3519,15 +3618,42 @@ def self_test() -> list[tuple[str, bool, str]]:
                                          "ProceedsFromIssuanceOfCommonStock", 600.0, 0.0, 450.0),
                 "broad-supplied years zeroed; an unknown-origin year is left alone"))
 
+
+    # ── §1.7 price-range roll (queue B): the request reaches the window ──
+    _prd = dt.date(2026, 9, 7)
+    out.append(("Price fetch start: deep window extends, short window floors at 11y",
+                _price_fetch_start("2015-02-01", _prd) == dt.date(2015, 2, 1)
+                and _price_fetch_start("2019-06-15", _prd) == dt.date(2015, 9, 1)
+                and _price_fetch_start(None, _prd) == dt.date(2015, 9, 1),
+                "BBW's Feb-2015 window start wins; anything inside 11y floors"))
+    _prc = {f"2015-{_m:02d}": 10.0 + _m for _m in range(2, 13)}
+    _prc["2016-01"] = 22.0
+    out.append(("Priced months: full year 12/12, clipped tail 5/12",
+                _priced_months(_prc, "2015-02-01", "2016-01-31") == (12, 12)
+                and _priced_months({k: v for k, v in _prc.items() if k >= "2015-09"},
+                                   "2015-02-01", "2016-01-31") == (5, 12),
+                "the same walk _avg_price takes"))
+    out.append(("BBW shape: a fully covered FY2016 averages all twelve months",
+                abs(_avg_price(_prc, "2015-02-01", "2016-01-31")
+                    - statistics.fmean(_prc.values())) < 1e-9,
+                f"{_avg_price(_prc, '2015-02-01', '2016-01-31'):.4f}"))
+    out.append(("Partial note: listing wording vs missing-months wording",
+                "first trading month" in partial_price_note([(2020, 3, 12, True)])
+                and "missing inside the year" in partial_price_note([(2019, 9, 12, False)]),
+                "the two partial truths read differently"))
+    out.append(("Partial note: silent on full and pre-listing years; a provider hole is named",
+                partial_price_note([(2024, 12, 12, True), (2016, 0, 10, True)]) == ""
+                and "no priced month" in partial_price_note([(2018, 0, 12, False)]),
+                "zero-priced pre-listing years are Gate 2's business"))
     return out
 
 
 # ══════════════════════════════════════════════════════════════════════
 #  BASELINES — everything below this line is this page's own code.
 #  Everything above it is tool 1's engine and reader, copied verbatim
-#  (lines 1–3518 of the deployed 1_Tragic_Algebra_Analyzer.py, 127
-#  checks; only the module docstring was replaced). Re-copied 6 Sep
-#  2026 for the gate per-year-source fix (BASELINES-HANDOVER §1.6):
+#  (lines 1–3644 of the deployed 1_Tragic_Algebra_Analyzer.py, 132
+#  checks; only the module docstring was replaced). Re-copied 7 Sep
+#  2026 for the price-range roll fix (BASELINES-HANDOVER §1.7):
 #  _annual records which tag supplied each fiscal year, and both
 #  proceeds gates test only broad/treasury-supplied years. The
 #  doctrine: what this page checks is what the pages run. If the
@@ -3975,15 +4101,18 @@ PINS: list[Pin] = [
         },
         refusals=()),
     # BBW — REDUCED pin (6 Sep 2026): dE_full and omega_sum are deliberately
-    # NOT pinned. Cause decomposed: the price request is range=11y ROLLING, and
+    # NOT pinned. Cause decomposed: the price request WAS range=11y rolling, and
     # BBW's FY2016 (Feb 2015 – Jan 2016) began 11.6 years ago, so its average
     # price is a shrinking partial window (5 months and falling) that loses a
     # month roughly monthly — the 29 Aug → 5 Sep move (98.8 → 98.10) was the
     # Aug-2015 bar dropping (FY2016 V = 25.9 + P×(−1.5), unfloored, ∂Ω/∂P =
     # 1.5M/$). Endgame ~Feb 2027: FY2016's last priced month rolls off, price
     # reads 0, V becomes the full T (25.9 vs 5.7) — an ~8-point silent ΔE drop.
-    # QUEUED: shared-reader fix, all six files (derive the price range from the
-    # window's earliest start, or flag partial-coverage years). dE_3y spans
+    # FIX LANDED (7 Sep 2026, §1.7): the request now derives from the window's
+    # earliest fiscal-year start, so FY2016 is fully priced and the average is
+    # permanent; partial years are named in a note. This reduced pin STANDS
+    # until the post-deploy capture run — re-pin fully from that printed block,
+    # verifying the filed keys and dE_3y against this pin first. dE_3y spans
     # FY2024–26, fully priced, stable — pinned.
     Pin(ticker='BBW', pin_set='internal', pinned='2026-09-05',
         latest_fy=2026, window=(2016, 2017, 2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026),
@@ -4062,29 +4191,24 @@ PINS: list[Pin] = [
             'shares': 14773.26,
         },
         refusals=()),
-    # NFLX — fully pinned 7 Sep 2026, the gate-fix acceptance. History:
-    # reduced pin 5 Sep (dE keys held out — the Ce gate's per-year-source
-    # defect, BASELINES-HANDOVER §1.6, zeroed FY2024's $832.887M of
-    # narrow-tag option exercises against 3×G = $817.76M); unpinned 6 Sep
-    # for one run so the fixed engine printed this block at full repr
-    # precision. The block landed exactly on the pre-registered acceptance
-    # (dE_full 82.60, dE_3y 83.09) and its six filed keys reproduced the
-    # 5-Sep reduced pin to the digit — verified against the record before
-    # pasting. FY-vintage 2016–2025; a FY2026 10-K (~Jan 2027) re-bases.
-    Pin(ticker='NFLX', pin_set='internal', pinned='2026-09-07',
-        latest_fy=2025, window=(2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025),
-        core={
-            'G': 368.449,
-            'N': 10981.201,
-            'T': 9127.167,
-            'dE_3y': 83.0884857501042,
-            'dE_full': 82.6019642120668,
-            'net_cash': -5400.476999999999,
-            'omega_sum': 10640.542211637094,
-            'price': 110.55633290608723,
-            'shares': 4222.16215,
-        },
-        refusals=()),
+    # NFLX — UNPINNED FOR CAPTURE (6 Sep 2026, gate-fix session). The Ce
+    # gate's per-year-source defect (BASELINES-HANDOVER §1.6) zeroed
+    # FY2024's $832.887M of narrow-tag option exercises against 3×G =
+    # $817.76M; the fix in this file's engine span gates only years the
+    # broad tag itself supplied. The 5-Sep reduced pin held only
+    # gate-independent keys, so after the fix it would PASS — and a PASS
+    # row prints no block, while the re-pin needs full repr precision. An
+    # unpinned row is this page's own mechanism for a capture block, so
+    # the pin is dropped for exactly one run. Acceptance, pre-registered:
+    # dE_full displays 82.60, dE_3y 83.09, and the six filed keys of the
+    # 5-Sep reduced pin must reproduce TO THE DIGIT before the block is
+    # pasted: G 368.449, N 10981.201, T 9127.167,
+    # net_cash -5400.476999999999, price 110.55633290608723,
+    # shares 4222.16215. FY2025's own Ω (2,381) is gate-independent
+    # (667.0 of proceeds under the 1,105 threshold) but display-precision
+    # only, so still not pinned — omega:YYYY pins wait on summarize
+    # emitting per-year Ω (§5 D).
+    Pin(ticker='NFLX', pin_set='internal'),
     Pin(ticker='CLMB', pin_set='internal', pinned='2026-09-05',
         latest_fy=2025, window=(2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025),
         core={
@@ -4103,16 +4227,6 @@ PINS: list[Pin] = [
     # MASTER SET — Burry's NDX-97 per-company ΔE as published (AP SBC
     # pp. 41–42, extracted in burry-audit.md; windows as he published
     # them). Compared by his-window pooling above, ±1.5 points.
-    # Gate-fix run, 7 Sep 2026: GOOGL (+14.56), QCOM (+26.32) and INTU
-    # (+3.50) did not move to the decimal, so the Cw per-year-source
-    # defect is ELIMINATED as the cause of the too-high group — no
-    # narrow-supplied withholding year was being zeroed on these filers.
-    # Whether their gate rejected genuinely treasury-supplied years or
-    # never fired at all is settled per name from tool 1's withholding
-    # notes (recorded in the session handover); either way the cause of
-    # the deltas is still open — queue C, one name at a time. NFLX's
-    # master delta flipped −0.81 → +1.20 with the fix, inside ±1.5 both
-    # ways, exactly as pre-computed (§6 of the baselines handover).
     Pin(ticker="AAPL", pin_set="master", his_dE=93.1, his_window=(2016, 2025)),
     Pin(ticker="NFLX", pin_set="master", his_dE=81.4, his_window=(2016, 2025)),
     Pin(ticker="MSFT", pin_set="master", his_dE=91.1, his_window=(2016, 2025)),
