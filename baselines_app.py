@@ -4062,24 +4062,29 @@ PINS: list[Pin] = [
             'shares': 14773.26,
         },
         refusals=()),
-    # NFLX — UNPINNED FOR CAPTURE (6 Sep 2026, gate-fix session). The Ce
-    # gate's per-year-source defect (BASELINES-HANDOVER §1.6) zeroed
-    # FY2024's $832.887M of narrow-tag option exercises against 3×G =
-    # $817.76M; the fix in this file's engine span gates only years the
-    # broad tag itself supplied. The 5-Sep reduced pin held only
-    # gate-independent keys, so after the fix it would PASS — and a PASS
-    # row prints no block, while the re-pin needs full repr precision. An
-    # unpinned row is this page's own mechanism for a capture block, so
-    # the pin is dropped for exactly one run. Acceptance, pre-registered:
-    # dE_full displays 82.60, dE_3y 83.09, and the six filed keys of the
-    # 5-Sep reduced pin must reproduce TO THE DIGIT before the block is
-    # pasted: G 368.449, N 10981.201, T 9127.167,
-    # net_cash -5400.476999999999, price 110.55633290608723,
-    # shares 4222.16215. FY2025's own Ω (2,381) is gate-independent
-    # (667.0 of proceeds under the 1,105 threshold) but display-precision
-    # only, so still not pinned — omega:YYYY pins wait on summarize
-    # emitting per-year Ω (§5 D).
-    Pin(ticker='NFLX', pin_set='internal'),
+    # NFLX — fully pinned 7 Sep 2026, the gate-fix acceptance. History:
+    # reduced pin 5 Sep (dE keys held out — the Ce gate's per-year-source
+    # defect, BASELINES-HANDOVER §1.6, zeroed FY2024's $832.887M of
+    # narrow-tag option exercises against 3×G = $817.76M); unpinned 6 Sep
+    # for one run so the fixed engine printed this block at full repr
+    # precision. The block landed exactly on the pre-registered acceptance
+    # (dE_full 82.60, dE_3y 83.09) and its six filed keys reproduced the
+    # 5-Sep reduced pin to the digit — verified against the record before
+    # pasting. FY-vintage 2016–2025; a FY2026 10-K (~Jan 2027) re-bases.
+    Pin(ticker='NFLX', pin_set='internal', pinned='2026-09-07',
+        latest_fy=2025, window=(2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025),
+        core={
+            'G': 368.449,
+            'N': 10981.201,
+            'T': 9127.167,
+            'dE_3y': 83.0884857501042,
+            'dE_full': 82.6019642120668,
+            'net_cash': -5400.476999999999,
+            'omega_sum': 10640.542211637094,
+            'price': 110.55633290608723,
+            'shares': 4222.16215,
+        },
+        refusals=()),
     Pin(ticker='CLMB', pin_set='internal', pinned='2026-09-05',
         latest_fy=2025, window=(2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025),
         core={
@@ -4098,6 +4103,16 @@ PINS: list[Pin] = [
     # MASTER SET — Burry's NDX-97 per-company ΔE as published (AP SBC
     # pp. 41–42, extracted in burry-audit.md; windows as he published
     # them). Compared by his-window pooling above, ±1.5 points.
+    # Gate-fix run, 7 Sep 2026: GOOGL (+14.56), QCOM (+26.32) and INTU
+    # (+3.50) did not move to the decimal, so the Cw per-year-source
+    # defect is ELIMINATED as the cause of the too-high group — no
+    # narrow-supplied withholding year was being zeroed on these filers.
+    # Whether their gate rejected genuinely treasury-supplied years or
+    # never fired at all is settled per name from tool 1's withholding
+    # notes (recorded in the session handover); either way the cause of
+    # the deltas is still open — queue C, one name at a time. NFLX's
+    # master delta flipped −0.81 → +1.20 with the fix, inside ±1.5 both
+    # ways, exactly as pre-computed (§6 of the baselines handover).
     Pin(ticker="AAPL", pin_set="master", his_dE=93.1, his_window=(2016, 2025)),
     Pin(ticker="NFLX", pin_set="master", his_dE=81.4, his_window=(2016, 2025)),
     Pin(ticker="MSFT", pin_set="master", his_dE=91.1, his_window=(2016, 2025)),
