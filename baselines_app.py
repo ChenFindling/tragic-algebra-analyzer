@@ -4114,31 +4114,27 @@ PINS: list[Pin] = [
     # until the post-deploy capture run — re-pin fully from that printed block,
     # verifying the filed keys and dE_3y against this pin first. dE_3y spans
     # FY2024–26, fully priced, stable — pinned.
-    Pin(ticker='BBW', pin_set='internal', pinned='2026-09-05',
-        latest_fy=2026, window=(2016, 2017, 2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026),
-        core={
-            'G': 2.93,
-            'N': 52.203,
-            'T': 27.735,
-            'dE_3y': 97.76456082219417,
-            'net_cash': 28.212999999999997,
-            'price': 51.747499783833824,
-            'shares': 12.808954,
-        },
-        refusals=()),
-    Pin(ticker='PLTR', pin_set='internal', pinned='2026-09-05',
-        latest_fy=2025, window=(2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025),
-        core={
-            'G': 684.033,
-            'N': 1625.033,
-            'T': 74.985,
-            'dE_3y': -378.88278539838456,
-            'net_cash': 7177.043000000001,
-            'omega_sum': 19660.783988132833,
-            'price': 140.20833460489908,
-            'shares': 2391.192,
-        },
-        refusals=()),
+    # BBW — UNPINNED FOR CAPTURE (7 Sep 2026, §1.7 landed). FY2016
+    # (Feb 2015 – Jan 2016) is fully priced for the first time since the
+    # baselines existed; dE_full and omega_sum become pinnable at last.
+    # Acceptance, pre-registered: the six filed keys and dE_3y reproduce
+    # the 5-Sep reduced pin to the digit; dE_full prints ABOVE the 5-Sep
+    # partial-average 98.10 (the added Feb–Aug 2015 months sat higher, dS
+    # is negative, so Ω falls) and is thereafter permanent; omega_sum and
+    # dE_full first captured at full precision here. Re-pin FULLY from
+    # the printed block — the reduced pin retires with this run.
+    Pin(ticker='BBW', pin_set='internal'),
+    # PLTR — UNPINNED FOR CAPTURE (7 Sep 2026, §1.7 price-range deploy).
+    # The old range=11y form dropped FY2020's one-day listing month; the
+    # period form returns it, and the implied added close, 4×17.572500 −
+    # 3×20.263333 = $9.50, is Palantir's actual first close (30 Sep
+    # 2020) — decomposed to the cent. The page now also SAYS so:
+    # "FY2020's average covers 4 of 12 months: priced from its first
+    # trading month." The 5-Sep omega_sum (19660.783988132833) was a pin
+    # of the defect. Acceptance, pre-registered: omega_sum
+    # 19532.569407194303 (today's live value); dE_3y and every other key
+    # reproduce the 5-Sep pin to the digit.
+    Pin(ticker='PLTR', pin_set='internal'),
     Pin(ticker='KNSL', pin_set='internal', pinned='2026-09-05',
         latest_fy=2025, window=(2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025),
         core={
@@ -4177,38 +4173,41 @@ PINS: list[Pin] = [
             'shares': 0.0,
         },
         refusals=('shares_read_nothing', 'note:foreign_filer')),
-    Pin(ticker='AAPL', pin_set='internal', pinned='2026-09-05',
+    # AAPL — UNPINNED FOR CAPTURE (7 Sep 2026, §1.7 price-range deploy).
+    # FY2016 is a THIRTEEN-month fiscal year (27 Sep 2015 – Sep 2016) and
+    # the old range=11y form returned no bar for its boundary month, so
+    # the 5-Sep omega_sum (128245.80265914675) was pinned on a 12-month
+    # average — a pin OF the defect. The period1/period2 form returns the
+    # month; the implied added close, 13×26.325769 − 12×26.221667 =
+    # $27.575 = $110.30 pre-split, is Apple's actual 30 Sep 2015 close —
+    # the delta is decomposed to the cent. Acceptance, pre-registered:
+    # omega_sum 128144.78688637838 (today's live value); dE_full moves UP
+    # from 93.63020948587395 by well under 0.05; every other key
+    # reproduces the 5-Sep pin to the digit.
+    Pin(ticker='AAPL', pin_set='internal'),
+    # NFLX — FULLY PINNED 7 Sep 2026 from the capture run after the gate
+    # per-year-source fix (BASELINES-HANDOVER §1.6/§1.10); re-verified to
+    # the digit through the §1.7 price-range deploy (calendar filer,
+    # window inside eleven years — the new request form changed nothing,
+    # which doubles as the control that ordinary monthly bars reproduce
+    # exactly). dE_full 82.60 / dE_3y 83.09 are the gate-fix acceptance
+    # figures; the six filed keys reproduce the 5-Sep reduced pin.
+    # FY2025's own Ω (2,381) still display-precision only — omega:YYYY
+    # pins wait on summarize emitting per-year Ω (§5 D).
+    Pin(ticker='NFLX', pin_set='internal', pinned='2026-09-07',
         latest_fy=2025, window=(2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025),
         core={
-            'G': 12863.0,
-            'N': 112010.0,
-            'T': 90711.0,
-            'dE_3y': 94.22577096520112,
-            'dE_full': 93.63020948587395,
-            'net_cash': 41742.0,
-            'omega_sum': 128245.80265914675,
-            'price': 227.653078519381,
-            'shares': 14773.26,
+            'G': 368.449,
+            'N': 10981.201,
+            'T': 9127.167,
+            'dE_3y': 83.0884857501042,
+            'dE_full': 82.6019642120668,
+            'net_cash': -5400.476999999999,
+            'omega_sum': 10640.542211637094,
+            'price': 110.55633290608723,
+            'shares': 4222.16215,
         },
         refusals=()),
-    # NFLX — UNPINNED FOR CAPTURE (6 Sep 2026, gate-fix session). The Ce
-    # gate's per-year-source defect (BASELINES-HANDOVER §1.6) zeroed
-    # FY2024's $832.887M of narrow-tag option exercises against 3×G =
-    # $817.76M; the fix in this file's engine span gates only years the
-    # broad tag itself supplied. The 5-Sep reduced pin held only
-    # gate-independent keys, so after the fix it would PASS — and a PASS
-    # row prints no block, while the re-pin needs full repr precision. An
-    # unpinned row is this page's own mechanism for a capture block, so
-    # the pin is dropped for exactly one run. Acceptance, pre-registered:
-    # dE_full displays 82.60, dE_3y 83.09, and the six filed keys of the
-    # 5-Sep reduced pin must reproduce TO THE DIGIT before the block is
-    # pasted: G 368.449, N 10981.201, T 9127.167,
-    # net_cash -5400.476999999999, price 110.55633290608723,
-    # shares 4222.16215. FY2025's own Ω (2,381) is gate-independent
-    # (667.0 of proceeds under the 1,105 threshold) but display-precision
-    # only, so still not pinned — omega:YYYY pins wait on summarize
-    # emitting per-year Ω (§5 D).
-    Pin(ticker='NFLX', pin_set='internal'),
     Pin(ticker='CLMB', pin_set='internal', pinned='2026-09-05',
         latest_fy=2025, window=(2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025),
         core={
