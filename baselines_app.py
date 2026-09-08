@@ -4114,27 +4114,51 @@ PINS: list[Pin] = [
     # until the post-deploy capture run — re-pin fully from that printed block,
     # verifying the filed keys and dE_3y against this pin first. dE_3y spans
     # FY2024–26, fully priced, stable — pinned.
-    # BBW — UNPINNED FOR CAPTURE (7 Sep 2026, §1.7 landed). FY2016
-    # (Feb 2015 – Jan 2016) is fully priced for the first time since the
-    # baselines existed; dE_full and omega_sum become pinnable at last.
-    # Acceptance, pre-registered: the six filed keys and dE_3y reproduce
-    # the 5-Sep reduced pin to the digit; dE_full prints ABOVE the 5-Sep
-    # partial-average 98.10 (the added Feb–Aug 2015 months sat higher, dS
-    # is negative, so Ω falls) and is thereafter permanent; omega_sum and
-    # dE_full first captured at full precision here. Re-pin FULLY from
-    # the printed block — the reduced pin retires with this run.
-    Pin(ticker='BBW', pin_set='internal'),
-    # PLTR — UNPINNED FOR CAPTURE (7 Sep 2026, §1.7 price-range deploy).
+    # BBW — FULLY pinned 8 Sep 2026, first time since the baselines
+    # existed: §1.7 landed, FY2016 (Feb 2015 – Jan 2016) is fully priced
+    # and the average is permanent (the request derives from the window's
+    # own start, so nothing rolls out ~Feb 2027 and nothing drifts
+    # monthly). dE_full 100.325 sits above every drifting partial it
+    # replaces (98.8 on 29 Aug, 98.10 on 7 Sep) — the added Feb–Aug 2015
+    # months priced higher, dS negative, Ω down. The six filed keys and
+    # dE_3y reproduced the retired 5-Sep reduced pin to the digit;
+    # omega_sum and dE_full pinned from first full-precision capture.
+    # Window tuple keeps the 2018 hole (no FY2018 10-K figures).
+    Pin(ticker='BBW', pin_set='internal', pinned='2026-09-08',
+        latest_fy=2026, window=(2016, 2017, 2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026),
+        core={
+            'G': 2.93,
+            'N': 52.203,
+            'T': 27.735,
+            'dE_3y': 97.76456082219417,
+            'dE_full': 100.32538446090302,
+            'net_cash': 28.212999999999997,
+            'omega_sum': 24.956442481027274,
+            'price': 51.747499783833824,
+            'shares': 12.808954,
+        },
+        refusals=()),
+    # PLTR — re-pinned 8 Sep 2026 after the §1.7 price-range deploy.
     # The old range=11y form dropped FY2020's one-day listing month; the
-    # period form returns it, and the implied added close, 4×17.572500 −
-    # 3×20.263333 = $9.50, is Palantir's actual first close (30 Sep
-    # 2020) — decomposed to the cent. The page now also SAYS so:
-    # "FY2020's average covers 4 of 12 months: priced from its first
-    # trading month." The 5-Sep omega_sum (19660.783988132833) was a pin
-    # of the defect. Acceptance, pre-registered: omega_sum
-    # 19532.569407194303 (today's live value); dE_3y and every other key
-    # reproduce the 5-Sep pin to the digit.
-    Pin(ticker='PLTR', pin_set='internal'),
+    # period form returns it, and the page says so: "FY2020's average
+    # covers 4 of 12 months: priced from its first trading month."
+    # Decomposed to the cent: implied added close $9.50, Palantir's
+    # actual first close (30 Sep 2020). The 5-Sep omega_sum
+    # (19660.783988132833) stood on the 3-month average. Every other key
+    # reproduced the 5-Sep pin to the digit through the deploy.
+    Pin(ticker='PLTR', pin_set='internal', pinned='2026-09-08',
+        latest_fy=2025, window=(2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025),
+        core={
+            'G': 684.033,
+            'N': 1625.033,
+            'T': 74.985,
+            'dE_3y': -378.88278539838456,
+            'net_cash': 7177.043000000001,
+            'omega_sum': 19532.569407194303,
+            'price': 140.20833460489908,
+            'shares': 2391.192,
+        },
+        refusals=()),
     Pin(ticker='KNSL', pin_set='internal', pinned='2026-09-05',
         latest_fy=2025, window=(2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025),
         core={
@@ -4173,18 +4197,28 @@ PINS: list[Pin] = [
             'shares': 0.0,
         },
         refusals=('shares_read_nothing', 'note:foreign_filer')),
-    # AAPL — UNPINNED FOR CAPTURE (7 Sep 2026, §1.7 price-range deploy).
-    # FY2016 is a THIRTEEN-month fiscal year (27 Sep 2015 – Sep 2016) and
+    # AAPL — re-pinned 8 Sep 2026 after the §1.7 price-range deploy.
+    # FY2016 is a thirteen-month fiscal year (27 Sep 2015 – Sep 2016);
     # the old range=11y form returned no bar for its boundary month, so
-    # the 5-Sep omega_sum (128245.80265914675) was pinned on a 12-month
-    # average — a pin OF the defect. The period1/period2 form returns the
-    # month; the implied added close, 13×26.325769 − 12×26.221667 =
-    # $27.575 = $110.30 pre-split, is Apple's actual 30 Sep 2015 close —
-    # the delta is decomposed to the cent. Acceptance, pre-registered:
-    # omega_sum 128144.78688637838 (today's live value); dE_full moves UP
-    # from 93.63020948587395 by well under 0.05; every other key
-    # reproduces the 5-Sep pin to the digit.
-    Pin(ticker='AAPL', pin_set='internal'),
+    # the 5-Sep omega_sum (128245.80265914675) stood on a 12-month
+    # average. Decomposed to the cent: implied added close $27.575 =
+    # $110.30 pre-split, Apple's actual 30 Sep 2015 close. dE_full moved
+    # +0.01323 (93.63020948587395 → below); every other key reproduced
+    # the 5-Sep pin to the digit through the deploy.
+    Pin(ticker='AAPL', pin_set='internal', pinned='2026-09-08',
+        latest_fy=2025, window=(2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025),
+        core={
+            'G': 12863.0,
+            'N': 112010.0,
+            'T': 90711.0,
+            'dE_3y': 94.22577096520112,
+            'dE_full': 93.64344079763465,
+            'net_cash': 41742.0,
+            'omega_sum': 128144.78688637838,
+            'price': 227.653078519381,
+            'shares': 14773.26,
+        },
+        refusals=()),
     # NFLX — FULLY PINNED 7 Sep 2026 from the capture run after the gate
     # per-year-source fix (BASELINES-HANDOVER §1.6/§1.10); re-verified to
     # the digit through the §1.7 price-range deploy (calendar filer,
