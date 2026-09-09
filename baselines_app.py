@@ -4977,18 +4977,27 @@ PINS: list[Pin] = [
             'shares': 23.145751,
         },
         refusals=('fin_class:insurer',)),
-    Pin(ticker='RDDT', pin_set='internal', pinned='2026-09-05',
+    # Re-pinned 9 Sep 2026: the per-filing XBRL route (queue G) now reads
+    # the per-class counts Reddit tags on the class axis, so the 5-Sep
+    # pinned refusal 'shares_read_nothing' stopped firing BY DESIGN and
+    # this baseline FAILed exactly as the protocol promises ("expected
+    # refusal did not fire" — the deliberate re-pin case, not a bug).
+    # omega_sum moves 273.412 -> 2138.926... because dS is measured now:
+    # shares delivered are priced at the year's average instead of the
+    # cost flooring at the GAAP charge. Values are the 9-Sep live run's
+    # FAIL detail, full precision; every other key held to tolerance.
+    Pin(ticker='RDDT', pin_set='internal', pinned='2026-09-09',
         latest_fy=2025, window=(2022, 2023, 2024, 2025),
         core={
             'G': 343.18,
             'N': 529.721,
             'T': 0.0,
             'net_cash': 2476.8109999999997,
-            'omega_sum': 273.412,
+            'omega_sum': 2138.926585979499,
             'price': 176.38916714986166,
-            'shares': 0.0,
+            'shares': 190.892108,
         },
-        refusals=('shares_read_nothing',)),
+        refusals=()),
     Pin(ticker='GRAB', pin_set='internal', pinned='2026-09-05',
         latest_fy=2025, window=(2019, 2020, 2021, 2022, 2023, 2024, 2025),
         core={
