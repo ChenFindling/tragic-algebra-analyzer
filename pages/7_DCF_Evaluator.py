@@ -2018,15 +2018,33 @@ def load(ticker: str, n_years: int = 10):
             "not recognise, which happens with unusual structures and some foreign issuers. "
             "Nothing can be computed without it.")
 
+    # Per-filing XBRL route (queue G, 9 Sep 2026): registered tickers only —
+    # one dict lookup and out for everyone else, which is how the untouched-
+    # shape controls hold to the byte. Runs after N so the window and fiscal
+    # end dates exist; folds Cw (and its Ce zeroing) into `series` in place;
+    # the share-count fills merge just below, before split_adjust, so the
+    # split machinery, dS, coverage and the dual-class test consume them
+    # through the normal pipeline and every refusal that keys on absence
+    # lifts by itself.
+    _xr = xbrl_route_apply(ticker, cmap[ticker], series, tag_sources,
+                           tag_origin, n_years)
+
     shares_out = _instant(facts, ["CommonStockSharesOutstanding", "CommonStockSharesIssued",
                                   "EntityCommonStockSharesOutstanding"], unit="shares")
     shares_out = {k: v for k, v in shares_out.items() if v and v > 0}
+    if _xr and _xr["SHO"]:
+        # Never overrides a count that was read; for the registered dual-class
+        # filers nothing undimensioned exists to override.
+        for _fy, _v in _xr["SHO"].items():
+            shares_out.setdefault(_fy, _v)
     # Bind `notes` HERE, not further down. The share-count ladder below appends
     # to it, and Python makes a name local to the whole function the moment it
     # is assigned anywhere in it — so initialising notes after the ladder threw
     # UnboundLocalError on every ticker that tripped the ladder (AZO, HRB, TDG)
     # while leaving every other ticker working. Keep this line above the ladder.
     shares_out, notes = split_adjust(shares_out)
+    if _xr:
+        notes.extend(_xr["notes"])
     # A share count that includes treasury stock is not a share count. AutoZone
     # tags CommonStockSharesIssued: ~25.7M shares, of which ~9M sit in treasury
     # and only ~16.6M are outstanding. Every per-share figure was computed
@@ -3088,6 +3106,640 @@ def fcf_rows(years: list["Year"], trend: dict) -> list[dict]:
 
 
 # ══════════════════════════════════════════════════════════════════════
+#  PER-FILING XBRL ROUTE (queue G, 9 Sep 2026)
+# ══════════════════════════════════════════════════════════════════════
+#
+# The companyfacts/companyconcept APIs exclude, BY DESIGN, custom-namespace
+# tags and dimensioned facts (SEC API docs; proved on Alphabet 8 Sep 2026 —
+# BASELINES-HANDOVER §1.14). Two of this kit's known holes share that cause:
+# Alphabet's entire employee stock flow lives under
+# goog:NetProceedsPaymentsRelatedToStockBasedAwardActivities, and every
+# dual-class filer's per-class share counts carry a class dimension that the
+# aggregation API strips. Both numbers exist in each filing's OWN XBRL
+# instance document. This block fetches and parses those instances — for
+# REGISTERED TICKERS ONLY. An unregistered ticker takes one dict lookup and
+# leaves this block entirely: zero fetches, zero behaviour change, which is
+# how the untouched-shape controls hold to the byte.
+#
+# The registry is explicit and verification-gated: every entry carries
+# figures (pasted from the filings' own iXBRL fact panels, 9 Sep 2026) that
+# the extraction must reproduce, or the whole entry is discarded with a loud
+# note. The route folds verified plumbing into the same series the reader
+# already builds, before the gates — or it folds nothing.
+
+@dataclass(frozen=True)
+class XbrlRoute:
+    """One registered read: what to extract and what it must reproduce.
+
+    key       — the reader series it feeds: "Cw" (a cash-flow duration line)
+                or "SHO" (year-end share counts, folded into shares_out).
+    kind      — "duration" | "instant_sum".
+    concepts  — qnames tried IN ORDER. For instant_sum the fallback runs per
+                class member per instant, because filers mix the concepts
+                along every seam there is: Reddit tags Class A as Issued and
+                Class B as Outstanding; Meta mixes them across YEARS within
+                one class; Ryan Specialty tags by year across both classes.
+                Three of four registered dual-class filers mix — the ordered
+                fallback is the normal case, not an edge handler.
+    axis      — instant_sum only: the dimension whose members are summed.
+    net       — the Cw line is NET of option/ESPP proceeds (Alphabet's tag
+                name says so: "NetProceedsPayments"). Filled years force
+                Ce = 0 — proceeds are already inside the line, and charging
+                Ce on top would count them twice. §1.14's settled decision.
+    verify    — ((fy, expected), ...): the extraction must reproduce these
+                to $0.50 / half a share, or the entry is discarded. Compared
+                on magnitude: the instance stores Alphabet's net outflow as
+                a positive credit-balance figure (iXBRL storage convention;
+                brackets are presentation), and the engine's Year.omega
+                takes abs() of Cw regardless. A hypothetical net-INFLOW year
+                would surface in the per-year acceptance decomposition
+                against the published table, not in sign logic — no such
+                year exists in the ten on record, and the caveat is stated
+                in the route note rather than coded for.
+    up_c      — umbrella-partnership C-corp (Carvana, Ryan Specialty): the
+                counts fold (the table, Ω and ΔE pools are real — an A+B sum
+                is exchange-invariant under LLC-unit conversions), but the
+                page must still refuse the per-share VALUATION: the net
+                income read is the parent's slice while the summed count
+                spans everything. Carvana's Class B is ~35% of the total,
+                Ryan's over half — per-share figures would be wrong by that
+                fraction. The stop lifts with HANDOVER §5.5 G's NCI fix
+                (parent slice over parent-only count, or whole over whole),
+                for which these two entries are the test cases. NOT lifted
+                by this route, and not claimed to be.
+    """
+    key: str
+    kind: str
+    concepts: tuple[str, ...]
+    axis: str | None = None
+    net: bool = False
+    verify: tuple[tuple[int, float], ...] = ()
+    up_c: bool = False
+
+
+# Verification figures: GOOGL from the 10-K face / §1.14 record; the four
+# dual-class names from Chen's iXBRL fact-panel pastes of 9 Sep 2026
+# (per-class year-end counts, summed).
+XBRL_REGISTRY: dict[str, tuple[XbrlRoute, ...]] = {
+    "GOOGL": (XbrlRoute(
+        key="Cw", kind="duration",
+        concepts=("goog:NetProceedsPaymentsRelatedToStockBasedAwardActivities",),
+        net=True,
+        verify=((2025, 14_167_000_000.0), (2024, 12_190_000_000.0))),),
+    "CVNA": (XbrlRoute(
+        key="SHO", kind="instant_sum",
+        concepts=("us-gaap:CommonStockSharesOutstanding",
+                  "us-gaap:CommonStockSharesIssued"),
+        axis="us-gaap:StatementClassOfStockAxis", up_c=True,
+        verify=((2025, 218_339_000.0), (2024, 212_390_000.0))),),
+    "RDDT": (XbrlRoute(
+        key="SHO", kind="instant_sum",
+        concepts=("us-gaap:CommonStockSharesOutstanding",
+                  "us-gaap:CommonStockSharesIssued"),
+        axis="us-gaap:StatementClassOfStockAxis",
+        verify=((2025, 190_892_108.0), (2024, 180_315_979.0))),),
+    "META": (XbrlRoute(
+        key="SHO", kind="instant_sum",
+        concepts=("us-gaap:CommonStockSharesOutstanding",
+                  "us-gaap:CommonStockSharesIssued"),
+        axis="us-gaap:StatementClassOfStockAxis",
+        verify=((2025, 2_530_000_000.0), (2024, 2_534_000_000.0))),),
+    "RYAN": (XbrlRoute(
+        key="SHO", kind="instant_sum",
+        concepts=("us-gaap:CommonStockSharesOutstanding",
+                  "us-gaap:CommonStockSharesIssued"),
+        axis="us-gaap:StatementClassOfStockAxis", up_c=True,
+        verify=((2025, 264_112_311.0), (2024, 261_867_402.0))),),
+}
+
+# Standard-taxonomy namespace stems. A qname with one of these prefixes must
+# resolve to its stem (the URIs are year-versioned: fasb.org/us-gaap/2023);
+# any OTHER prefix is a filer's custom namespace and matches any URI that is
+# NOT standard. Matching custom tags by prefix string would break the day a
+# filer declares xmlns:googl instead of xmlns:goog; matching by exact URI is
+# impossible because custom URIs change every filing year.
+_XBRL_STD_STEMS = {
+    "us-gaap": ("http://fasb.org/us-gaap",),
+    "srt": ("http://fasb.org/srt",),
+    "dei": ("http://xbrl.sec.gov/dei",),
+    "ifrs-full": ("http://xbrl.ifrs.org/taxonomy",),
+}
+_XBRL_ALL_STD = (
+    "http://fasb.org/", "http://xbrl.sec.gov/", "http://xbrl.ifrs.org/",
+    "http://www.xbrl.org/", "http://xbrl.org/", "http://www.w3.org/")
+
+
+def _xbrl_qname_matches(qname: str, uri: str, local: str) -> bool:
+    """Whether a fact at (namespace uri, local name) is the registered qname."""
+    prefix, _, want_local = qname.partition(":")
+    if want_local != local:
+        return False
+    stems = _XBRL_STD_STEMS.get(prefix)
+    if stems:
+        return any(uri.startswith(s) for s in stems)
+    return not any(uri.startswith(s) for s in _XBRL_ALL_STD)
+
+
+def _xbrl_instance_guess(primary_doc: str) -> str:
+    """Modern iXBRL filings: EDGAR generates an extracted instance named
+    {primary stem}_htm.xml (verified on Alphabet's FY2024 index:
+    goog-20241231.htm -> goog-20241231_htm.xml, 2.7MB)."""
+    stem = primary_doc.rsplit(".", 1)[0]
+    return f"{stem}_htm.xml"
+
+
+def _xbrl_pick_instance(names: list[str]) -> str | None:
+    """Pre-iXBRL fallback: pick the raw instance out of a filing's file list.
+
+    Verified against Alphabet's FY2016 10-K index (pasted 9 Sep 2026): the
+    instance is goog-20161231.xml (EX-101.INS) and the primary document stem
+    (goog10-kq42016) does NOT predict it — so the modern-name guess 404s on
+    old filings and this rule must pick the instance out of index.json. The
+    linkbases and schema share the instance's stem with suffixes; excluding
+    them leaves the instance. R*.xml and FilingSummary are viewer artifacts.
+    """
+    cands = []
+    for n in names:
+        low = n.lower()
+        if not low.endswith(".xml"):
+            continue
+        if low.endswith(("_cal.xml", "_def.xml", "_lab.xml", "_pre.xml", "_htm.xml")):
+            # _htm.xml is the modern extracted instance: if it exists the
+            # guess would have found it; keep it as a candidate anyway.
+            if low.endswith("_htm.xml"):
+                cands.append((0, n))
+            continue
+        if low.startswith(("r", "filingsummary")) and (low[1:2].isdigit() or low.startswith("filingsummary")):
+            continue
+        import re as _re
+        cands.append((0 if _re.search(r"-\d{8}\.xml$", low) else 1, n))
+    if not cands:
+        return None
+    cands.sort()
+    return cands[0][1]
+
+
+def _xbrl_parse_instance(xml_text) -> tuple[dict, list]:
+    """One pass over an instance document -> (contexts, facts).
+
+    contexts: id -> (instant | (start, end), dims) where dims is a sorted
+    tuple of ((axis_std, axis_local), (member_std, member_local)) pairs,
+    each name resolved through the document's own prefix declarations and
+    classified standard/custom the same way facts are — explicitMember
+    attributes hold QNames in the DOCUMENT's prefixes, which need not match
+    the registry's.
+    facts: (uri, local, contextRef, value, decimals) for numeric facts.
+    """
+    import io as _io
+    import xml.etree.ElementTree as _ET
+    ns: dict[str, str] = {}
+    contexts: dict = {}
+    facts: list = []
+    src = _io.StringIO(xml_text) if isinstance(xml_text, str) else _io.BytesIO(xml_text)
+
+    def _classify(uri: str) -> str:
+        return "std" if any(uri.startswith(s) for s in _XBRL_ALL_STD) else "custom"
+
+    def _resolve(qn: str) -> tuple[str, str]:
+        p, _, loc = qn.partition(":")
+        return _classify(ns.get(p, "")), loc
+
+    for event, el in _ET.iterparse(src, events=("start-ns", "end")):
+        if event == "start-ns":
+            ns[el[0]] = el[1]
+            continue
+        tag = el.tag
+        if not isinstance(tag, str) or not tag.startswith("{"):
+            continue
+        uri, _, local = tag[1:].partition("}")
+        if local == "context":
+            cid = el.get("id")
+            period = instant = None
+            dims = []
+            for sub in el.iter():
+                s_uri, _, s_loc = sub.tag[1:].partition("}")
+                if s_loc == "instant" and sub.text:
+                    instant = sub.text.strip()
+                elif s_loc == "startDate" and sub.text:
+                    period = (sub.text.strip(), period[1] if period else "")
+                elif s_loc == "endDate" and sub.text:
+                    period = (period[0] if period else "", sub.text.strip())
+                elif s_loc == "explicitMember":
+                    dim = sub.get("dimension", "")
+                    mem = (sub.text or "").strip()
+                    if dim and mem:
+                        dims.append((_resolve(dim), _resolve(mem)))
+            if cid:
+                contexts[cid] = (instant if instant else period, tuple(sorted(dims)))
+            el.clear()
+        elif el.get("contextRef") is not None:
+            txt = (el.text or "").strip().replace(",", "")
+            if txt:
+                try:
+                    val = float(txt)
+                except ValueError:
+                    el.clear()
+                    continue
+                facts.append((uri, local, el.get("contextRef"),
+                              val, el.get("decimals")))
+            el.clear()
+    return contexts, facts
+
+
+def _xbrl_extract(contexts: dict, facts: list, entries: tuple,
+                  wanted_ends: dict, wanted_instants: dict) -> tuple[dict, dict]:
+    """Registered values out of one parsed instance.
+
+    wanted_ends:     fy -> fiscal end date (ISO) for duration entries.
+    wanted_instants: fy -> year-end date (ISO) for instant_sum entries.
+    Returns (values, meta): values[(key, fy)] = value;
+    meta collects per-entry notes material — members that answered on a
+    fallback concept, coarse decimals, an undimensioned same-instant fact.
+    """
+    values: dict = {}
+    meta: dict = {"issued_members": set(), "coarse": False, "undimmed": False,
+                  "n_members": {}}
+    end_to_fy = {d: fy for fy, d in wanted_ends.items()}
+    inst_to_fy = {d: fy for fy, d in wanted_instants.items()}
+    for entry in entries:
+        if entry.kind == "duration":
+            for concept in entry.concepts:
+                for uri, local, cref, val, _dec in facts:
+                    if not _xbrl_qname_matches(concept, uri, local):
+                        continue
+                    ctx = contexts.get(cref)
+                    if not ctx or not isinstance(ctx[0], tuple) or ctx[1]:
+                        continue          # not a duration, or dimensioned
+                    start, end = ctx[0]
+                    if end not in end_to_fy or not start:
+                        continue
+                    days = (dt.date.fromisoformat(end)
+                            - dt.date.fromisoformat(start)).days
+                    if not 330 <= days <= 400:
+                        continue
+                    values.setdefault((entry.key, end_to_fy[end]), val)
+        else:  # instant_sum
+            ax_prefix, _, ax_local = entry.axis.partition(":")
+            ax_class = "std" if ax_prefix in _XBRL_STD_STEMS else "custom"
+            for date, fy in inst_to_fy.items():
+                members: dict = {}
+                issued_here: set = set()
+                for concept in entry.concepts:
+                    for uri, local, cref, val, dec in facts:
+                        if not _xbrl_qname_matches(concept, uri, local):
+                            continue
+                        ctx = contexts.get(cref)
+                        if not ctx or ctx[0] != date:
+                            continue
+                        dims = ctx[1]
+                        if not dims:
+                            meta["undimmed"] = True
+                            continue
+                        if len(dims) != 1 or dims[0][0] != (ax_class, ax_local):
+                            continue      # extra axes, or a different axis
+                        member = dims[0][1]
+                        if member not in members:
+                            members[member] = val
+                            if local == "CommonStockSharesIssued":
+                                issued_here.add(member[1])
+                            if dec is not None and dec not in ("INF",):
+                                try:
+                                    if int(dec) <= -6:
+                                        meta["coarse"] = True
+                                except ValueError:
+                                    pass
+                if members and (entry.key, fy) not in values:
+                    values[(entry.key, fy)] = float(sum(members.values()))
+                    meta["n_members"][fy] = len(members)
+                    meta["issued_members"] |= issued_here
+    return values, meta
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def _submissions(cik: str) -> dict:
+    """The full submissions JSON. _sic reads the same endpoint separately;
+    folding the two onto one fetch is a later cosmetic, kept apart here so
+    this deploy changes no existing function (one change at a time)."""
+    return _sec_get(f"https://data.sec.gov/submissions/CIK{cik}.json",
+                    timeout=20).json()
+
+
+def _xbrl_accessions(subs: dict, want_earliest_end: str) -> list[tuple[str, str, str]]:
+    """(accession, primaryDocument, reportDate) for 10-K / 10-K/A filings,
+    newest first, walking the older filing batches only when the recent
+    window does not reach the earliest wanted period (heavy filers roll
+    ~7-9 years of filings through `recent`; FY2016 can sit in a batch)."""
+    out: list[tuple[str, str, str]] = []
+
+    def _walk(block: dict) -> None:
+        forms = block.get("form", [])
+        accs = block.get("accessionNumber", [])
+        docs = block.get("primaryDocument", [])
+        reps = block.get("reportDate", [])
+        for i, f in enumerate(forms):
+            if f in ("10-K", "10-K/A"):
+                out.append((accs[i], docs[i] if i < len(docs) else "",
+                            reps[i] if i < len(reps) else ""))
+
+    _walk(subs.get("filings", {}).get("recent", {}))
+    covered = out and min(r for _, _, r in out if r) <= want_earliest_end
+    if not covered:
+        for extra in subs.get("filings", {}).get("files", []):
+            try:
+                _walk(_sec_get("https://data.sec.gov/submissions/"
+                               + extra.get("name", ""), timeout=20).json())
+            except Exception:
+                break
+            if out and min(r for _, _, r in out if r) <= want_earliest_end:
+                break
+    out.sort(key=lambda t: t[2], reverse=True)
+    return out
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def _xbrl_instance_values(cik: str, accession: str, primary_doc: str,
+                          ticker: str, wanted_ends: tuple, wanted_instants: tuple):
+    """Fetch ONE filing's instance, extract this ticker's registered values.
+
+    Cached on the small extracted dict, never the raw XML (instances run
+    1-4MB; Alphabet's FY2024 extracted instance is 2.7MB, its FY2016 raw
+    instance 4.1MB — both verified on the filing indexes, 9 Sep 2026).
+    Returns (values, meta) or (None, error-string) when the instance cannot
+    be found or parsed — a per-filing miss, named in the route note, never
+    an exception out of load().
+    """
+    entries = XBRL_REGISTRY.get(ticker, ())
+    nodash = accession.replace("-", "")
+    base = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{nodash}/"
+    xml_text = None
+    if primary_doc:
+        try:
+            xml_text = _sec_get(base + _xbrl_instance_guess(primary_doc),
+                                timeout=30).content
+        except Exception:
+            xml_text = None
+    if xml_text is None:
+        try:
+            idx = _sec_get(base + "index.json", timeout=20).json()
+            names = [it.get("name", "")
+                     for it in idx.get("directory", {}).get("item", [])]
+            pick = _xbrl_pick_instance(names)
+            if not pick:
+                return None, "no instance document in the filing index"
+            xml_text = _sec_get(base + pick, timeout=30).content
+        except Exception as e:
+            return None, f"index fallback failed ({type(e).__name__})"
+    try:
+        contexts, facts = _xbrl_parse_instance(xml_text)
+        return _xbrl_extract(contexts, facts, entries,
+                             dict(wanted_ends), dict(wanted_instants))
+    except Exception as e:
+        return None, f"instance parse failed ({type(e).__name__})"
+
+
+def _xbrl_merge_meta(into: dict, meta: dict) -> None:
+    into["issued_members"] |= meta.get("issued_members", set())
+    into["coarse"] = into["coarse"] or meta.get("coarse", False)
+    into["undimmed"] = into["undimmed"] or meta.get("undimmed", False)
+    into["n_members"].update({k: v for k, v in meta.get("n_members", {}).items()
+                              if k not in into["n_members"]})
+
+
+def _xbrl_verify(entries: tuple, merged: dict) -> tuple[set, list[str]]:
+    """The registry's contract: each entry's verify figures must reproduce
+    to $0.50 / half a share, or the WHOLE entry is discarded. Tolerance
+    strictly below a unit on purpose — the baselines' $1-boundary lesson."""
+    dead: set = set()
+    notes: list[str] = []
+    for entry in entries:
+        for fy, expected in entry.verify:
+            got = merged.get((entry.key, fy))
+            if got is None or abs(abs(got) - abs(expected)) > 0.5:
+                dead.add(entry.key)
+                notes.append(
+                    f"**The per-filing XBRL read for {entry.key} was discarded.** Its "
+                    f"registered verification figure for FY{fy} "
+                    f"({expected:,.0f}) "
+                    + ("was not found in any fetched filing"
+                       if got is None else f"read {got:,.0f} instead")
+                    + ". The registry folds verified figures or nothing; the page "
+                      "behaves as it did before this route existed. This usually "
+                      "means the filer changed its tagging — re-verify the entry "
+                      "against the latest filing's fact panel.")
+                break
+    return dead, notes
+
+
+def up_c_sentence(ticker: str, total_m: float) -> str:
+    """The right-reason refusal for umbrella-partnership C-corps."""
+    return (
+        f"**Valuation withheld — Up-C structure.** {ticker}'s per-class share counts "
+        f"were read from its filings' own XBRL instances and summed "
+        f"({total_m:,.1f}M across the classes), so the table, the true SBC cost and "
+        "the ΔE pools above are real measurements. But this is an "
+        "umbrella-partnership C-corp: a large share of the economics sits in LLC "
+        "units outside the parent company — for Ryan Specialty over half the summed "
+        "count, for Carvana roughly a third — while the net income read here is the "
+        "parent's slice only. Dividing the parent's slice by the full count would "
+        "understate every per-share figure by about that fraction, so no per-share "
+        "value or verdict is printed. This lifts when the NCI fix lands (price the "
+        "parent slice over the parent-only count, or the whole company over the "
+        "whole count); the share counts read here are that job's test data.")
+
+
+def xbrl_route_apply(ticker: str, cik: str, series: dict,
+                     tag_sources: dict, tag_origin: dict,
+                     n_years: int) -> dict | None:
+    """Fetch, verify and fold the registered per-filing reads for one ticker.
+
+    Runs ONLY for registered tickers — the first line is the whole cost for
+    everyone else. Folds Cw (and its Ce zeroing) into `series` in place,
+    exactly where _annual's own values land, so the gates, notes, pools and
+    ΔE machinery downstream run unchanged; returns share-count fills for the
+    caller to merge before split_adjust, because absence is what every
+    refusal keys on and presence is what lifts them.
+    """
+    entries = XBRL_REGISTRY.get(ticker)
+    if not entries:
+        return None
+    if not series.get("N"):
+        return None
+
+    fys = sorted(series["N"])[-n_years:]
+    ends = {fy: series["N"][fy][1] for fy in fys}
+    wanted_ends = dict(ends)
+    # dS needs the year BEFORE the window's earliest; its end date comes from
+    # the N series where read, else the earliest end shifted back a year (a
+    # calendar guess only a calendar filer can match — a miss is just an
+    # absent instant, named in the note).
+    inst = dict(ends)
+    fy0 = fys[0] - 1
+    if fy0 in series["N"]:
+        inst[fy0] = series["N"][fy0][1]
+    else:
+        try:
+            e = dt.date.fromisoformat(ends[fys[0]])
+            inst[fy0] = e.replace(year=e.year - 1).isoformat()
+        except ValueError:
+            pass
+    need_dur = any(e.kind == "duration" for e in entries)
+    need_ins = any(e.kind == "instant_sum" for e in entries)
+
+    merged: dict = {}
+    meta = {"issued_members": set(), "coarse": False, "undimmed": False,
+            "n_members": {}}
+    notes: list[str] = []
+    fetched = misses = 0
+    try:
+        subs = _submissions(cik)
+        earliest = min(inst.values()) if need_ins else min(ends.values())
+        for accession, pdoc, _rep in _xbrl_accessions(subs, earliest):
+            if fetched >= 12:
+                break             # budget guard: never more than 12 instances
+            done_dur = (not need_dur) or all(
+                (e.key, fy) in merged for e in entries for fy in ends
+                if e.kind == "duration")
+            done_ins = (not need_ins) or all(
+                (e.key, fy) in merged for e in entries for fy in inst
+                if e.kind == "instant_sum")
+            if done_dur and done_ins:
+                break
+            vals, m = _xbrl_instance_values(
+                cik, accession, pdoc, ticker,
+                tuple(sorted(wanted_ends.items())), tuple(sorted(inst.items())))
+            fetched += 1
+            if vals is None:
+                misses += 1
+                continue
+            for k, v in vals.items():
+                merged.setdefault(k, v)     # newest filing wins per year
+            _xbrl_merge_meta(meta, m)
+    except Exception as e:
+        notes.append(
+            f"**The per-filing XBRL route could not run** ({type(e).__name__}). "
+            "The page behaves as it did before this route existed.")
+        return {"SHO": {}, "notes": notes, "up_c": False}
+
+    dead, vnotes = _xbrl_verify(entries, merged)
+    sho, up_c, fnotes = _xbrl_fold(entries, dead, merged, meta, series,
+                                   tag_sources, tag_origin, fys, fetched)
+    notes.extend(vnotes)
+    notes.extend(fnotes)
+    if misses:
+        notes.append(f"{misses} filing{'s' if misses != 1 else ''} could not be "
+                     "read on the XBRL route (no instance found or unparseable); "
+                     "any years they alone covered are unfilled.")
+    return {"SHO": sho, "notes": notes, "up_c": up_c}
+
+
+def _xbrl_fold(entries: tuple, dead: set, merged: dict, meta: dict,
+               series: dict, tag_sources: dict, tag_origin: dict,
+               fys: list, fetched: int) -> tuple[dict, bool, list[str]]:
+    """Fold verified values into the reader's own structures — pure of any
+    network so the container can test the whole fold on synthetic data.
+
+    Cw lands in series[key] with the SAME (start, end, value) shape _annual
+    writes, its concept recorded in tag_sources (the tag panel names it, the
+    no-withholding note stops firing because values now exist) and in
+    tag_origin per year — which makes broad_gate_fires return False on these
+    years without any gate special-casing: the origin is not the treasury
+    tag. net=True zeroes Ce for exactly the filled years. Share counts are
+    returned for the caller to merge before split_adjust.
+    """
+    notes: list[str] = []
+    sho: dict = {}
+    up_c = False
+    for entry in entries:
+        if entry.key in dead:
+            continue
+        got_fys = sorted(fy for (k, fy) in merged if k == entry.key)
+        if entry.kind == "duration" and entry.key in series:
+            filled = []
+            for fy in got_fys:
+                if fy not in series["N"]:
+                    continue
+                start, end, _n = series["N"][fy]
+                series[entry.key][fy] = (start, end, merged[(entry.key, fy)])
+                tag_origin[entry.key][fy] = entry.concepts[0]
+                filled.append(fy)
+                if entry.net and "Ce" in series:
+                    series["Ce"][fy] = (start, end, 0.0)
+            if filled and entry.concepts[0] not in tag_sources.get(entry.key, []):
+                tag_sources[entry.key].append(entry.concepts[0])
+            unread = [fy for fy in fys if fy not in filled]
+            if filled:
+                notes.append(
+                    f"**{entry.key} was read from the filings' own XBRL instances** "
+                    f"({fetched} filing{'s' if fetched != 1 else ''} fetched): the line is "
+                    f"tagged under the custom concept `{entry.concepts[0]}`, which the "
+                    "SEC's aggregation API excludes by design, so it is invisible to the "
+                    "reader's normal data source. FY"
+                    + ", FY".join(str(f) for f in filled)
+                    + " filled"
+                    + (", FY" + ", FY".join(str(f) for f in unread)
+                       + " still unread — the tag was not found in those filings"
+                       if unread else "")
+                    + "."
+                    + (" The line is NET of option/ESPP proceeds (the tag name says "
+                       "so), so proceeds are set to zero for those years — charging "
+                       "both would count the same dollars twice. The value is taken "
+                       "on magnitude; every year on record is a net outflow."
+                       if entry.net else ""))
+        elif entry.kind == "instant_sum":
+            for fy in got_fys:
+                sho[fy] = merged[(entry.key, fy)]
+            if got_fys:
+                unread = [fy for fy in fys if fy not in sho]
+                nm = meta["n_members"].get(got_fys[-1], 0)
+                notes.append(
+                    f"**Year-end share counts were read from the filings' own XBRL "
+                    f"instances** ({fetched} filing{'s' if fetched != 1 else ''} fetched) by "
+                    f"summing the per-class counts ({nm} classes in the latest year) that "
+                    "the SEC's aggregation API strips with their class dimension. FY"
+                    + ", FY".join(str(f) for f in got_fys) + " filled"
+                    + (", FY" + ", FY".join(str(f) for f in unread)
+                       + " have no per-class counts in any filing (typically pre-IPO years)"
+                       if unread else "") + "."
+                    + (" " + "/".join(sorted(meta["issued_members"]))
+                       + " answered on the shares-ISSUED tag where no outstanding "
+                         "count was tagged; issued can include treasury shares, so "
+                         "check it if the filer has bought back stock."
+                       if meta["issued_members"] else "")
+                    + (" Counts are tagged rounded to the nearest million, so each "
+                       "year-over-year share change carries up to ±1M of rounding."
+                       if meta["coarse"] else "")
+                    + (" An undimensioned count exists at the same date — the sum was "
+                       "used, but a filer with a usable total should not need this "
+                       "route; re-check the registry entry." if meta["undimmed"] else ""))
+            up_c = up_c or entry.up_c
+    return sho, up_c, notes
+
+
+def up_c_sentence_dcf(ticker: str, total_m: float) -> str:
+    """The right-reason refusal for umbrella-partnership C-corps, in this
+    page's own terms. The shared up_c_sentence (ported verbatim inside the
+    XBRL-route block above, where a self-check calls it) says "the ΔE pools
+    above are real measurements" — true on tool 1, false here: this page has
+    no ΔE pools, and a sentence pointing at evidence the page does not show
+    is exactly the defect class this project hunts. Same cause, this page's
+    evidence, both legs named (Chen, 10 Sep 2026: one extra check is the
+    cheapest price ever paid for a true sentence)."""
+    return (
+        f"**Valuation withheld — Up-C structure.** {ticker}'s per-class share counts "
+        f"were read from its filings' own XBRL instances and summed "
+        f"({total_m:,.1f}M across the classes), so the free cash flow history and the "
+        "per-year Ω column above are real measurements. But this is an "
+        "umbrella-partnership C-corp: a large share of the economics sits in LLC "
+        "units outside the parent company — for Ryan Specialty over half the "
+        "summed count, for Carvana roughly a third — and until the NCI fix "
+        "settles the basis (the parent's slice over a parent-only count, or the "
+        "whole company over the whole count), any per-share division mixes the two. "
+        "So neither leg is priced: no standard-FCF value, no SBC-corrected value, "
+        "no gap and no verdict. The share counts read on this page are that fix's "
+        "test data; this stop lifts when it lands.")
+
+
+# ══════════════════════════════════════════════════════════════════════
 #  SELF-TESTS
 # ══════════════════════════════════════════════════════════════════════
 #
@@ -3378,6 +4030,189 @@ def self_test() -> list[tuple[str, bool, str]]:
                 and financial_class("6141", _fx([]))[0] == "refused",
                 "Ryan Specialty ordinary; Schwab-shaped promotes; a lender is not priced"))
 
+    # ── Per-filing XBRL route (queue G, 9 Sep 2026). All synthetic: the
+    # container cannot reach SEC, so the parser, extraction, verification
+    # gate and fold are proven here and the live deploy is proven by the
+    # Baselines protocol, which fails loudly by construction. ────────────
+    out.append(("XBRL qnames: std prefixes match year-versioned URIs, custom match non-std",
+                _xbrl_qname_matches("us-gaap:CommonStockSharesOutstanding",
+                                    "http://fasb.org/us-gaap/2025",
+                                    "CommonStockSharesOutstanding")
+                and _xbrl_qname_matches("goog:NetProceedsPaymentsRelatedToStockBasedAwardActivities",
+                                        "http://alphabet.com/20251231",
+                                        "NetProceedsPaymentsRelatedToStockBasedAwardActivities")
+                and not _xbrl_qname_matches("goog:X", "http://fasb.org/us-gaap/2025", "X")
+                and not _xbrl_qname_matches("us-gaap:A", "http://fasb.org/us-gaap/2025", "B"),
+                "prefix drift and year-versioned URIs both handled"))
+    _gx = ('<?xml version="1.0"?><xbrl xmlns="http://www.xbrl.org/2003/instance" '
+           'xmlns:goog="http://alphabet.com/20251231" '
+           'xmlns:us-gaap="http://fasb.org/us-gaap/2025" '
+           'xmlns:xbrldi="http://xbrl.org/2006/xbrldi">'
+           '<context id="d25"><entity><identifier scheme="s">X</identifier></entity>'
+           '<period><startDate>2025-01-01</startDate><endDate>2025-12-31</endDate></period></context>'
+           '<context id="d24"><entity><identifier scheme="s">X</identifier></entity>'
+           '<period><startDate>2024-01-01</startDate><endDate>2024-12-31</endDate></period></context>'
+           '<context id="dseg"><entity><identifier scheme="s">X</identifier>'
+           '<segment><xbrldi:explicitMember dimension="us-gaap:StatementBusinessSegmentsAxis">'
+           'goog:CloudMember</xbrldi:explicitMember></segment></entity>'
+           '<period><startDate>2025-01-01</startDate><endDate>2025-12-31</endDate></period></context>'
+           '<context id="q25"><entity><identifier scheme="s">X</identifier></entity>'
+           '<period><startDate>2025-10-01</startDate><endDate>2025-12-31</endDate></period></context>'
+           '<goog:NetProceedsPaymentsRelatedToStockBasedAwardActivities contextRef="d25" '
+           'unitRef="u">14167000000</goog:NetProceedsPaymentsRelatedToStockBasedAwardActivities>'
+           '<goog:NetProceedsPaymentsRelatedToStockBasedAwardActivities contextRef="d24" '
+           'unitRef="u">12190000000</goog:NetProceedsPaymentsRelatedToStockBasedAwardActivities>'
+           '<goog:NetProceedsPaymentsRelatedToStockBasedAwardActivities contextRef="dseg" '
+           'unitRef="u">999</goog:NetProceedsPaymentsRelatedToStockBasedAwardActivities>'
+           '<goog:NetProceedsPaymentsRelatedToStockBasedAwardActivities contextRef="q25" '
+           'unitRef="u">555</goog:NetProceedsPaymentsRelatedToStockBasedAwardActivities></xbrl>')
+    _gctx, _gfacts = _xbrl_parse_instance(_gx)
+    _gvals, _gmeta = _xbrl_extract(_gctx, _gfacts, XBRL_REGISTRY["GOOGL"],
+                                   {2025: "2025-12-31", 2024: "2024-12-31"}, {})
+    out.append(("XBRL GOOGL netness: the goog: line reads FY2025/FY2024 to his table's Cw",
+                _gvals.get(("Cw", 2025)) == 14167000000.0
+                and _gvals.get(("Cw", 2024)) == 12190000000.0
+                and abs(_gvals[("Cw", 2025)] / 1e6 - 14167) < 0.5
+                and abs(_gvals[("Cw", 2024)] / 1e6 - 12190) < 0.5,
+                f"{_gvals.get(('Cw', 2025), 0)/1e6:,.0f}M / {_gvals.get(('Cw', 2024), 0)/1e6:,.0f}M"))
+    out.append(("XBRL duration filters: a segment-dimensioned fact and a quarter are not annual",
+                len(_gvals) == 2, f"{len(_gvals)} values extracted of 4 facts present"))
+    _sx = ('<?xml version="1.0"?><xbrl xmlns="http://www.xbrl.org/2003/instance" '
+           'xmlns:us-gaap="http://fasb.org/us-gaap/2025" '
+           'xmlns:cvna="http://www.carvana.com/20251231" '
+           'xmlns:xbrldi="http://xbrl.org/2006/xbrldi">'
+           '<context id="iA"><entity><identifier scheme="s">X</identifier>'
+           '<segment><xbrldi:explicitMember dimension="us-gaap:StatementClassOfStockAxis">'
+           'us-gaap:CommonClassAMember</xbrldi:explicitMember></segment></entity>'
+           '<period><instant>2025-12-31</instant></period></context>'
+           '<context id="iB"><entity><identifier scheme="s">X</identifier>'
+           '<segment><xbrldi:explicitMember dimension="us-gaap:StatementClassOfStockAxis">'
+           'us-gaap:CommonClassBMember</xbrldi:explicitMember></segment></entity>'
+           '<period><instant>2025-12-31</instant></period></context>'
+           '<context id="iB2ax"><entity><identifier scheme="s">X</identifier>'
+           '<segment><xbrldi:explicitMember dimension="us-gaap:StatementClassOfStockAxis">'
+           'us-gaap:CommonClassBMember</xbrldi:explicitMember>'
+           '<xbrldi:explicitMember dimension="cvna:SomeOtherAxis">'
+           'cvna:SomeMember</xbrldi:explicitMember></segment></entity>'
+           '<period><instant>2025-12-31</instant></period></context>'
+           '<context id="iOther"><entity><identifier scheme="s">X</identifier>'
+           '<segment><xbrldi:explicitMember dimension="us-gaap:StatementBusinessSegmentsAxis">'
+           'cvna:RetailMember</xbrldi:explicitMember></segment></entity>'
+           '<period><instant>2025-12-31</instant></period></context>'
+           '<context id="iNone"><entity><identifier scheme="s">X</identifier></entity>'
+           '<period><instant>2025-12-31</instant></period></context>'
+           '<us-gaap:CommonStockSharesIssued contextRef="iA" unitRef="sh">142230000'
+           '</us-gaap:CommonStockSharesIssued>'
+           '<us-gaap:CommonStockSharesOutstanding contextRef="iB" unitRef="sh" decimals="0">'
+           '76109000</us-gaap:CommonStockSharesOutstanding>'
+           '<us-gaap:CommonStockSharesOutstanding contextRef="iB2ax" unitRef="sh">999'
+           '</us-gaap:CommonStockSharesOutstanding>'
+           '<us-gaap:CommonStockSharesOutstanding contextRef="iOther" unitRef="sh">888'
+           '</us-gaap:CommonStockSharesOutstanding>'
+           '<us-gaap:CommonStockSharesOutstanding contextRef="iNone" unitRef="sh">777'
+           '</us-gaap:CommonStockSharesOutstanding></xbrl>')
+    _sctx, _sfacts = _xbrl_parse_instance(_sx)
+    _svals, _smeta = _xbrl_extract(_sctx, _sfacts, XBRL_REGISTRY["CVNA"],
+                                   {}, {2025: "2025-12-31"})
+    out.append(("XBRL dimensioned sum: Class A + Class B = the CVNA verification figure",
+                _svals.get(("SHO", 2025)) == 218339000.0,
+                f"{_svals.get(('SHO', 2025), 0):,.0f}"))
+    out.append(("XBRL sum excludes extra-axis and other-axis facts; flags the undimensioned decoy",
+                _smeta["undimmed"] and _smeta["n_members"].get(2025) == 2,
+                "999/888 excluded, 777 flagged not summed"))
+    out.append(("XBRL per-member concept fallback: a class tagged only as Issued still answers",
+                _smeta["issued_members"] == {"CommonClassAMember"},
+                "the Reddit shape — filers mix Issued and Outstanding along every seam"))
+    _mx = _sx.replace('decimals="0"', 'decimals="-6"')
+    _mctx, _mfacts = _xbrl_parse_instance(_mx)
+    _mvals, _mmeta = _xbrl_extract(_mctx, _mfacts, XBRL_REGISTRY["CVNA"],
+                                   {}, {2025: "2025-12-31"})
+    out.append(("XBRL coarse counts flagged: decimals=-6 means million-rounded (the META shape)",
+                _mmeta["coarse"] and not _smeta["coarse"],
+                "±1M per year-over-year share change, said in the note"))
+    out.append(("XBRL instance name: modern iXBRL guess, and the FY2016 index fallback",
+                _xbrl_instance_guess("goog-20241231.htm") == "goog-20241231_htm.xml"
+                and _xbrl_pick_instance(
+                    ["goog10-kq42016.htm", "googexhibit12q42016.htm",
+                     "goog10-kq4_chartx25818.jpg", "goog-20161231.xml",
+                     "goog-20161231.xsd", "goog-20161231_cal.xml",
+                     "goog-20161231_def.xml", "goog-20161231_lab.xml",
+                     "goog-20161231_pre.xml", "0001652044-17-000008.txt"])
+                == "goog-20161231.xml",
+                "the primary-doc stem does not predict the old instance; the picker must"))
+    _vdead, _vnotes = _xbrl_verify(XBRL_REGISTRY["GOOGL"],
+                                   {("Cw", 2025): 14167000000.0,
+                                    ("Cw", 2024): 12190000000.0})
+    _bdead, _bnotes = _xbrl_verify(XBRL_REGISTRY["GOOGL"],
+                                   {("Cw", 2025): 14167000000.0,
+                                    ("Cw", 2024): 12191000000.0})
+    out.append(("XBRL verification gate: exact figures pass, a $1M miss discards the entry loudly",
+                not _vdead and _bdead == {"Cw"} and "discarded" in _bnotes[0],
+                "the registry folds verified figures or nothing"))
+    _fs = {"N": {2024: ("2024-01-01", "2024-12-31", 100118e6),
+                 2025: ("2025-01-01", "2025-12-31", 132170e6)},
+           "Cw": {}, "Ce": {2023: ("2023-01-01", "2023-12-31", 5e6),
+                            2025: ("2025-01-01", "2025-12-31", 300e6)}}
+    _fsrc = {"Cw": [], "Ce": ["ProceedsFromStockOptionsExercised"]}
+    _forg = {"Cw": {}, "Ce": {}}
+    _fsho, _fupc, _fnotes = _xbrl_fold(
+        XBRL_REGISTRY["GOOGL"], set(),
+        {("Cw", 2025): 14167000000.0, ("Cw", 2024): 12190000000.0},
+        {"issued_members": set(), "coarse": False, "undimmed": False,
+         "n_members": {}}, _fs, _fsrc, _forg, [2024, 2025], 4)
+    out.append(("XBRL fold: Cw lands in the series shape _annual writes, source and origin recorded",
+                _fs["Cw"][2025] == ("2025-01-01", "2025-12-31", 14167000000.0)
+                and _fs["Cw"][2024][2] == 12190000000.0
+                and _fsrc["Cw"] == ["goog:NetProceedsPaymentsRelatedToStockBasedAwardActivities"]
+                and _forg["Cw"][2025] == "goog:NetProceedsPaymentsRelatedToStockBasedAwardActivities",
+                "the no-withholding note keys on values and stops firing by itself"))
+    out.append(("XBRL netness fold: Ce zeroed for exactly the filled years, and the note says why",
+                _fs["Ce"][2025][2] == 0.0 and _fs["Ce"][2024][2] == 0.0
+                and _fs["Ce"][2023][2] == 5e6
+                and any("NET of option/ESPP proceeds" in n for n in _fnotes),
+                "proceeds are inside the net line; charging both counts them twice"))
+    out.append(("XBRL fold disarms the Cw gate by origin, not by special-casing",
+                not broad_gate_fires(_forg["Cw"][2025],
+                                     "TreasuryStockValueAcquiredCostMethod",
+                                     14167.0, 24953.0, 132170.0)
+                and not _fupc,
+                "origin is the goog: tag, so the treasury size test never runs"))
+    _us, _uu, _un = _xbrl_fold(
+        XBRL_REGISTRY["RYAN"], set(), {("SHO", 2025): 264112311.0},
+        {"issued_members": set(), "coarse": False, "undimmed": False,
+         "n_members": {2025: 2}},
+        {"N": {2025: ("2025-01-01", "2025-12-31", 1e6)}}, {"Cw": []},
+        {"Cw": {}}, [2025], 2)
+    out.append(("XBRL up_c: RYAN and CVNA flag, the clean folds do not, the sentence names the cause",
+                _uu and XBRL_REGISTRY["CVNA"][0].up_c
+                and not XBRL_REGISTRY["META"][0].up_c
+                and not XBRL_REGISTRY["RDDT"][0].up_c
+                and _us == {2025: 264112311.0}
+                and "Up-C" in up_c_sentence("RYAN", 264.1)
+                and "withheld" in up_c_sentence("RYAN", 264.1),
+                "counts fold, valuation refuses for the true reason until §5.5 G"))
+    out.append(("XBRL registry gate: an unregistered ticker returns None untouched",
+                xbrl_route_apply("PDEX", "0000788920",
+                                 {"N": {2025: ("a", "b", 1.0)}}, {}, {}, 10) is None
+                and "PDEX" not in XBRL_REGISTRY,
+                "one dict lookup and out — zero fetches, byte-identical behaviour"))
+    _dead_fold = _xbrl_fold(XBRL_REGISTRY["GOOGL"], {"Cw"},
+                            {("Cw", 2025): 1.0},
+                            {"issued_members": set(), "coarse": False,
+                             "undimmed": False, "n_members": {}},
+                            {"N": {2025: ("s", "e", 1.0)}, "Cw": {}, "Ce": {}},
+                            {"Cw": []}, {"Cw": {}}, [2025], 1)
+    out.append(("XBRL discarded entry folds nothing: a failed verification leaves the series alone",
+                _dead_fold[0] == {} and not _dead_fold[1]
+                and not any("read from the filings" in n for n in _dead_fold[2]),
+                "the page behaves as it did before the route existed"))
+    out.append(("Page-local Up-C sentence: both legs named, no ΔE-pool claim",
+                "Up-C" in up_c_sentence_dcf("CVNA", 1091.7)
+                and "withheld" in up_c_sentence_dcf("CVNA", 1091.7)
+                and "SBC-corrected" in up_c_sentence_dcf("CVNA", 1091.7)
+                and "1,091.7M" in up_c_sentence_dcf("CVNA", 1091.7)
+                and "ΔE" not in up_c_sentence_dcf("CVNA", 1091.7),
+                "the shared sentence's ΔE-pools clause is tool 1's evidence, not this page's"))
     return out
 
 
@@ -3581,6 +4416,31 @@ if years and ticker and st.session_state.get("dcf_tk") == ticker:
     base_fcf, base_src = seed_base_fcf(_latest_fcf, _med5)
     if base_fcf is None:
         st.error(nothing_to_discount(_latest_fcf, _med5))
+        with st.expander("Notes and detail", expanded=True):
+            for kind_, msg in alerts:
+                getattr(st, kind_)(msg)
+            st.write("**What was read from the filings** — every tag, found or missing")
+            st.dataframe(pd.DataFrame(pre.get("tags", [])), width='stretch', hide_index=True)
+        _page_footer()
+        st.stop()
+
+
+    # ══ Up-C stop (queue H, 10 Sep 2026) ══════════════════════════════════
+    # CVNA and RYAN: the XBRL route summed real per-class counts, so the
+    # table and every per-year Ω above are genuine measurements — and the
+    # per-share valuation still cannot be stood behind until HANDOVER §5.5 G's
+    # NCI fix settles the basis (parent slice over parent-only count, or the
+    # whole over the whole). Placed AFTER nothing-to-discount (a burner still
+    # refuses for the burner reason — the RIVN ordering) and BEFORE the
+    # share-count gate, guarded on shares > 0: a verification-discarded
+    # registry entry leaves counts unread and the ordinary no-share-count
+    # stop below handles it exactly as pre-route. Notes rendered inside the
+    # stop (the GRAB lesson), footer before st.stop (the Job 5b lesson). The
+    # sentence is the page-local one — the shared up_c_sentence names ΔE
+    # pools this page does not have.
+    _upc_shares = pre.get("shares", 0.0) or 0.0
+    if any(e.up_c for e in XBRL_REGISTRY.get(tk, ())) and _upc_shares > 0:
+        st.error(up_c_sentence_dcf(tk, _upc_shares))
         with st.expander("Notes and detail", expanded=True):
             for kind_, msg in alerts:
                 getattr(st, kind_)(msg)
