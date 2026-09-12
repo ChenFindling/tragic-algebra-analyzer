@@ -5046,15 +5046,22 @@ PINS: list[Pin] = [
             'shares': 50.2,
         },
         refusals=()),
-    Pin(ticker='TGTX', pin_set='internal', pinned='2026-09-05',
+    # TGTX — re-pinned 12 Sep 2026 from the F4 deploy's FAIL detail: the
+    # equality-reject zeroed treasury-origin Cw equal to T in FY2024+FY2025
+    # (8.76 + 91.24 = the omega_sum drop of 100.00 exactly; a real buyback
+    # programme mirrored into the treasury tag, double-counted since first
+    # pinned). dE_3y cross-checked: +100.00 on SN 483.234 reproduces
+    # 77.3651 to the digit. The 5-Sep pin was a pin of the defect
+    # (the AAPL/BBW precedent); every other key held through the deploy.
+    Pin(ticker='TGTX', pin_set='internal', pinned='2026-09-12',
         latest_fy=2025, window=(2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025),
         core={
             'G': 64.67,
             'N': 447.179,
             'T': 91.24,
-            'dE_3y': 56.67115057011536,
+            'dE_3y': 77.36505869744084,
             'net_cash': -44.539000000000016,
-            'omega_sum': 601.3755744286758,
+            'omega_sum': 501.3755744286758,
             'price': 34.7195831934611,
             'shares': 155.305953,
         },
@@ -5105,7 +5112,14 @@ PINS: list[Pin] = [
     # actual first close (30 Sep 2020). The 5-Sep omega_sum
     # (19660.783988132833) stood on the 3-month average. Every other key
     # reproduced the 5-Sep pin to the digit through the deploy.
-    Pin(ticker='PLTR', pin_set='internal', pinned='2026-09-08',
+    # Re-pinned again 12 Sep 2026 from the F4 deploy's FAIL detail: the
+    # equality-reject zeroed treasury-origin Cw equal to T in the pre-IPO
+    # years FY2018-2020 (7.706 + 11.202 + 3.777 = the omega_sum drop of
+    # 22.685 exactly). dE_3y correctly unmoved — the fired years sit
+    # outside the 3-year window. FY2021 onward reads the genuine narrow
+    # withholding tag and stands (Variant B's first live mixed-shape
+    # firing). The 8-Sep omega_sum was a pin of the defect.
+    Pin(ticker='PLTR', pin_set='internal', pinned='2026-09-12',
         latest_fy=2025, window=(2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025),
         core={
             'G': 684.033,
@@ -5113,7 +5127,7 @@ PINS: list[Pin] = [
             'T': 74.985,
             'dE_3y': -378.88278539838456,
             'net_cash': 7177.043000000001,
-            'omega_sum': 19532.569407194303,
+            'omega_sum': 19509.884407194302,
             'price': 140.20833460489908,
             'shares': 2391.192,
         },
@@ -5210,16 +5224,25 @@ PINS: list[Pin] = [
             'shares': 4222.16215,
         },
         refusals=()),
-    Pin(ticker='CLMB', pin_set='internal', pinned='2026-09-05',
+    # CLMB — re-pinned 12 Sep 2026 from the F4 deploy's FAIL detail: the
+    # treasury fallback was CLMB's own buyback line ten years running.
+    # Equality zeroed FY2017-2025 (sum 14.300 = the omega_sum drop
+    # exactly); FY2016 (5.404 > 3xG) was already size-gate-zeroed
+    # pre-F4, so equality claiming it moved nothing. dE_full
+    # cross-checked: +14.300 on SN 99.720 reproduces 100.0994 to the
+    # digit; every printed year's Omega now equals V (C = 0 throughout).
+    # The corrected dE_full sits just above 100 honestly. The 5-Sep pin
+    # was a pin of the defect.
+    Pin(ticker='CLMB', pin_set='internal', pinned='2026-09-12',
         latest_fy=2025, window=(2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025),
         core={
             'G': 4.775,
             'N': 21.33,
             'T': 2.05,
-            'dE_3y': 89.54375440808366,
-            'dE_full': 85.7590401249931,
+            'dE_3y': 99.76322133497267,
+            'dE_full': 100.09919255178814,
             'net_cash': 36.372,
-            'omega_sum': 38.62808518735687,
+            'omega_sum': 24.32808518735687,
             'price': 28.62291669845581,
             'shares': 18.442472,
         },
@@ -5235,16 +5258,24 @@ PINS: list[Pin] = [
     Pin(ticker="META", pin_set="master", his_dE=83.3, his_window=(2016, 2025)),
     Pin(ticker="AMZN", pin_set="master", his_dE=82.6, his_window=(2016, 2025)),
     Pin(ticker="NVDA", pin_set="master", his_dE=77.6, his_window=(2017, 2026)),
-    # ADBE carries its own band: the tool's full-period ΔE read 91.5% on
-    # 24 Aug 2026 against his 88.3 — Δ +3.2, and the WHOLE disagreement is
-    # the withholding guard rejecting a treasury-stock line in 2 ADBE years
-    # (deliberate, conservative; disabling the guard lands on 88.3 — BRIEF,
-    # "On comparing against Burry's published figures"). A designed,
-    # decomposed deviation gets a stated band, not a standing FAIL and not
-    # deletion. If ADBE ever drifts past ±3.5 the cause is NEW and must be
-    # chased, not re-banded.
-    Pin(ticker="ADBE", pin_set="master", his_dE=88.3, his_window=(2016, 2025),
-        tol={"his_dE": 3.5}),
+    # ADBE — band RETIRED 12 Sep 2026; honest FAIL until the F3 fold.
+    # The old ±3.5 was calibrated on a state containing a live
+    # double-count: FY2017's treasury-mirrored 1,100 buyback sat ACCEPTED
+    # as Cw under the size gate (81% of 3xG) while FY2016/FY2018 were
+    # size-rejected. F4's equality-reject removed it (master move
+    # +2.66 pts = 1,100 / SN 41,360.736 exactly; Δ +3.25 -> +5.91). The
+    # BRIEF's disable-test would have restored two double-counts —
+    # agreement via error; the band's documented cause is invalidated,
+    # so per the 6-Sep doctrine the row stands FAIL, not re-banded.
+    # Adobe's FY2018 10-K face shows a DISTINCT withholding line for
+    # FY2016-2018 (236.400 / 240.126 / 393.193) the reader cannot see;
+    # the verified per-filing fold ships with F3 — registered
+    # prediction: dE 92.11, Δ +3.81, a smaller honest FAIL. The
+    # residual ~1,522 of SΩ he counts is his-side-unattributed; named
+    # lead: his Ce convention on treasury re-issuance proceeds (ours
+    # credits them, verified to the dollar FY2016-2018) — the same
+    # discriminator axis as INTU §3.2.
+    Pin(ticker="ADBE", pin_set="master", his_dE=88.3, his_window=(2016, 2025)),
     Pin(ticker="CSCO", pin_set="master", his_dE=95.6, his_window=(2016, 2025)),
     Pin(ticker="COST", pin_set="master", his_dE=93.3, his_window=(2015, 2025)),
     Pin(ticker="INTU", pin_set="master", his_dE=75.4, his_window=(2017, 2025)),
