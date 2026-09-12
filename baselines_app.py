@@ -5421,31 +5421,38 @@ def summary_line(rows: list[Row]) -> str:
 # page hunts shows in Ω and ΔE before it shows in IV15.
 
 PINS: list[Pin] = [
-    # PDEX — re-pinned 12 Sep 2026 from the queue E capture cycle: the
-    # deliberate one-run unpin (NFLX 7-Sep protocol) whose capture
-    # reproduced every retired-pin figure to the digit and minted the
-    # first per-year Ω pins (omega:YYYY, full precision, summing to
-    # omega_sum; FY2020/FY2025/FY2026 genuinely zero — the PDEX shape).
+    # PDEX — re-pinned AGAIN 12 Sep 2026 from the F2 deploy's FAIL detail:
+    # Pro-Dex files the successor Ce tag (annual 25/38/28/39/96/60/89/50/
+    # 42/85 thousand, FY2017-2026) and its old Ce read ZERO every year —
+    # the options tag never answered, genuine employee proceeds entirely
+    # uncredited. Every omega:YYYY drop equals that year's successor
+    # figure to the dollar; SUM 0.552 = the omega_sum drop exactly (the
+    # per-year pins' first live catch — queue E paying for itself).
+    # FY2020/2025/2026 now read slightly NEGATIVE Ω: proceeds with no
+    # withholding on a floored V, the legitimate sign. The earlier pins
+    # were pins of the defect (conservative-and-wrong is still wrong).
+    # This same morning's pin minted the omega keys via the deliberate
+    # queue E capture cycle (NFLX 7-Sep protocol).
     Pin(ticker='PDEX', pin_set='internal', pinned='2026-09-12',
         latest_fy=2026, window=(2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026),
         core={
             'G': 0.688,
             'N': 13.662,
             'T': 3.408,
-            'dE_3y': 106.49638888673734,
-            'dE_full': 100.59760136949944,
+            'dE_3y': 107.21104952387547,
+            'dE_full': 101.5245846434969,
             'net_cash': -8.017000000000001,
-            'omega:2017': 0.17157081473493577,
-            'omega:2018': 2.3064656309022906,
-            'omega:2019': 0.40609256873591715,
-            'omega:2020': 0.0,
-            'omega:2021': 0.628814304593563,
-            'omega:2022': 0.5400533746581875,
-            'omega:2023': 0.6621042784438133,
-            'omega:2024': 0.2390393644217652,
-            'omega:2025': 0.0,
-            'omega:2026': 0.0,
-            'omega_sum': 4.954140336490473,
+            'omega:2017': 0.14657081473493577,
+            'omega:2018': 2.268465630902291,
+            'omega:2019': 0.3780925687359171,
+            'omega:2020': -0.039,
+            'omega:2021': 0.532814304593563,
+            'omega:2022': 0.4800533746581875,
+            'omega:2023': 0.5731042784438133,
+            'omega:2024': 0.18903936442176522,
+            'omega:2025': -0.042,
+            'omega:2026': -0.085,
+            'omega_sum': 4.402140336490473,
             'price': 45.67166614532471,
             'shares': 3.186135,
         },
