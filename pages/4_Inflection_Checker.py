@@ -4147,7 +4147,7 @@ def _xbrl_dec_int(dec) -> int | None:
         return None
 
 
-def _xbrl_merge_value(merged: dict, merged_dec: dict, k, v, dec) -> None:
+def _xbrl_merge_value(merged: dict, merged_dec: dict, k, v, dec) -> bool:
     """Newest filing wins per year — except that an OLDER filing carrying
     the same year at strictly FINER decimals, agreeing with the held value
     at the coarser precision's half-unit tolerance, replaces it: same
@@ -4169,19 +4169,41 @@ def _xbrl_merge_value(merged: dict, merged_dec: dict, k, v, dec) -> None:
     if k not in merged:
         merged[k] = v
         merged_dec[k] = dec
-        return
+        return True
     d_old = merged_dec.get(k)
     if dec is None or d_old is None or dec <= d_old:
-        return
+        return False
     if abs(v - merged[k]) <= 0.5 * (10 ** -d_old):
         merged[k] = v
         merged_dec[k] = dec
+        return True
+    return False
 
 
-def _xbrl_verify(entries: tuple, merged: dict) -> tuple[set, list[str]]:
+def _xbrl_trace_note(trace: list) -> str:
+    """One diagnostic sentence per fetched filing, printed ONLY when a
+    verification discard occurred (12 Sep 2026, the ADBE FY2018 hunt):
+    a filing that parses but matches nothing is otherwise invisible — no
+    miss, no note — and this session spent an evening deducing what one
+    such line would have named instantly. trace rows: (reportDate,
+    accession, outcome) where outcome names the matched (key, fy) pairs,
+    "matched none", or the miss reason."""
+    if not trace:
+        return ""
+    rows = "; ".join(f"{rep or '?'} {acc}: {outcome}"
+                     for rep, acc, outcome in trace)
+    return ("**Route trace (printed because a verification figure failed):** "
+            + rows + ".")
+
+
+def _xbrl_verify(entries: tuple, merged: dict, merged_dec: dict | None = None,
+                 merged_src: dict | None = None) -> tuple[set, list[str]]:
     """The registry's contract: each entry's verify figures must reproduce
     to $0.50 / half a share, or the WHOLE entry is discarded. Tolerance
-    strictly below a unit on purpose — the baselines' $1-boundary lesson."""
+    strictly below a unit on purpose — the baselines' $1-boundary lesson.
+    When merge provenance is supplied, a discard note names the held
+    value's decimals and supplying accession — the failure message carries
+    its own investigation (12 Sep 2026, the ADBE FY2018 hunt)."""
     dead: set = set()
     notes: list[str] = []
     for entry in entries:
@@ -4189,13 +4211,20 @@ def _xbrl_verify(entries: tuple, merged: dict) -> tuple[set, list[str]]:
             got = merged.get((entry.key, fy))
             if got is None or abs(abs(got) - abs(expected)) > 0.5:
                 dead.add(entry.key)
+                _k = (entry.key, fy)
+                _prov = ""
+                if got is not None and merged_src is not None:
+                    _d = (merged_dec or {}).get(_k)
+                    _prov = (f" Held value came from filing {merged_src.get(_k, '?')} "
+                             f"at decimals={_d if _d is not None else 'exact/INF'}.")
                 notes.append(
                     f"**The per-filing XBRL read for {entry.key} was discarded.** Its "
                     f"registered verification figure for FY{fy} "
                     f"({expected:,.0f}) "
                     + ("was not found in any fetched filing"
                        if got is None else f"read {got:,.0f} instead")
-                    + ". The registry folds verified figures or nothing; the page "
+                    + "." + _prov
+                    + " The registry folds verified figures or nothing; the page "
                       "behaves as it did before this route existed. This usually "
                       "means the filer changed its tagging — re-verify the entry "
                       "against the latest filing's fact panel.")
@@ -4267,6 +4296,8 @@ def xbrl_route_apply(ticker: str, cik: str, series: dict,
 
     merged: dict = {}
     merged_dec: dict = {}
+    merged_src: dict = {}
+    trace: list = []
     meta = {"issued_members": set(), "coarse": False, "undimmed": False,
             "n_members": {}}
     notes: list[str] = []
@@ -4292,13 +4323,23 @@ def xbrl_route_apply(ticker: str, cik: str, series: dict,
             fetched += 1
             if vals is None:
                 misses += 1
+                trace.append((_rep, accession, f"miss: {m}"))
                 continue
             _dd = m.get("dur_dec", {})
+            _wrote = []
             for k, v in vals.items():
                 # newest filing wins per year; an older, strictly finer,
                 # agreeing duration fact upgrades the resolution — see
                 # _xbrl_merge_value (the ADBE FY2018 rounding artifact).
-                _xbrl_merge_value(merged, merged_dec, k, v, _dd.get(k))
+                if _xbrl_merge_value(merged, merged_dec, k, v, _dd.get(k)):
+                    merged_src[k] = accession
+                    _wrote.append(k)
+            trace.append((_rep, accession,
+                          ("matched " + ", ".join(f"{k[0]} FY{k[1]}" for k in sorted(_wrote))
+                           if _wrote else
+                           "matched none" if not vals else
+                           "matched " + ", ".join(f"{k[0]} FY{k[1]}" for k in sorted(vals))
+                           + " (held values kept)")))
             _xbrl_merge_meta(meta, m)
     except Exception as e:
         notes.append(
@@ -4306,7 +4347,11 @@ def xbrl_route_apply(ticker: str, cik: str, series: dict,
             "The page behaves as it did before this route existed.")
         return {"SHO": {}, "notes": notes, "up_c": False}
 
-    dead, vnotes = _xbrl_verify(entries, merged)
+    dead, vnotes = _xbrl_verify(entries, merged, merged_dec, merged_src)
+    if dead:
+        _tn = _xbrl_trace_note(trace)
+        if _tn:
+            vnotes.append(_tn)
     sho, up_c, fnotes = _xbrl_fold(entries, dead, merged, meta, series,
                                    tag_sources, tag_origin, fys, fetched)
     notes.extend(vnotes)
@@ -5190,6 +5235,25 @@ def self_test() -> list[tuple[str, bool, str]]:
                 _pvals.get(("Cw", 2018)) == 393193000.0
                 and _pmeta["dur_dec"][("Cw", 2018)] == -3,
                 "document order plays vintage; the finer agreeing fact wins either way"))
+    _tm: dict = {}
+    _tmd: dict = {}
+    out.append(("Merge reports writes: insert True, blocked False, upgrade True",
+                _xbrl_merge_value(_tm, _tmd, ("Cw", 2018), 393_000_000.0, -6) is True
+                and _xbrl_merge_value(_tm, _tmd, ("Cw", 2018), 400_000_000.0, -3) is False
+                and _xbrl_merge_value(_tm, _tmd, ("Cw", 2018), 393_193_000.0, -3) is True,
+                "the walk records WHO supplied each held value from these returns"))
+    _dv, _dn = _xbrl_verify(XBRL_REGISTRY["ADBE"],
+                            {("Cw", 2018): 393_000_000.0,
+                             ("Cw", 2017): 240_126_000.0,
+                             ("Cw", 2016): 236_400_000.0},
+                            {("Cw", 2018): -6}, {("Cw", 2018): "0000796343-21-000006"})
+    out.append(("A discard note names the held value's decimals and supplying accession",
+                _dv == {"Cw"}
+                and any("decimals=-6" in n and "0000796343-21-000006" in n for n in _dn)
+                and "matched none" in _xbrl_trace_note(
+                    [("2019-01-25", "acc-1", "matched none")])
+                and _xbrl_trace_note([]) == "",
+                "the failure message carries its own investigation"))
     return out
 
 
