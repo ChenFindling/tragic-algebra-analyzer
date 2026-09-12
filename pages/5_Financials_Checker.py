@@ -1149,6 +1149,95 @@ def broad_gate_fires(origin_tag: str | None, broad: str,
     return (v > 3 * G) if G > 0 else (v > 0.10 * abs(N))
 
 
+def treasury_equal_reject(years, origin_cw: dict) -> list[tuple[int, float]]:
+    """Zero every treasury-origin Cw candidate equal to the year's own buyback.
+
+    Amazon, 12 Sep 2026 (DECOMP §1.4): C read 0.00 in nine years and exactly
+    6,000.00 in FY2022 — equal to the same year's T. Amazon sells shares to
+    cover employee taxes and files no withholding cash line at all; the
+    treasury fallback offered the buyback, and the size gate accepted it
+    because $6,000M against a $19,621M charge is a plausible withholding
+    ratio. The $6B counted twice — once as the buyback in V, once as phantom
+    Cw in C. A size test cannot catch this shape; only identity can: a
+    candidate equal to the year's buyback IS the buyback. Tested to half a
+    dollar (the $1-boundary lesson), before the size gate runs, on
+    treasury-origin years only — a narrow-supplied year is never a candidate
+    here, and a year with no buyback read has nothing to equal.
+
+    Mutates years in place; returns the (fy, value) pairs rejected so the
+    note can name each year and each figure.
+    """
+    hits: list[tuple[int, float]] = []
+    for y in years:
+        if not y.Cw or origin_cw.get(y.fy) != "TreasuryStockValueAcquiredCostMethod":
+            continue
+        if y.T and abs(y.Cw - y.T) < 0.5:
+            hits.append((y.fy, y.Cw))
+            y.Cw = 0.0
+    return hits
+
+
+def treasury_accepted(years, origin_cw: dict) -> bool:
+    """Whether the treasury-accepted sentence may print.
+
+    True only when some SURVIVING Cw was actually supplied by the treasury
+    tag. The earlier condition keyed on any survivor at all, which
+    misdescribes a filer whose treasury candidates were all rejected while
+    narrow-tag years stand (Intuit after the equality-reject): accepted
+    means a treasury value exists and survived, not merely that any
+    withholding exists. A sentence keying on survival instead of origin is
+    the false-sentence class this project hunts (Chen, 12 Sep 2026).
+    """
+    return any(y.Cw and origin_cw.get(y.fy) == "TreasuryStockValueAcquiredCostMethod"
+               for y in years)
+
+
+def treasury_equal_note(hits: list[tuple[int, float]], any_cw_left: bool,
+                        narrow_only_left: bool, any_G: bool) -> str:
+    """The house-style sentence for an equality rejection — the note IS the
+    finding (Chen, 12 Sep 2026). Two shapes.
+
+    Nothing else read (the Amazon shape): the sell-to-cover reading, plus
+    the direction claim the generic no-withholding note would have made —
+    that note is suppressed when this one fires, so the two never co-fire
+    (the JPM lesson applied in advance). The direction claim keeps the
+    Shell guard: with no stock-comp charge read either, understatement is
+    the honest direction, not flattery.
+
+    Other years survive (the Intuit pre-2015 shape): the rejection sentence,
+    and the statement that the rest stands — printed only when every
+    survivor is narrow-origin, because a treasury-origin survivor is the
+    accepted sentence's business, not this one's.
+    """
+    if len(hits) == 1:
+        lead = (f"A treasury-stock line offered as tax withholding was rejected in "
+                f"FY{hits[0][0]}: ${hits[0][1]:,.0f}M equals that year's buyback to "
+                "the dollar")
+    else:
+        fy_list = ", ".join(f"FY{fy}" for fy, _ in hits)
+        lead = (f"A treasury-stock line offered as tax withholding was rejected in "
+                f"{len(hits)} years ({fy_list}): each figure equals that year's "
+                "buyback to the dollar")
+    if not any_cw_left:
+        return (lead + ", and a figure equal to the buyback is the buyback — counting "
+                "it would charge the same dollars twice, once as cash out and once as "
+                "the market value of shares delivered. No withholding cash line was "
+                "found at all, the shape of a filer that sells shares to cover "
+                "employee taxes instead of paying cash. "
+                + ("That leaves the SBC cost understated, so owners' earnings here "
+                   "are flattering rather than conservative."
+                   if any_G else
+                   "No stock-comp charge was read either, so any year that also "
+                   "lacks a share count charges its whole buyback as compensation — "
+                   "owners' earnings in those years are understated rather than "
+                   "flattering. Check the tag panel before using them."))
+    return (lead + ", and a figure equal to the buyback is the buyback — counting it "
+            "would charge the same dollars twice."
+            + (" The other years read from a genuine withholding line and stand."
+               if narrow_only_left else ""))
+
+
+
 def currency_facts(facts: dict, concepts: list[str]) -> dict[str, int]:
     """How many annual-report facts each currency unit carries, for one line.
 
@@ -2488,6 +2577,12 @@ def load(ticker: str, n_years: int = 10):
         # the flattering direction and the one to be most suspicious of.
         # A repurchase wearing a withholding label is always large next to
         # earnings; genuine withholding is not.
+        # Identity runs before size (Amazon, 12 Sep 2026): a treasury candidate
+        # equal to the year's own buyback is rejected outright by
+        # treasury_equal_reject — the size gate then tests what survives.
+        # AutoZone's $1.5B would be caught by either test; Amazon's $6B, at a
+        # plausible 31% of the charge, only by identity.
+        _teq = treasury_equal_reject(years, tag_origin["Cw"])
         capped = 0
         for y in years:
             if not y.Cw:
@@ -2496,7 +2591,12 @@ def load(ticker: str, n_years: int = 10):
                                 "TreasuryStockValueAcquiredCostMethod",
                                 y.Cw, y.G, y.N):
                 y.Cw, capped = 0.0, capped + 1
-        capped_any = capped > 0
+        capped_any = capped > 0 or bool(_teq)
+        if _teq:
+            notes.append(treasury_equal_note(
+                _teq, any(y.Cw for y in years),
+                not treasury_accepted(years, tag_origin["Cw"]),
+                any(y.G for y in years)))
         if capped:
             notes.append(
                 f"A treasury-stock line was read as tax withholding and rejected in {capped} "
@@ -2505,11 +2605,14 @@ def load(ticker: str, n_years: int = 10):
                 "Either means it is an ordinary repurchase, and charging it as withholding "
                 "would count the same dollars twice — once as cash out, once as the market value "
                 "of shares delivered.")
-        elif any(y.Cw for y in years):
+        elif treasury_accepted(years, tag_origin["Cw"]):
             # JPM, 1 Sep 2026 (page 5's run): the treasury tag was in the
             # sources but no year survived the filters, so this "accepted"
             # sentence fired alongside "no tax-withholding line found" three
-            # notes later. Accepted means values exist.
+            # notes later. Accepted means values exist — and since 12 Sep 2026
+            # it means a TREASURY value survived: keying on any survivor at
+            # all misdescribed Intuit once its pre-2015 treasury candidates
+            # were equality-rejected while its narrow-tag years stood.
             notes.append(
                 "Tax withholding was read from a treasury-stock line rather than the usual "
                 "withholding tag. Filers that retire shares on repurchase report it this way. "
@@ -4890,6 +4993,55 @@ def self_test() -> list[tuple[str, bool, str]]:
                 _dead_fold[0] == {} and not _dead_fold[1]
                 and not any("read from the filings" in n for n in _dead_fold[2]),
                 "the page behaves as it did before the route existed"))
+    # F4 — the treasury equality-reject (Amazon, 12 Sep 2026; DECOMP §1.4, §4).
+    _q1 = [Year(fy=2021, N=33364.0, G=12757.0, T=0.0, Cw=0.0),
+           Year(fy=2022, N=-2722.0, G=19621.0, T=6000.0, Cw=6000.0)]
+    _q1h = treasury_equal_reject(_q1, {2022: "TreasuryStockValueAcquiredCostMethod"})
+    out.append(("Equality-reject: a treasury Cw equal to the year's T is the buyback, zeroed",
+                _q1h == [(2022, 6000.0)] and _q1[1].Cw == 0.0 and _q1[0].Cw == 0.0,
+                "AMZN FY2022: $6B counted twice — buyback in V, phantom Cw in C"))
+    _q1n = treasury_equal_note(_q1h, any(y.Cw for y in _q1), True, True)
+    out.append(("...and the sell-to-cover sentence names the year, the figure, the direction",
+                "FY2022" in _q1n and "$6,000M" in _q1n
+                and "sells shares to cover" in _q1n and "flattering" in _q1n,
+                "the sentence IS the finding"))
+    _q2 = [Year(fy=2020, N=100.0, G=50.0, T=1000.0, Cw=999.6),
+           Year(fy=2021, N=100.0, G=50.0, T=1000.0, Cw=999.4),
+           Year(fy=2022, N=100.0, G=50.0, T=500.0, Cw=500.0),
+           Year(fy=2023, N=100.0, G=50.0, T=0.0, Cw=40.0)]
+    _q2o = {2020: "TreasuryStockValueAcquiredCostMethod",
+            2021: "TreasuryStockValueAcquiredCostMethod",
+            2022: "PaymentsRelatedToTaxWithholdingForShareBasedCompensation",
+            2023: "TreasuryStockValueAcquiredCostMethod"}
+    _q2h = treasury_equal_reject(_q2, _q2o)
+    _q2n = treasury_equal_note(_q2h, any(y.Cw for y in _q2),
+                               not treasury_accepted(_q2, _q2o), any(y.G for y in _q2))
+    out.append(("Equality is half a dollar; narrow origin and a missing buyback are immune",
+                _q2h == [(2020, 999.6)] and _q2[0].Cw == 0.0
+                and _q2[1].Cw == 999.4 and _q2[2].Cw == 500.0 and _q2[3].Cw == 40.0
+                and "and stand" not in _q2n,
+                "$0.40 off rejects, $0.60 off survives to the size gate; Cw equal to T on "
+                "the narrow tag is a coincidence, not a candidate; a treasury survivor "
+                "silences the survivors clause"))
+    _q3 = [Year(fy=2013, N=800.0, G=60.0, T=1800.0, Cw=1800.0),
+           Year(fy=2014, N=900.0, G=70.0, T=2264.0, Cw=2264.0),
+           Year(fy=2016, N=1000.0, G=300.0, T=500.0, Cw=153.0)]
+    _q3o = {2013: "TreasuryStockValueAcquiredCostMethod",
+            2014: "TreasuryStockValueAcquiredCostMethod",
+            2016: "PaymentsRelatedToTaxWithholdingForShareBasedCompensation"}
+    _q3h = treasury_equal_reject(_q3, _q3o)
+    _q3n = treasury_equal_note(_q3h, any(y.Cw for y in _q3),
+                               not treasury_accepted(_q3, _q3o), any(y.G for y in _q3))
+    out.append(("The Intuit shape: equal fills rejected, narrow years stand and the note says so",
+                _q3h == [(2013, 1800.0), (2014, 2264.0)] and _q3[2].Cw == 153.0
+                and "2 years (FY2013, FY2014)" in _q3n and "and stand" in _q3n
+                and "sells shares to cover" not in _q3n,
+                "two truths told apart: the rejection and the survivors"))
+    out.append(("The accepted sentence keys on treasury ORIGIN, not on any survivor",
+                not treasury_accepted(_q3, _q3o)
+                and treasury_accepted([Year(fy=2019, N=100.0, G=50.0, T=900.0, Cw=120.0)],
+                                      {2019: "TreasuryStockValueAcquiredCostMethod"}),
+                "keying on survival instead of origin is the false-sentence class"))
     return out
 
 
