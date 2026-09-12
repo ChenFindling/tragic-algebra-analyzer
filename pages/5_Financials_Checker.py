@@ -1258,7 +1258,8 @@ def treasury_equal_note(hits: list[tuple[int, float]], any_cw_left: bool,
                if narrow_only_left else ""))
 
 
-def offer_event_sized(v: float, prior_out: float, trailing: list) -> bool:
+def offer_event_sized(v: float, prior_out: float, trailing: list,
+                      persistent: bool = True) -> bool:
     """Whether an OFFER-series share figure is a genuine capital event.
 
     QCOM, 12 Sep 2026 (DECOMP §1.1, F1): Qualcomm tags twelve years of
@@ -1280,8 +1281,20 @@ def offer_event_sized(v: float, prior_out: float, trailing: list) -> bool:
     conversions are always event-sized; this cadence test never weakens
     the deal-share exclusion (Chen, 12 Sep 2026). Only OFFER is tested.
 
+    PERSISTENCE (12 Sep 2026, the KNSL amendment): an employee-issuance
+    line prints every year; an episodic line is offerings by nature
+    whatever its size. Kinsale — an IPO and three genuine follow-ons at
+    3.5%/1.4%/0.7% of the count, 4 of 10 window years — slipped the size
+    bar and had real raises priced as SBC for one run. The returned
+    note's cadence claim is now enforced: persistent=False means the
+    line prints only in occasional years and every year stays excluded.
+    The caller supplies persistence (presence in at least 70% of the
+    window years).
+
     v, prior_out and trailing are raw share counts on the same basis.
     """
+    if not persistent:
+        return True
     if not prior_out:
         return True
     if v > 0.04 * prior_out:
@@ -1305,7 +1318,9 @@ def offer_returned_note(total: float, fys: list) -> str:
             "line's own history — which is employee stock wearing a capital-event "
             "tag, not a raise. Excluding it understated the SBC cost. Offerings "
             "that are genuinely event-sized (above 4% of the prior year's count, "
-            "or past three times the line's own median) are still excluded.")
+            "or past three times the line's own median) are still excluded, and a "
+            "line that only prints in occasional years is treated as offerings "
+            "throughout — cadence means every-year presence, not just modest size.")
 
 
 
@@ -2563,6 +2578,10 @@ def load(ticker: str, n_years: int = 10):
     non_sbc_total = 0.0
     _off_returned = 0.0
     _off_ret_years: list[int] = []
+    # Presence in at least 70% of the window years = the cadence the
+    # returned note claims (the KNSL amendment, 12 Sep 2026).
+    _off_persistent = (sum(1 for _fy in fys if _fy in series.get("OFFER", {}))
+                       >= 0.7 * len(fys))
     years: list[Year] = []
 
     for fy in fys:
@@ -2577,7 +2596,8 @@ def load(ticker: str, n_years: int = 10):
                     if fy in series.get("OFFER", {}) else 0.0)
         _off_event = bool(_off_raw) and offer_event_sized(
             _off_raw, float(shares_out.get(fy - 1, 0) or 0),
-            [abs(v[2]) for y2, v in series.get("OFFER", {}).items() if y2 < fy])
+            [abs(v[2]) for y2, v in series.get("OFFER", {}).items() if y2 < fy],
+            _off_persistent)
         non_sbc = _mc + (_off_raw / 1e6 if _off_event else 0.0)
         if non_sbc:
             dS -= non_sbc
@@ -5529,6 +5549,14 @@ def self_test() -> list[tuple[str, bool, str]]:
                 and "4%" in _orn and "three times" in _orn
                 and "still excluded" in _orn,
                 "a page run months from now still announces what the test did"))
+    out.append(("F1 amended: an episodic line is a capital event whatever its size (KNSL)",
+                offer_event_sized(742e3, 21.3e6, [7.59e6], False)
+                and offer_event_sized(155e3, 22.8e6, [7.59e6, 742e3, 311e3], False)
+                and not offer_event_sized(742e3, 21.3e6, [7.59e6], True)
+                and "occasional years" in offer_returned_note(1.0, [2020]),
+                "Kinsale: an IPO and three sub-4% follow-ons in 4 of 10 years — real "
+                "raises that slipped the size bar; persistence is the cadence the "
+                "note claims"))
     return out
 
 
