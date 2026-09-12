@@ -36,7 +36,43 @@ figures.
 Run:  streamlit run Home.py
 """
 
+# ══════════════════════════════════════════════════════════════════════
+#  THE MENU MAP — FROZEN (toolkit pass, 12 Sep 2026)
+#
+#      Home (entrypoint)
+#      1   Tragic Algebra Analyzer
+#      2   Hundred Bagger Checker       (page title: 100-Bagger Checker)
+#      4   Inflection Checker
+#      5   Financials Checker
+#      6   NonUS Checker                (page title: Non-US Checker)
+#      7   DCF Evaluator
+#      8   (reserved: the watchlist page)
+#      99  Return Calculator            (structurally last for the life of the kit)
+#
+#  3 is retired; never reuse a number. User-facing text names pages by
+#  their MENU NAMES, never by number — "tool 1" and "page 4" are banned
+#  in UI strings; self-test labels, comments and docstrings are exempt.
+#  Where ONE rendered sentence mentions the same page twice, the first
+#  mention is the exact menu name and later mentions may be "that page"
+#  or "it"; a mention inside a conditional clause prints alone, so it
+#  counts as a first mention and carries the full name.
+# ══════════════════════════════════════════════════════════════════════
+
 from __future__ import annotations
+
+FROZEN_MENU = ("Tragic Algebra Analyzer", "100-Bagger Checker", "Inflection Checker",
+               "Financials Checker", "Non-US Checker", "DCF Evaluator",
+               "Return Calculator")
+
+
+def _route_ok(sentence: str) -> bool:
+    """The sweep's test (toolkit pass, 12 Sep 2026): a user-facing route or
+    provenance sentence names a frozen menu page and carries no numeric page
+    reference. Asserted on every standalone sentence producer; inline UI text
+    is covered by the build's tokenizer scan of record and the click-through."""
+    import re as _re
+    return (any(_name in sentence for _name in FROZEN_MENU)
+            and not _re.search(r"(?i)\b(tool|page)s?\s+\d", sentence))
 
 import datetime as dt
 import os
@@ -2031,10 +2067,14 @@ def foreign_filer_note(net_income_tag: str, unread: list[str]) -> str:
             f"from {net_income_tag}, which is right, but this reader knows US-GAAP tag names "
             "for the other lines and an IFRS filing does not use them. ")
     if not unread:
-        return head + "Check each line in the tag panel before trusting any figure below."
+        return head + ("Check each line in the tag panel before trusting any figure below. "
+                       "The Non-US Checker page reads the IFRS names this page does not — "
+                       "prefer it for this ticker.")
     return head + ("Nothing at all was read for: " + ", ".join(unread) + ". Those lines are "
                    "wrong rather than missing — a line that reads nothing is treated as a "
-                   "zero. Treat the whole page as unverified and do not use the valuation.")
+                   "zero. Treat the whole page as unverified and do not use the valuation. "
+                   "The Non-US Checker page reads the IFRS names this page does not — use it "
+                   "for this ticker.")
 
 
 def growth_trend_phrase(cagr3: float, latest: float) -> str:
@@ -4665,7 +4705,8 @@ def gate_dE(pooled) -> tuple[str, float | None]:
     if pooled is None:
         return "", 1.0
     if pooled.dE_defined and pooled.dE > DE_UNUSABLE_ABOVE:
-        return (f"**ΔE reads {pooled.dE:.1%}, above the 125% ceiling.** Tool 1's rule: that is "
+        return (f"**ΔE reads {pooled.dE:.1%}, above the 125% ceiling.** The Tragic Algebra Analyzer's "
+                "rule: that is "
                 "issuance the reader failed to capture, not a heavy buyback, and it cannot be "
                 "projected."), None
     if dE_projectable(pooled):
@@ -5557,6 +5598,20 @@ def self_test() -> list[tuple[str, bool, str]]:
                 "Kinsale: an IPO and three sub-4% follow-ons in 4 of 10 years — real "
                 "raises that slipped the size bar; persistence is the cadence the "
                 "note claims"))
+    # ── the sweep (toolkit pass, 12 Sep 2026): route sentences name menu
+    #    pages, never numbers. _route_ok = a frozen menu name present, no
+    #    "tool N" / "page N". Standalone producers only; inline UI text is
+    #    covered by the tokenizer scan of record and the click-through.
+    out.append(("Sweep: IFRS-filer note (partial branch) routes by menu name",
+                _route_ok(foreign_filer_note("ProfitLoss", [])),
+                foreign_filer_note("ProfitLoss", [])[-80:]))
+    out.append(("Sweep: IFRS-filer note (unread branch) routes by menu name",
+                _route_ok(foreign_filer_note("ProfitLoss", ["revenue"])),
+                foreign_filer_note("ProfitLoss", ["revenue"])[-80:]))
+    _swhi = _hi
+    out.append(("Sweep: ΔE-ceiling refusal names the menu page",
+                _route_ok(gate_dE(_swhi)[0]), gate_dE(_swhi)[0][:70]))
+
     return out
 
 
@@ -5580,7 +5635,8 @@ if not _sec_contact():
 if "fin_years" not in st.session_state:
     st.info(
         "**Three parts, and which is whose.** The stock-comp adjustment is Burry's Tragic "
-        "Algebra, tool 1's engine unchanged — Ω does not care what the company sells. Everything "
+        "Algebra, the Tragic Algebra Analyzer's engine unchanged — Ω does not care what the "
+        "company sells. Everything "
         "after it is this app's: the class gate, the class tables, the return on tangible "
         "common equity, growth derived from what is kept, and an exit that hands the next buyer "
         "the same 15%. Net cash, ROIC and the AI-moat tiers do not appear here — a bank's cash is "
@@ -5646,7 +5702,8 @@ if years and ticker and st.session_state.get("fin_tk") == ticker:
     st.markdown("---")
     st.subheader(f"{CLASS_NAME[cls]} evidence")
     st.caption("Every cell is a filed number or a named identity on filed numbers. A dash is a "
-               "refused cell, not zero. Years marked * are tool 1's excluded capital-event years.")
+               "refused cell, not zero. Years marked * are the Tragic Algebra Analyzer's excluded "
+               "capital-event years.")
     _fyl = lambda r: f"{r.fy}*" if r.excluded else str(r.fy)
     if cls == "insurer":
         _uw = {r.fy: underwriting(r.lines) for r in rows}
@@ -5758,7 +5815,7 @@ if years and ticker and st.session_state.get("fin_tk") == ticker:
 
     # ══ 4. Tragic Algebra — tool 1's table, identical ═════════════════
     st.markdown("---")
-    st.subheader("Tragic Algebra — Burry's stock-comp adjustment, tool 1's engine")
+    st.subheader("Tragic Algebra — Burry's stock-comp adjustment, the Tragic Algebra Analyzer's engine")
     _medN = median_positive_N([y.N for y in years])
     _mf3 = money_fmt([v for y in years for v in (y.N, y.G, y.omega, y.OE)])
     st.dataframe(pd.DataFrame([{
@@ -5778,9 +5835,9 @@ if years and ticker and st.session_state.get("fin_tk") == ticker:
         st.caption(f"Pooled ΔE {_pooled.dE:.1%} over {_pooled.years} years, {_pooled3.dE:.1%} over the "
                    f"last three. The three-year figure is applied once to the return seeds"
                    + (f" at {_dE_applied:.1%}" if _dE_applied is not None else "")
-                   + (", capped at 100% — tool 1's rule" if _dE_applied is not None and dE_was_capped(_pooled3.dE) else "")
+                   + (", capped at 100% — the Tragic Algebra Analyzer's rule" if _dE_applied is not None and dE_was_capped(_pooled3.dE) else "")
                    + (", or at 100% because it is not projectable" if _dE_applied == 1.0 and not dE_projectable(_pooled3) else "")
-                   + ". Identical to tool 1 for the same ticker.")
+                   + ". Identical to the Tragic Algebra Analyzer for the same ticker.")
 
     # ══ 5. gates ══════════════════════════════════════════════════════
     st.markdown("---")
@@ -5942,7 +5999,7 @@ if years and ticker and st.session_state.get("fin_tk") == ticker:
     st.markdown("---")
     st.subheader("Assumptions used")
     _a = [f"class            {CLASS_NAME[cls]} — {cls_reason}",
-          f"shares           {latest.shares:,.1f}M year-end FY{latest.fy} (tool 1's route)",
+          f"shares           {latest.shares:,.1f}M year-end FY{latest.fy} (the Tragic Algebra Analyzer's route)",
           f"price            ${price:,.2f}" if price > 0 else "price            not fetched"]
     if cls == "reit":
         _a += [f"base             FFO/share {_ffops_latest:.2f} FY{latest.fy} (Nareit, us-gaap tags: {_ffo[latest.fy][1]})"
@@ -5955,7 +6012,7 @@ if years and ticker and st.session_state.get("fin_tk") == ticker:
         _a += [f"base             TBV/share ${latest.tbvps:,.2f} FY{latest.fy} — {latest.tbv_reason}",
                f"net to common    FY{latest.fy}: {latest.n_reason}",
                f"ROTE filed       5y median {pct(m5)} · window median {pct(m10)} ({n_ok} years readable)",
-               f"ΔE applied       {pct(_dE_applied)} (three-year pooled, tool 1's rule)",
+               f"ΔE applied       {pct(_dE_applied)} (three-year pooled, the Tragic Algebra Analyzer's rule)",
                f"normal ROTE      {pct(_ret0)} — seed 5y median × ΔE",
                f"terminal ROTE    {pct(_retT)} — seed lower median × ΔE, faded to linearly",
                f"payout           {pct(_payout)} — seed dividends {_pay.dividends:,.0f} + buybacks {_pay.buybacks:,.0f} "
