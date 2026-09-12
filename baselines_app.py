@@ -17,9 +17,9 @@ SECOND Cloud app pointing at this file. Two consequences of that:
     harmless and known, not a bug.
 
 Layout of this file:
-  lines up to the BASELINES banner — tool 1's engine, reader and 167-check
+  lines up to the BASELINES banner — tool 1's engine, reader and 169-check
   self-test, copied VERBATIM from the deployed 1_Tragic_Algebra_Analyzer.py
-  (its lines 1-4981; only this docstring replaced, tool 1's UI dropped).
+  (its lines 1-5009; only this docstring replaced, tool 1's UI dropped).
   The doctrine: what this page checks is what the pages run. A reader
   change in the page files is a reader change here — sync it like
   pages 2, 4, 5 and 6.
@@ -486,6 +486,12 @@ CONCEPTS = {
     # preferred and treasury sales, so it inherits the broad-tag offering
     # gate below; appended-last is the minimal blast radius by construction.
     "Ce": (["ProceedsFromIssuanceOfSharesUnderIncentiveAndShareBasedCompensationPlans",
+            # Rank 1 (12 Sep 2026, F2): the FASB SUCCESSOR of the deprecated
+            # rank-0 element, adjacent to its predecessor. Intuit files it;
+            # the reader used to fall through to options-only and miss the
+            # ESPP component (1,028 over FY2017-2025, DECOMP §1.2). QCOM and
+            # TXN companyconcept-verified 404 before this shipped.
+            "ProceedsFromIssuanceOfSharesUnderIncentiveAndShareBasedCompensationPlansIncludingStockOptions",
             "ProceedsFromStockOptionsExercised", "ProceedsFromIssuanceOfTreasuryStock",
             "ProceedsFromSaleOfTreasuryStock", "ProceedsFromStockPlans",
             "ProceedsFromEmployeeStockPurchasePlan", "ProceedsFromIssuanceOfCommonStock",
@@ -4982,13 +4988,35 @@ def self_test() -> list[tuple[str, bool, str]]:
                 _vvals.get(("Cw", 2018)) == 393_193_000.0
                 and _vmeta["dur_dec"][("Cw", 2018)] == -3,
                 "the live FY2020 shape, unreachable for verified figures at either level"))
+    # F2 — the successor tag at rank 1 (12 Sep 2026; DECOMP §1.2, §4).
+    out.append(("F2: the successor sits at rank 1, adjacent to its deprecated predecessor",
+                CONCEPTS["Ce"][0][0] == "ProceedsFromIssuanceOfSharesUnderIncentiveAndShareBasedCompensationPlans"
+                and CONCEPTS["Ce"][0][1] == "ProceedsFromIssuanceOfSharesUnderIncentiveAndShareBasedCompensationPlansIncludingStockOptions",
+                "element succession modelled where the deprecation happened"))
+    _inf = {"facts": {"us-gaap": {
+        "ProceedsFromIssuanceOfSharesUnderIncentiveAndShareBasedCompensationPlansIncludingStockOptions":
+            {"units": {"USD": [
+                {"form": "10-K", "start": f"{y}-08-01", "end": f"{y+1}-07-31",
+                 "filed": f"{y+1}-09-15", "val": v * 1e6}
+                for y, v in ((2023, 282.0), (2024, 398.0))]}},
+        "ProceedsFromStockOptionsExercised": {"units": {"USD": [
+            {"form": "10-K", "start": f"{y}-08-01", "end": f"{y+1}-07-31",
+             "filed": f"{y+1}-09-15", "val": v * 1e6}
+            for y, v in ((2023, 121.0), (2024, 234.0))]}}}}}
+    _ins: list[str] = []
+    _ino: dict[int, str] = {}
+    _inr = _annual(_inf, CONCEPTS["Ce"][0], [], _ins, True, False, origin=_ino)
+    out.append(("The Intuit shape: the successor's combined figure wins over options-only",
+                _inr[2024][2] == 282e6 and _inr[2025][2] == 398e6
+                and _ino[2025] == "ProceedsFromIssuanceOfSharesUnderIncentiveAndShareBasedCompensationPlansIncludingStockOptions",
+                "228/282/398 match the 10-K face; options-only 90/121/234 was the subset"))
     return out
 
 
 # ══════════════════════════════════════════════════════════════════════
 #  BASELINES — everything below this line is this page's own code.
 #  Everything above it is tool 1's engine and reader, copied verbatim
-#  (lines 1–4981 of the deployed 1_Tragic_Algebra_Analyzer.py, 167
+#  (lines 1–5009 of the deployed 1_Tragic_Algebra_Analyzer.py, 169
 #  checks; only the module docstring was replaced). Re-copied 12 Sep
 #  2026 (third recopy that day) for the precision-merge rule — an older,
 #  finer, agreeing duration fact upgrades the resolution (the ADBE
@@ -5682,6 +5710,21 @@ PINS: list[Pin] = [
     Pin(ticker="ADBE", pin_set="master", his_dE=88.3, his_window=(2016, 2025)),
     Pin(ticker="CSCO", pin_set="master", his_dE=95.6, his_window=(2016, 2025)),
     Pin(ticker="COST", pin_set="master", his_dE=93.3, his_window=(2015, 2025)),
+    # INTU — EXPECTED HONEST FAIL at Δ +8.90 once F2 ships (12 Sep 2026;
+    # DECOMP §3.2). The corrected 84.30 stands on filing-verified lines
+    # (N, G, T, Cw, Ce via the successor tag, A to the dollar); the old
+    # 78.90 was flattering, built on 1,028 of missing ESPP credit.
+    # The remaining 1,695 of ΣΩ he counts that we, on verified filings,
+    # do not is the session's named open lead — his-side-unattributed,
+    # so band-widening is NOT justified (6-Sep doctrine). Discriminator
+    # bands if his inputs ever surface: his figure ≈84 = he credits full
+    # plans proceeds (convergence, row would PASS); ≈78 = options-only
+    # Ce convention; ≈72 = no proceeds credited — each shifts ≈ +1.4 if
+    # he also count-nets the Credit Karma / Mailchimp deals. Same axis
+    # as ADBE's post-fold residual. Evidence routes: deal-note share
+    # counts (FY2021/FY2022 10-K business-combination notes), his next
+    # publication, or a demonstrated mis-read on our side (none
+    # expected). Until one lands, this row failing IS the fix working.
     Pin(ticker="INTU", pin_set="master", his_dE=75.4, his_window=(2017, 2025)),
     Pin(ticker="TXN", pin_set="master", his_dE=92.4, his_window=(2016, 2025)),
     Pin(ticker="QCOM", pin_set="master", his_dE=91.2, his_window=(2016, 2025)),
