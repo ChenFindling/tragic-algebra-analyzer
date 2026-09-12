@@ -1137,6 +1137,56 @@ def treasury_equal_note(hits: list[tuple[int, float]], any_cw_left: bool,
                if narrow_only_left else ""))
 
 
+def offer_event_sized(v: float, prior_out: float, trailing: list) -> bool:
+    """Whether an OFFER-series share figure is a genuine capital event.
+
+    QCOM, 12 Sep 2026 (DECOMP §1.1, F1): Qualcomm tags twelve years of
+    ordinary employee issuance under the generic new-issues element —
+    round annual counts at payroll cadence, 1.5-2.2% of the outstanding
+    count — and the unconditional exclusion removed them from dS, charged
+    nothing for those shares, and let the buybacks that mopped them up
+    count in full: ΔE read 117.5% against his 91.2. TGTX's raises on the
+    SAME element run 7-26% of the count, dated events of days' duration
+    (companyconcept-verified 12 Sep 2026). The separation is a factor of
+    three on each side of these thresholds:
+
+    Event-sized = above 4% of the prior year's outstanding count, OR a
+    spike past three times the line's own trailing median (median test
+    only with three or more prior years). No prior-year count to size
+    against = stays excluded, the conservative default.
+
+    MA and CONV stay UNCONDITIONALLY excluded — deal shares and
+    conversions are always event-sized; this cadence test never weakens
+    the deal-share exclusion (Chen, 12 Sep 2026). Only OFFER is tested.
+
+    v, prior_out and trailing are raw share counts on the same basis.
+    """
+    if not prior_out:
+        return True
+    if v > 0.04 * prior_out:
+        return True
+    if len(trailing) >= 3:
+        _s = sorted(trailing)
+        med = _s[len(_s) // 2]
+        if med and v > 3.0 * med:
+            return True
+    return False
+
+
+def offer_returned_note(total: float, fys: list) -> str:
+    """The house-style sentence when payroll-cadence issuance returns to
+    the share count — self-naming, so a page run months from now still
+    announces what the test did (12 Sep 2026)."""
+    fy_list = ", ".join(f"FY{fy}" for fy in fys)
+    return (f"An issuance line usually excluded was returned to the share count in "
+            f"{len(fys)} year(s) ({fy_list}): {total:,.1f}M shares moving at payroll "
+            "cadence — a few percent of the outstanding count, no spike against the "
+            "line's own history — which is employee stock wearing a capital-event "
+            "tag, not a raise. Excluding it understated the SBC cost. Offerings "
+            "that are genuinely event-sized (above 4% of the prior year's count, "
+            "or past three times the line's own median) are still excluded.")
+
+
 
 def currency_facts(facts: dict, concepts: list[str]) -> dict[str, int]:
     """How many annual-report facts each currency unit carries, for one line.
@@ -2383,6 +2433,8 @@ def load(ticker: str, n_years: int = 10):
             "cannot; a US filer that genuinely tags no revenue would be refused here either way.")
 
     non_sbc_total = 0.0
+    _off_returned = 0.0
+    _off_ret_years: list[int] = []
     years: list[Year] = []
 
     for fy in fys:
@@ -2391,11 +2443,20 @@ def load(ticker: str, n_years: int = 10):
 
         dS = ((shares_out[fy] - shares_out[fy - 1]) / 1e6
               if fy in shares_out and fy - 1 in shares_out else 0.0)
-        non_sbc = sum(abs(series[k][fy][2]) / 1e6
-                      for k in ("MA", "OFFER", "CONV") if fy in series.get(k, {}))
+        _mc = sum(abs(series[k][fy][2]) / 1e6
+                  for k in ("MA", "CONV") if fy in series.get(k, {}))
+        _off_raw = (abs(series["OFFER"][fy][2])
+                    if fy in series.get("OFFER", {}) else 0.0)
+        _off_event = bool(_off_raw) and offer_event_sized(
+            _off_raw, float(shares_out.get(fy - 1, 0) or 0),
+            [abs(v[2]) for y2, v in series.get("OFFER", {}).items() if y2 < fy])
+        non_sbc = _mc + (_off_raw / 1e6 if _off_event else 0.0)
         if non_sbc:
             dS -= non_sbc
             non_sbc_total += non_sbc
+        if _off_raw and not _off_event:
+            _off_returned += _off_raw / 1e6
+            _off_ret_years.append(fy)
         price = _avg_price(closes, start, end) or 0.0
 
         years.append(Year(fy=fy, N=N / 1e6, G=get("G"), T=get("T"), dS=dS,
@@ -2452,6 +2513,8 @@ def load(ticker: str, n_years: int = 10):
         notes.append(f"Excluded {non_sbc_total:,.1f}M shares issued for acquisitions, offerings "
                      "or conversions — those are corporate transactions, not compensation. "
                      "Where a company issues stock for deals this matters a great deal.")
+    if _off_returned:
+        notes.append(offer_returned_note(_off_returned, _off_ret_years))
     capped_any = False
     if "TreasuryStockValueAcquiredCostMethod" in tag_sources.get("Cw", []):
         # The size test needed a stock-comp charge to test against, and AutoZone
@@ -4767,6 +4830,21 @@ def self_test() -> list[tuple[str, bool, str]]:
                 _inr[2024][2] == 282e6 and _inr[2025][2] == 398e6
                 and _ino[2025] == "ProceedsFromIssuanceOfSharesUnderIncentiveAndShareBasedCompensationPlansIncludingStockOptions",
                 "228/282/398 match the 10-K face; options-only 90/121/234 was the subset"))
+    # F1 — the OFFER cadence/size test (12 Sep 2026; DECOMP §1.1, §4).
+    out.append(("F1: payroll cadence returns to dS; raises, spikes and blind years stay out",
+                not offer_event_sized(30e6, 1.6e9, [25e6, 29e6, 22e6])
+                and offer_event_sized(5.7e6, 22e6, [0.695e6])
+                and offer_event_sized(30e6, 2e9, [8e6, 9e6, 7e6])
+                and offer_event_sized(1e6, 0.0, [1e6, 1e6, 1e6]),
+                "QCOM's 1.9% cadence returns; TGTX's 26% raise, a 3x-median spike and a "
+                "no-base year all stay excluded"))
+    _orn = offer_returned_note(206.0, list(range(2016, 2026)))
+    out.append(("...and the returned note is self-naming: years, figure, cadence, thresholds",
+                "10 year(s)" in _orn and "FY2016" in _orn and "FY2025" in _orn
+                and "206.0M" in _orn and "payroll cadence" in _orn
+                and "4%" in _orn and "three times" in _orn
+                and "still excluded" in _orn,
+                "a page run months from now still announces what the test did"))
     out.append(("Page-local Up-C sentence: both legs named, no ΔE-pool claim",
                 "Up-C" in up_c_sentence_dcf("CVNA", 1091.7)
                 and "withheld" in up_c_sentence_dcf("CVNA", 1091.7)
