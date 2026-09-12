@@ -31,7 +31,43 @@ against tool 1's Alphabet figures.
 Run:  streamlit run Home.py
 """
 
+# ══════════════════════════════════════════════════════════════════════
+#  THE MENU MAP — FROZEN (toolkit pass, 12 Sep 2026)
+#
+#      Home (entrypoint)
+#      1   Tragic Algebra Analyzer
+#      2   Hundred Bagger Checker       (page title: 100-Bagger Checker)
+#      4   Inflection Checker
+#      5   Financials Checker
+#      6   NonUS Checker                (page title: Non-US Checker)
+#      7   DCF Evaluator
+#      8   (reserved: the watchlist page)
+#      99  Return Calculator            (structurally last for the life of the kit)
+#
+#  3 is retired; never reuse a number. User-facing text names pages by
+#  their MENU NAMES, never by number — "tool 1" and "page 4" are banned
+#  in UI strings; self-test labels, comments and docstrings are exempt.
+#  Where ONE rendered sentence mentions the same page twice, the first
+#  mention is the exact menu name and later mentions may be "that page"
+#  or "it"; a mention inside a conditional clause prints alone, so it
+#  counts as a first mention and carries the full name.
+# ══════════════════════════════════════════════════════════════════════
+
 from __future__ import annotations
+
+FROZEN_MENU = ("Tragic Algebra Analyzer", "100-Bagger Checker", "Inflection Checker",
+               "Financials Checker", "Non-US Checker", "DCF Evaluator",
+               "Return Calculator")
+
+
+def _route_ok(sentence: str) -> bool:
+    """The sweep's test (toolkit pass, 12 Sep 2026): a user-facing route or
+    provenance sentence names a frozen menu page and carries no numeric page
+    reference. Asserted on every standalone sentence producer; inline UI text
+    is covered by the build's tokenizer scan of record and the click-through."""
+    import re as _re
+    return (any(_name in sentence for _name in FROZEN_MENU)
+            and not _re.search(r"(?i)\b(tool|page)s?\s+\d", sentence))
 
 import datetime as dt
 import os
@@ -1998,10 +2034,14 @@ def foreign_filer_note(net_income_tag: str, unread: list[str]) -> str:
             f"from {net_income_tag}, which is right, but this reader knows US-GAAP tag names "
             "for the other lines and an IFRS filing does not use them. ")
     if not unread:
-        return head + "Check each line in the tag panel before trusting any figure below."
+        return head + ("Check each line in the tag panel before trusting any figure below. "
+                       "The Non-US Checker page reads the IFRS names this page does not — "
+                       "prefer it for this ticker.")
     return head + ("Nothing at all was read for: " + ", ".join(unread) + ". Those lines are "
                    "wrong rather than missing — a line that reads nothing is treated as a "
-                   "zero. Treat the whole page as unverified and do not use the valuation.")
+                   "zero. Treat the whole page as unverified and do not use the valuation. "
+                   "The Non-US Checker page reads the IFRS names this page does not — use it "
+                   "for this ticker.")
 
 
 def growth_trend_phrase(cagr3: float, latest: float) -> str:
@@ -3263,7 +3303,7 @@ def op_shape(pts: list[tuple[int, float]]) -> tuple[str, str]:
         return SHAPE_DIP, (
             f"Operating income was positive at both ends of the window with a loss in "
             f"FY{', FY'.join(str(f) for f in loss_fys)} — a loss year on a profitable record. "
-            "Tool 1's seed helper already handles this shape.")
+            "The Tragic Algebra Analyzer's seed helper already handles this shape.")
     if not first and last:
         if crossings == 1:
             cross = next(fy for fy, p in zip(fys, pos) if p)
@@ -3279,7 +3319,8 @@ def op_shape(pts: list[tuple[int, float]]) -> tuple[str, str]:
                     f"Operating income crossed to positive at FY{cross}, and every year of the "
                     f"trend window (FY{window[0]}–FY{window[-1]}) is profitable — the turn is older "
                     f"than the four years this page reasons from. A margin path from a profitable "
-                    "base is tool 1's growth rate; its Model settings carry a Stage 0 for a ramp "
+                    "base is the Tragic Algebra Analyzer's growth rate; its Model settings carry a Stage 0 "
+                    "for a ramp "
                     "you judge is still ahead.")
             return SHAPE_INFLECTION, (
                 f"Operating income was negative {_span(fys[0], cross - 1)} and positive "
@@ -3464,11 +3505,11 @@ def financial_sentence(sic_desc: str | None, sic) -> str:
     """Tool 1's SIC 6000–6799 rule, worded for everyone it catches — Compass
     (6531, a brokerage) and Affirm (6141, a lender) were told their revenue
     was 'not an insurer's revenue'."""
-    return (f"{sic_desc or 'Financial company'} (SIC {sic}). Tool 1 treats SIC 6000–6799 — "
+    return (f"{sic_desc or 'Financial company'} (SIC {sic}). The Tragic Algebra Analyzer treats SIC 6000–6799 — "
             "banks, insurers, lenders, brokers, REITs — as financial: their investments back "
             "customer liabilities rather than belonging to shareholders, and for many of them "
-            "the revenue concept this page's trend table is built on is not their revenue. Tool "
-            "1 values them indicatively with net cash set to zero; this page does not price "
+            "the revenue concept this page's trend table is built on is not their revenue. That "
+            "page values them indicatively with net cash set to zero; this page does not price "
             "them at all, and the table is not shown.")
 
 
@@ -3541,7 +3582,7 @@ def dE_gate(box_dE: float, measured, fys: list[int]) -> tuple[str, float]:
                 "Burry takes for DocuSign and ServiceNow — the assumptions block will record "
                 "it as set by hand."), 0.0
     if box_dE > DE_UNUSABLE_ABOVE:
-        return (f"ΔE of {box_dE:.1%} is above {DE_UNUSABLE_ABOVE:.0%}, tool 1's line past which "
+        return (f"ΔE of {box_dE:.1%} is above {DE_UNUSABLE_ABOVE:.0%}, the Tragic Algebra Analyzer's line past which "
                 "share issuance is not being captured. A company cannot keep more than every "
                 "reported dollar. Not projectable."), 0.0
     return "", seed_dE(box_dE)
@@ -3716,7 +3757,8 @@ def below_line_note(flagged: list[tuple[int, float, float]]) -> str | None:
     return (f"Net income exceeds operating income in {len(flagged)} profitable year"
             f"{'s' if len(flagged) > 1 else ''} — {yrs}. Something below the operating line — "
             "interest on cash, a tax benefit, a gain — is in net income, and ΔE is measured on that "
-            "figure — tool 1's ΔE is measured on it and flattered by it. Nothing here is: this "
+            "figure — the Tragic Algebra Analyzer's ΔE is measured on it and flattered by it. "
+            "Nothing here is: this "
             "page measures ΔE on after-tax operating income and projects operating margin.")
 
 
@@ -5441,6 +5483,33 @@ def self_test() -> list[tuple[str, bool, str]]:
                 "Kinsale: an IPO and three sub-4% follow-ons in 4 of 10 years — real "
                 "raises that slipped the size bar; persistence is the cadence the "
                 "note claims"))
+    # ── the sweep (toolkit pass, 12 Sep 2026): route sentences name menu
+    #    pages, never numbers. _route_ok = a frozen menu name present, no
+    #    "tool N" / "page N". Standalone producers only; inline UI text is
+    #    covered by the tokenizer scan of record and the click-through.
+    out.append(("Sweep: IFRS-filer note (partial branch) routes by menu name",
+                _route_ok(foreign_filer_note("ProfitLoss", [])),
+                foreign_filer_note("ProfitLoss", [])[-80:]))
+    out.append(("Sweep: IFRS-filer note (unread branch) routes by menu name",
+                _route_ok(foreign_filer_note("ProfitLoss", ["revenue"])),
+                foreign_filer_note("ProfitLoss", ["revenue"])[-80:]))
+    out.append(("Sweep: SHAPE_DIP route sentence names the menu page",
+                _route_ok(op_shape([(2021, 500.0), (2022, -600.0), (2023, 700.0), (2024, 800.0)])[1]),
+                op_shape([(2021, 500.0), (2022, -600.0), (2023, 700.0), (2024, 800.0)])[1][-70:]))
+    _swcx = [(2016, -6.0), (2017, 17.0), (2018, 63.0), (2019, 129.0), (2020, 214.0), (2021, 683.0),
+             (2022, 851.0), (2023, 1037.0), (2024, 1022.0), (2025, 150.0)]
+    out.append(("Sweep: SHAPE_STALE route sentence names the menu page",
+                _route_ok(op_shape(_swcx)[1]), op_shape(_swcx)[1][-70:]))
+    out.append(("Sweep: financial sentence names the menu page, first mention only",
+                _route_ok(financial_sentence("Real Estate Agents", "6531")),
+                financial_sentence("Real Estate Agents", "6531")[:70]))
+    out.append(("Sweep: ΔE-ceiling gate sentence names the menu page",
+                _route_ok(dE_gate(1.30, None, [2023, 2024, 2025])[0]),
+                dE_gate(1.30, None, [2023, 2024, 2025])[0][:70]))
+    out.append(("Sweep: below-the-line note names the menu page",
+                _route_ok(below_line_note([(2024, 500.0, 300.0)]) or ""),
+                (below_line_note([(2024, 500.0, 300.0)]) or "")[-70:]))
+
     return out
 
 
@@ -5502,7 +5571,7 @@ with st.form("inf_lookup"):
 tier_name = st.selectbox("Moat tier", list(AICT), index=2,
                          format_func=lambda t: f"{t} — {TIER_BLURB[t]}",
                          help="Sets stage lengths after Stage 0, how far growth fades in stage 2, "
-                              "the terminal cap and the exit multiple. Tool 1's tiers, unchanged.")
+                              "the terminal cap and the exit multiple. The Tragic Algebra Analyzer's tiers, unchanged.")
 
 if submitted:
     if not ticker:
@@ -5643,7 +5712,7 @@ if years and ticker and st.session_state.get("inf_tk") == ticker:
 
     # ══ judgement inputs ═════════════════════════════════════════════
     st.markdown("---")
-    st.subheader("Pricing — Burry's Stage 0, on tool 1's engine")
+    st.subheader("Pricing — Burry's Stage 0, on the Tragic Algebra Analyzer's engine")
     st.caption("Filed numbers above; judgement in the boxes below, and the assumptions block says "
                "which is which. An inflection valuation is mostly the margin assumption — the "
                "grid under the verdict shows how much.")
@@ -5680,7 +5749,8 @@ if years and ticker and st.session_state.get("inf_tk") == ticker:
                + ". A launch rate does not compound for fifteen years — the years box bounds it.")
     g1 = j3.number_input("Growth after Stage 0 (%)", value=round(stage1_seed(pre.get("growth"), _g0_seed) * 100, 1),
                          step=0.5, min_value=-50.0, max_value=60.0,
-                         help="Stage 1 growth once the margin path is done. Tool 1's own rule (latest "
+                         help="Stage 1 growth once the margin path is done. The Tragic Algebra Analyzer's own "
+                              "rule (latest "
                               "revenue growth capped at 25%), and never above the Stage 0 rate; it should "
                               "usually be lower still after years of hypergrowth.") / 100.0
     tax = j2.number_input("Tax rate (%)", value=TAX_DEFAULT * 100, step=1.0, min_value=0.0, max_value=60.0,
@@ -5695,7 +5765,8 @@ if years and ticker and st.session_state.get("inf_tk") == ticker:
                                   "true cost of stock comp: (operating income × (1 − tax) + GAAP SBC − true "
                                   "SBC cost) ÷ operating income × (1 − tax), pooled over the profitable "
                                   "years since the crossing. Measured on the base this page projects, so "
-                                  "no tax benefit or gain below the operating line can flatter it; tool 1's "
+                                  "no tax benefit or gain below the operating line can flatter it; the Tragic Algebra "
+                                  "Analyzer's "
                                   "ΔE on net income will read differently. Held constant through Stage 0, "
                                   "the conservative side.") / 100.0
     _dE_set_by_hand = _measured is None or not _measured.measurable or abs(dE_box - _measured.dE) > 5e-4
@@ -5720,7 +5791,7 @@ if years and ticker and st.session_state.get("inf_tk") == ticker:
     net_cash = cash - debt
     _rw, _burn = runway_years(cash, _last.cfo, _last.capex)
 
-    with st.expander("Model settings — tool 1's, unchanged"):
+    with st.expander("Model settings — the Tragic Algebra Analyzer's, unchanged"):
         m1, m2 = st.columns(2)
         exit_m = m1.number_input("Exit multiple", value=round(AICT[tier_name].default_exit_multiple, 2), step=0.5)
         m2_style = m1.radio("Exit-multiple leg", ["dcf", "hold"], horizontal=True,
@@ -5776,7 +5847,7 @@ if years and ticker and st.session_state.get("inf_tk") == ticker:
                                   "of stock-comp cost against one year of profit is a reading, not a rate."))
     if dE_was_capped(dE_box):
         alerts.append(("warning", f"ΔE measured {dE_box:.1%}; projected at 100% — a company cannot keep "
-                                  "more than every reported dollar. Same cap as tool 1."))
+                                  "more than every reported dollar. Same cap as the Tragic Algebra Analyzer."))
 
     OE0 = oe_seed(rev0, m0, tax, applied_dE)
     g0 = stage0_rate(g_rev, m0, terminal, int(s0_years))
@@ -5816,7 +5887,8 @@ if years and ticker and st.session_state.get("inf_tk") == ticker:
                f"(1 − {tax:.0%}) × ΔE {applied_dE:.1%}), growing {g0:.1%} a year for {int(s0_years)} years to "
                f"{rev0 * (1 + g_rev) ** int(s0_years) * terminal * (1 - tax) * applied_dE:,.0f}M "
                f"(revenue {rev0 * (1 + g_rev) ** int(s0_years):,.0f}M at {terminal:.1%}). Then {tier_name}'s stages at {g1:.1%}.\n\n"
-               "This is not tool 1's IV15 for the same ticker, and should not be. Tool 1 seeds owners' "
+               "This is not the Tragic Algebra Analyzer's IV15 for the same ticker, and should not be. "
+               "That page seeds owners' "
                "earnings from forward net income × ΔE with no Stage 0; this page seeds from operating "
                "income — above interest, tax and one-offs — and projects the margin. Same filings, same "
                "year-by-year table, a different question.")
@@ -5844,7 +5916,7 @@ if years and ticker and st.session_state.get("inf_tk") == ticker:
         for kind_, msg in alerts:
             getattr(st, kind_)(msg)
 
-        st.write("**Owners' earnings, year by year** — identical to tool 1 for the same ticker")
+        st.write("**Owners' earnings, year by year** — identical to the Tragic Algebra Analyzer for the same ticker")
         _dE_text = lambda v: "n/a (base too small)" if v is None else f"{v:.1%}"
         _med_N = median_positive_N([y.N for y in years])
         _mfmt2 = money_fmt([v for y in years for v in (y.N, y.G, y.T, y.omega, y.OE)])
@@ -5905,7 +5977,7 @@ with _r1:
             "income. When it runs above the current margin, leverage is appearing.\n\n"
             "**Stage 0** — Burry's extra stage for inflecting hypergrowth: the margin projected "
             "geometrically to a terminal margin over stated years, then his normal stages. "
-            "That path is a constant growth rate, so tool 1's engine carries it exactly.\n\n"
+            "That path is a constant growth rate, so the Tragic Algebra Analyzer's engine carries it exactly.\n\n"
             "**ΔE** — the share of profit that reaches shareholders after the true cost of stock "
             "comp. Measured here over the profitable years only, never across the losses.\n\n"
             "**The refusals** — this app's. Wrong shape, a trend that reversed or is one year old, "
@@ -5914,7 +5986,8 @@ with _r1:
 
 with _r2:
     with st.expander("Verify the engine"):
-        st.caption("Ported-engine checks against tool 1's figures, the Stage 0 identity built by hand, "
+        st.caption("Ported-engine checks against the Tragic Algebra Analyzer's figures, the Stage 0 "
+                   "identity built by hand, "
                    "and every shape, gate and refusal on synthetic series. They do not use live filings.")
         if st.button("Run checks"):
             _results = self_test()
