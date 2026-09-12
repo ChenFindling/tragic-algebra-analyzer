@@ -17,9 +17,9 @@ SECOND Cloud app pointing at this file. Two consequences of that:
     harmless and known, not a bug.
 
 Layout of this file:
-  lines up to the BASELINES banner — tool 1's engine, reader and 172-check
+  lines up to the BASELINES banner — tool 1's engine, reader and 174-check
   self-test, copied VERBATIM from the deployed 1_Tragic_Algebra_Analyzer.py
-  (its lines 1-5115; only this docstring replaced, tool 1's UI dropped).
+  (its lines 1-5163; only this docstring replaced, tool 1's UI dropped).
   The doctrine: what this page checks is what the pages run. A reader
   change in the page files is a reader change here — sync it like
   pages 2, 4, 5 and 6.
@@ -35,7 +35,43 @@ NOT PINNED (prints a capture block).
 Run:  streamlit run baselines_app.py
 """
 
+# ══════════════════════════════════════════════════════════════════════
+#  THE MENU MAP — FROZEN (toolkit pass, 12 Sep 2026)
+#
+#      Home (entrypoint)
+#      1   Tragic Algebra Analyzer
+#      2   Hundred Bagger Checker       (page title: 100-Bagger Checker)
+#      4   Inflection Checker
+#      5   Financials Checker
+#      6   NonUS Checker                (page title: Non-US Checker)
+#      7   DCF Evaluator
+#      8   (reserved: the watchlist page)
+#      99  Return Calculator            (structurally last for the life of the kit)
+#
+#  3 is retired; never reuse a number. User-facing text names pages by
+#  their MENU NAMES, never by number — "tool 1" and "page 4" are banned
+#  in UI strings; self-test labels, comments and docstrings are exempt.
+#  Where ONE rendered sentence mentions the same page twice, the first
+#  mention is the exact menu name and later mentions may be "that page"
+#  or "it"; a mention inside a conditional clause prints alone, so it
+#  counts as a first mention and carries the full name.
+# ══════════════════════════════════════════════════════════════════════
+
 from __future__ import annotations
+
+FROZEN_MENU = ("Tragic Algebra Analyzer", "100-Bagger Checker", "Inflection Checker",
+               "Financials Checker", "Non-US Checker", "DCF Evaluator",
+               "Return Calculator")
+
+
+def _route_ok(sentence: str) -> bool:
+    """The sweep's test (toolkit pass, 12 Sep 2026): a user-facing route or
+    provenance sentence names a frozen menu page and carries no numeric page
+    reference. Asserted on every standalone sentence producer; inline UI text
+    is covered by the build's tokenizer scan of record and the click-through."""
+    import re as _re
+    return (any(_name in sentence for _name in FROZEN_MENU)
+            and not _re.search(r"(?i)\b(tool|page)s?\s+\d", sentence))
 
 import datetime as dt
 import os
@@ -5116,13 +5152,24 @@ def self_test() -> list[tuple[str, bool, str]]:
                 "Kinsale: an IPO and three sub-4% follow-ons in 4 of 10 years — real "
                 "raises that slipped the size bar; persistence is the cadence the "
                 "note claims"))
+    # ── the sweep (toolkit pass, 12 Sep 2026): route sentences name menu
+    #    pages, never numbers. _route_ok = a frozen menu name present, no
+    #    "tool N" / "page N". Standalone producers only; inline UI text is
+    #    covered by the tokenizer scan of record and the click-through.
+    out.append(("Sweep: IFRS-filer note (partial branch) routes by menu name",
+                _route_ok(foreign_filer_note("ProfitLoss", [])),
+                foreign_filer_note("ProfitLoss", [])[-80:]))
+    out.append(("Sweep: IFRS-filer note (unread branch) routes by menu name",
+                _route_ok(foreign_filer_note("ProfitLoss", ["revenue"])),
+                foreign_filer_note("ProfitLoss", ["revenue"])[-80:]))
+
     return out
 
 
 # ══════════════════════════════════════════════════════════════════════
 #  BASELINES — everything below this line is this page's own code.
 #  Everything above it is tool 1's engine and reader, copied verbatim
-#  (lines 1–5115 of the deployed 1_Tragic_Algebra_Analyzer.py, 172
+#  (lines 1–5163 of the deployed 1_Tragic_Algebra_Analyzer.py, 174
 #  checks; only the module docstring was replaced). Re-copied 12 Sep
 #  2026 (third recopy that day) for the precision-merge rule — an older,
 #  finer, agreeing duration fact upgrades the resolution (the ADBE
