@@ -29,7 +29,43 @@ Pooled over ~10 years as sum(OE)/sum(N) — never an average of annual ratios.
 Run:  streamlit run app.py
 """
 
+# ══════════════════════════════════════════════════════════════════════
+#  THE MENU MAP — FROZEN (toolkit pass, 12 Sep 2026)
+#
+#      Home (entrypoint)
+#      1   Tragic Algebra Analyzer
+#      2   Hundred Bagger Checker       (page title: 100-Bagger Checker)
+#      4   Inflection Checker
+#      5   Financials Checker
+#      6   NonUS Checker                (page title: Non-US Checker)
+#      7   DCF Evaluator
+#      8   (reserved: the watchlist page)
+#      99  Return Calculator            (structurally last for the life of the kit)
+#
+#  3 is retired; never reuse a number. User-facing text names pages by
+#  their MENU NAMES, never by number — "tool 1" and "page 4" are banned
+#  in UI strings; self-test labels, comments and docstrings are exempt.
+#  Where ONE rendered sentence mentions the same page twice, the first
+#  mention is the exact menu name and later mentions may be "that page"
+#  or "it"; a mention inside a conditional clause prints alone, so it
+#  counts as a first mention and carries the full name.
+# ══════════════════════════════════════════════════════════════════════
+
 from __future__ import annotations
+
+FROZEN_MENU = ("Tragic Algebra Analyzer", "100-Bagger Checker", "Inflection Checker",
+               "Financials Checker", "Non-US Checker", "DCF Evaluator",
+               "Return Calculator")
+
+
+def _route_ok(sentence: str) -> bool:
+    """The sweep's test (toolkit pass, 12 Sep 2026): a user-facing route or
+    provenance sentence names a frozen menu page and carries no numeric page
+    reference. Asserted on every standalone sentence producer; inline UI text
+    is covered by the build's tokenizer scan of record and the click-through."""
+    import re as _re
+    return (any(_name in sentence for _name in FROZEN_MENU)
+            and not _re.search(r"(?i)\b(tool|page)s?\s+\d", sentence))
 
 import datetime as dt
 import os
@@ -5110,6 +5146,17 @@ def self_test() -> list[tuple[str, bool, str]]:
                 "Kinsale: an IPO and three sub-4% follow-ons in 4 of 10 years — real "
                 "raises that slipped the size bar; persistence is the cadence the "
                 "note claims"))
+    # ── the sweep (toolkit pass, 12 Sep 2026): route sentences name menu
+    #    pages, never numbers. _route_ok = a frozen menu name present, no
+    #    "tool N" / "page N". Standalone producers only; inline UI text is
+    #    covered by the tokenizer scan of record and the click-through.
+    out.append(("Sweep: IFRS-filer note (partial branch) routes by menu name",
+                _route_ok(foreign_filer_note("ProfitLoss", [])),
+                foreign_filer_note("ProfitLoss", [])[-80:]))
+    out.append(("Sweep: IFRS-filer note (unread branch) routes by menu name",
+                _route_ok(foreign_filer_note("ProfitLoss", ["revenue"])),
+                foreign_filer_note("ProfitLoss", ["revenue"])[-80:]))
+
     return out
 
 
