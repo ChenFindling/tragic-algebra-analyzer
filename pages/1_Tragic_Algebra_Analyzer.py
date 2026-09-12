@@ -480,6 +480,12 @@ CONCEPTS = {
     # preferred and treasury sales, so it inherits the broad-tag offering
     # gate below; appended-last is the minimal blast radius by construction.
     "Ce": (["ProceedsFromIssuanceOfSharesUnderIncentiveAndShareBasedCompensationPlans",
+            # Rank 1 (12 Sep 2026, F2): the FASB SUCCESSOR of the deprecated
+            # rank-0 element, adjacent to its predecessor. Intuit files it;
+            # the reader used to fall through to options-only and miss the
+            # ESPP component (1,028 over FY2017-2025, DECOMP §1.2). QCOM and
+            # TXN companyconcept-verified 404 before this shipped.
+            "ProceedsFromIssuanceOfSharesUnderIncentiveAndShareBasedCompensationPlansIncludingStockOptions",
             "ProceedsFromStockOptionsExercised", "ProceedsFromIssuanceOfTreasuryStock",
             "ProceedsFromSaleOfTreasuryStock", "ProceedsFromStockPlans",
             "ProceedsFromEmployeeStockPurchasePlan", "ProceedsFromIssuanceOfCommonStock",
@@ -4976,6 +4982,28 @@ def self_test() -> list[tuple[str, bool, str]]:
                 _vvals.get(("Cw", 2018)) == 393_193_000.0
                 and _vmeta["dur_dec"][("Cw", 2018)] == -3,
                 "the live FY2020 shape, unreachable for verified figures at either level"))
+    # F2 — the successor tag at rank 1 (12 Sep 2026; DECOMP §1.2, §4).
+    out.append(("F2: the successor sits at rank 1, adjacent to its deprecated predecessor",
+                CONCEPTS["Ce"][0][0] == "ProceedsFromIssuanceOfSharesUnderIncentiveAndShareBasedCompensationPlans"
+                and CONCEPTS["Ce"][0][1] == "ProceedsFromIssuanceOfSharesUnderIncentiveAndShareBasedCompensationPlansIncludingStockOptions",
+                "element succession modelled where the deprecation happened"))
+    _inf = {"facts": {"us-gaap": {
+        "ProceedsFromIssuanceOfSharesUnderIncentiveAndShareBasedCompensationPlansIncludingStockOptions":
+            {"units": {"USD": [
+                {"form": "10-K", "start": f"{y}-08-01", "end": f"{y+1}-07-31",
+                 "filed": f"{y+1}-09-15", "val": v * 1e6}
+                for y, v in ((2023, 282.0), (2024, 398.0))]}},
+        "ProceedsFromStockOptionsExercised": {"units": {"USD": [
+            {"form": "10-K", "start": f"{y}-08-01", "end": f"{y+1}-07-31",
+             "filed": f"{y+1}-09-15", "val": v * 1e6}
+            for y, v in ((2023, 121.0), (2024, 234.0))]}}}}}
+    _ins: list[str] = []
+    _ino: dict[int, str] = {}
+    _inr = _annual(_inf, CONCEPTS["Ce"][0], [], _ins, True, False, origin=_ino)
+    out.append(("The Intuit shape: the successor's combined figure wins over options-only",
+                _inr[2024][2] == 282e6 and _inr[2025][2] == 398e6
+                and _ino[2025] == "ProceedsFromIssuanceOfSharesUnderIncentiveAndShareBasedCompensationPlansIncludingStockOptions",
+                "228/282/398 match the 10-K face; options-only 90/121/234 was the subset"))
     return out
 
 
