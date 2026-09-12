@@ -3546,10 +3546,13 @@ def _xbrl_extract(contexts: dict, facts: list, entries: tuple,
                     # a statement tagging the line at millions earlier in the
                     # document cannot mask a later thousands-precision fact —
                     # the sibling shape of the cross-filing ADBE artifact,
-                    # closed before it bites (the boundary/stub lesson).
+                    # closed before it bites (the boundary/stub lesson). A
+                    # verify-matching fact takes the slot at this level too.
+                    _fy = end_to_fy[end]
                     _xbrl_merge_value(values, meta.setdefault("dur_dec", {}),
-                                      (entry.key, end_to_fy[end]), val,
-                                      _xbrl_dec_int(_dec))
+                                      (entry.key, _fy), val,
+                                      _xbrl_dec_int(_dec),
+                                      dict(entry.verify).get(_fy))
         else:  # instant_sum
             ax_prefix, _, ax_local = entry.axis.partition(":")
             ax_class = "std" if ax_prefix in _XBRL_STD_STEMS else "custom"
@@ -3688,7 +3691,8 @@ def _xbrl_dec_int(dec) -> int | None:
         return None
 
 
-def _xbrl_merge_value(merged: dict, merged_dec: dict, k, v, dec) -> bool:
+def _xbrl_merge_value(merged: dict, merged_dec: dict, k, v, dec,
+                      verified: float | None = None) -> bool:
     """Newest filing wins per year — except that an OLDER filing carrying
     the same year at strictly FINER decimals, agreeing with the held value
     at the coarser precision's half-unit tolerance, replaces it: same
@@ -3706,7 +3710,22 @@ def _xbrl_merge_value(merged: dict, merged_dec: dict, k, v, dec) -> bool:
     within a single instance's fact list, where document order plays the
     vintage role. Duration facts only — instant sums keep their documented
     ±1M million-rounding noise (META) unchanged.
+
+    THE CONTRACT OUTRANKS THE HEURISTICS (12 Sep 2026, approved): for
+    registered verification pairs, a candidate reproducing the entry's
+    verify figure within the half-unit takes the slot unconditionally —
+    the verify tuple IS the identity, and a fact matching it is the
+    verified fact by definition. Vintage and precision rules arbitrate
+    among unverified candidates only. Scope: exactly the (key, fy) pairs
+    a registry entry names with figures from the filings; nothing else is
+    touched. Born of the ADBE FY2018 block: a decimals-less fact held the
+    slot as "exact" and vetoed both finer facts, including the one
+    matching the registered figure.
     """
+    if verified is not None and abs(abs(v) - abs(verified)) <= 0.5:
+        merged[k] = v
+        merged_dec[k] = dec
+        return True
     if k not in merged:
         merged[k] = v
         merged_dec[k] = dec
@@ -3838,6 +3857,8 @@ def xbrl_route_apply(ticker: str, cik: str, series: dict,
     merged: dict = {}
     merged_dec: dict = {}
     merged_src: dict = {}
+    _verify_map = {(e.key, fy): expected
+                   for e in entries for fy, expected in e.verify}
     trace: list = []
     meta = {"issued_members": set(), "coarse": False, "undimmed": False,
             "n_members": {}}
@@ -3870,17 +3891,23 @@ def xbrl_route_apply(ticker: str, cik: str, series: dict,
             _wrote = []
             for k, v in vals.items():
                 # newest filing wins per year; an older, strictly finer,
-                # agreeing duration fact upgrades the resolution — see
-                # _xbrl_merge_value (the ADBE FY2018 rounding artifact).
-                if _xbrl_merge_value(merged, merged_dec, k, v, _dd.get(k)):
+                # agreeing duration fact upgrades the resolution; and a
+                # candidate matching the registered verify figure takes
+                # the slot outright — see _xbrl_merge_value.
+                if _xbrl_merge_value(merged, merged_dec, k, v, _dd.get(k),
+                                     _verify_map.get(k)):
                     merged_src[k] = accession
                     _wrote.append(k)
+            _kept = sorted(k for k in vals if k not in _wrote)
+            _parts = []
+            if _wrote:
+                _parts.append("wrote " + ", ".join(
+                    f"{k[0]} FY{k[1]}" for k in sorted(_wrote)))
+            if _kept:
+                _parts.append("offered " + ", ".join(
+                    f"{k[0]} FY{k[1]}" for k in _kept) + " (held values kept)")
             trace.append((_rep, accession,
-                          ("matched " + ", ".join(f"{k[0]} FY{k[1]}" for k in sorted(_wrote))
-                           if _wrote else
-                           "matched none" if not vals else
-                           "matched " + ", ".join(f"{k[0]} FY{k[1]}" for k in sorted(vals))
-                           + " (held values kept)")))
+                          "; ".join(_parts) if _parts else "matched none"))
             _xbrl_merge_meta(meta, m)
     except Exception as e:
         notes.append(
@@ -4686,6 +4713,32 @@ def self_test() -> list[tuple[str, bool, str]]:
                     [("2019-01-25", "acc-1", "matched none")])
                 and _xbrl_trace_note([]) == "",
                 "the failure message carries its own investigation"))
+    _vm: dict = {}
+    _vmd: dict = {}
+    _xbrl_merge_value(_vm, _vmd, ("Cw", 2018), 393_000_000.0, None)
+    _vblocked = _xbrl_merge_value(_vm, _vmd, ("Cw", 2018), 393_193_000.0, -3)
+    _vwon = _xbrl_merge_value(_vm, _vmd, ("Cw", 2018), 393_193_000.0, -3,
+                              393_193_000.0)
+    out.append(("The contract outranks the heuristics: a verify-matching fact takes the slot",
+                _vblocked is False and _vwon is True
+                and _vm[("Cw", 2018)] == 393_193_000.0 and _vmd[("Cw", 2018)] == -3,
+                "an unknown-decimals holder cannot veto the registered identity (ADBE FY2018)"))
+    _vx = ('<?xml version="1.0"?><xbrl xmlns="http://www.xbrl.org/2003/instance" '
+           'xmlns:adbe="http://www.adobe.com/20181130">'
+           '<context id="dv18"><entity><identifier scheme="s">X</identifier></entity>'
+           '<period><startDate>2017-12-02</startDate><endDate>2018-11-30</endDate>'
+           '</period></context>'
+           '<adbe:CostOfIssuanceOfTreasuryStock contextRef="dv18" unitRef="u">'
+           '393000000</adbe:CostOfIssuanceOfTreasuryStock>'
+           '<adbe:CostOfIssuanceOfTreasuryStock contextRef="dv18" decimals="-3" '
+           'unitRef="u">393193000</adbe:CostOfIssuanceOfTreasuryStock></xbrl>')
+    _vctx, _vfacts = _xbrl_parse_instance(_vx)
+    _vvals, _vmeta = _xbrl_extract(_vctx, _vfacts, XBRL_REGISTRY["ADBE"],
+                                   {2018: "2018-11-30"}, {})
+    out.append(("...at the document level too: a decimals-less first fact cannot hold it",
+                _vvals.get(("Cw", 2018)) == 393_193_000.0
+                and _vmeta["dur_dec"][("Cw", 2018)] == -3,
+                "the live FY2020 shape, unreachable for verified figures at either level"))
     out.append(("Page-local Up-C sentence: both legs named, no ΔE-pool claim",
                 "Up-C" in up_c_sentence_dcf("CVNA", 1091.7)
                 and "withheld" in up_c_sentence_dcf("CVNA", 1091.7)
