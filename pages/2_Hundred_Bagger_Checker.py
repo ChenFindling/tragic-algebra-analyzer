@@ -47,7 +47,43 @@ balance sheet, with two rules that matter:
 Run:  streamlit run Home.py   (this file lives in pages/)
 """
 
+# ══════════════════════════════════════════════════════════════════════
+#  THE MENU MAP — FROZEN (toolkit pass, 12 Sep 2026)
+#
+#      Home (entrypoint)
+#      1   Tragic Algebra Analyzer
+#      2   Hundred Bagger Checker       (page title: 100-Bagger Checker)
+#      4   Inflection Checker
+#      5   Financials Checker
+#      6   NonUS Checker                (page title: Non-US Checker)
+#      7   DCF Evaluator
+#      8   (reserved: the watchlist page)
+#      99  Return Calculator            (structurally last for the life of the kit)
+#
+#  3 is retired; never reuse a number. User-facing text names pages by
+#  their MENU NAMES, never by number — "tool 1" and "page 4" are banned
+#  in UI strings; self-test labels, comments and docstrings are exempt.
+#  Where ONE rendered sentence mentions the same page twice, the first
+#  mention is the exact menu name and later mentions may be "that page"
+#  or "it"; a mention inside a conditional clause prints alone, so it
+#  counts as a first mention and carries the full name.
+# ══════════════════════════════════════════════════════════════════════
+
 from __future__ import annotations
+
+FROZEN_MENU = ("Tragic Algebra Analyzer", "100-Bagger Checker", "Inflection Checker",
+               "Financials Checker", "Non-US Checker", "DCF Evaluator",
+               "Return Calculator")
+
+
+def _route_ok(sentence: str) -> bool:
+    """The sweep's test (toolkit pass, 12 Sep 2026): a user-facing route or
+    provenance sentence names a frozen menu page and carries no numeric page
+    reference. Asserted on every standalone sentence producer; inline UI text
+    is covered by the build's tokenizer scan of record and the click-through."""
+    import re as _re
+    return (any(_name in sentence for _name in FROZEN_MENU)
+            and not _re.search(r"(?i)\b(tool|page)s?\s+\d", sentence))
 
 import datetime as dt
 import math
@@ -651,7 +687,7 @@ def stale_capital_swing_note(invested: float, numerator: float, roic: float | No
     if alt is None or abs(adj - invested) < 0.5:
         return ""
     return (" Carried forward at the last complete figure instead of added as zero — the way "
-            "tool 1 treats the same line — invested capital would be about "
+            "the Tragic Algebra Analyzer treats the same line — invested capital would be about "
             f"{adj:,.0f}M against {invested:,.0f}M, and this return about {alt:.1%} against "
             f"{roic:.1%}. Neither is a correction of the other: one guesses the balance "
             "persisted, the other that it ended. The tag name settles it.")
@@ -5595,6 +5631,20 @@ def self_test() -> list[tuple[str, bool, str]]:
                 "Kinsale: an IPO and three sub-4% follow-ons in 4 of 10 years — real "
                 "raises that slipped the size bar; persistence is the cadence the "
                 "note claims"))
+    # ── the sweep (toolkit pass, 12 Sep 2026): route sentences name menu
+    #    pages, never numbers. _route_ok = a frozen menu name present, no
+    #    "tool N" / "page N". Standalone producers only; inline UI text is
+    #    covered by the tokenizer scan of record and the click-through.
+    out.append(("Sweep: IFRS-filer note (partial branch) routes by menu name",
+                _route_ok(foreign_filer_note("ProfitLoss", [])),
+                foreign_filer_note("ProfitLoss", [])[-80:]))
+    out.append(("Sweep: IFRS-filer note (unread branch) routes by menu name",
+                _route_ok(foreign_filer_note("ProfitLoss", ["revenue"])),
+                foreign_filer_note("ProfitLoss", ["revenue"])[-80:]))
+    _sw = stale_capital_swing_note(100.0, 20.0, 0.20, [("short-term debt", 10.0, "raises")])
+    out.append(("Sweep: carried-forward-capital note names the menu page",
+                bool(_sw) and _route_ok(_sw), _sw[:80]))
+
     return out
 
 
@@ -5648,7 +5698,8 @@ def _page_footer() -> None:
         with st.expander("Verify the engine"):
             st.caption(
                 "Three kinds of check. The Alphabet lines re-run **Burry's published inputs** through "
-                "this page's copy of the Tragic Algebra engine and confirm it still matches tool 1 to "
+                "this page's copy of the Tragic Algebra engine and confirm it still matches the Tragic "
+                "Algebra Analyzer to "
                 "the dollar. The Mayer lines check the 100x arithmetic against the figures his book "
                 "leads with. The rest are wiring and verdict tests.\n\n"
                 "There is no published ROIC to validate against the way Alphabet validates owners' "
@@ -6361,21 +6412,23 @@ if years and ticker and st.session_state.get("hb_tk") == ticker:
             g_ceiling = sustainable_growth(roic_med, payout_eff)
             st.code(
                 f"{tk}\n"
-                f"owners' earnings     {OE:,.0f} M      <- same figure tool 1 seeds\n"
+                f"owners' earnings     {OE:,.0f} M      <- same figure the Tragic Algebra Analyzer seeds\n"
                 f"shares               {shares:,.1f} M\n"
                 f"ROIC, 5y median      {roic_med:.1%}\n"
                 f"cash returned        "
                 + ("not measurable — full retention assumed" if payout is None
                    else f"{payout:.0%} of owners' earnings") + "\n"
-                f"growth ceiling       {g_ceiling:.1%}   <- do not exceed this in tool 1\n"
+                f"growth ceiling       {g_ceiling:.1%}   <- do not exceed this there\n"
                 f"per-share ceiling    {fundable:.1%}   (adds the buyback effect)",
                 language="text")
             st.caption(
-                f"A growth rate above {g_ceiling:.1%} in tool 1 is a claim that this company "
+                f"A growth rate above {g_ceiling:.1%} on the Tragic Algebra Analyzer is a claim that this "
+                "company "
                 "funds expansion from outside — more debt, or stock. Sometimes true, always "
                 "worth stating out loud rather than assuming.")
         else:
-            st.warning("No ROIC or no positive earnings base, so no ceiling. Tool 1's growth "
+            st.warning("No ROIC or no positive earnings base, so no ceiling. The Tragic Algebra "
+                       "Analyzer's growth "
                        "input stays unconstrained here.")
 
     label = "Notes and detail" + (f" · {len(alerts)} to review" if alerts else "")
@@ -6383,7 +6436,7 @@ if years and ticker and st.session_state.get("hb_tk") == ticker:
         for kind_, msg in alerts:
             getattr(st, kind_)(msg)
 
-        st.write("**Owners' earnings, year by year** — identical to tool 1 for the same ticker")
+        st.write("**Owners' earnings, year by year** — identical to the Tragic Algebra Analyzer for the same ticker")
         # PDEX: one decimal count for all five dollar columns, chosen from
         # the table's own largest value. See money_decimals. Same rule as
         # tool 1, so the two tables stay identical at every scale.
@@ -6402,12 +6455,12 @@ if years and ticker and st.session_state.get("hb_tk") == ticker:
             f"last three. "
             + (f"The last three years cannot be projected, so the box above shows "
                + (f"the 5-year median of owners' earnings rather than a ΔE applied to net "
-                  f"income — the same fallback tool 1 uses. " if median_OE > 0 else
+                  f"income — the same fallback the Tragic Algebra Analyzer uses. " if median_OE > 0 else
                   f"{plain(latest.N)} of net income as a ceiling, because the 5-year median is "
-                  f"negative as well — the same fallback tool 1 uses. ")
+                  f"negative as well — the same fallback the Tragic Algebra Analyzer uses. ")
                if _seed_from_pooled else
                f"The box above shows {plain(latest.N)} of net income times "
-               f"{applied_dE:.1%}, which is how tool 1 seeds it too — ")
+               f"{applied_dE:.1%}, which is how the Tragic Algebra Analyzer seeds it too — ")
             + f"the latest year as filed "
             f"came in at {plain(latest.OE)}."
             + (f" The {use_dE:.1%} measured over the last three years is left as filed above "
@@ -6419,7 +6472,8 @@ if years and ticker and st.session_state.get("hb_tk") == ticker:
         _neg = [y for y in years if y.omega < 0 and not y.excluded]
         if pay.used_implied:
             st.error(
-                "**Owners' earnings are overstated in this table, and so are tool 1's.** No "
+                "**Owners' earnings are overstated in this table, and so are the Tragic Algebra "
+                "Analyzer's.** No "
                 "repurchase figure was read for these years, so the market value of shares "
                 "delivered to employees "
                 "floors at zero: V = max(0, buybacks + price x share change), and with buybacks "
