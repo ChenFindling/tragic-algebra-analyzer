@@ -33,8 +33,30 @@ Known answers: 10,000 at 10% for 10 years -> 25,937.42.
 Saved scenarios live in session state: they survive re-runs while the tab
 is open and are gone on browser refresh. The CSV is the persistence.
 
-Run:  streamlit run pages/3_Return_Calculator.py
+Run:  streamlit run pages/99_Return_Calculator.py
 """
+
+# ══════════════════════════════════════════════════════════════════════
+#  THE MENU MAP — FROZEN (toolkit pass, 12 Sep 2026)
+#
+#      Home (entrypoint)
+#      1   Tragic Algebra Analyzer
+#      2   Hundred Bagger Checker       (page title: 100-Bagger Checker)
+#      4   Inflection Checker
+#      5   Financials Checker
+#      6   NonUS Checker                (page title: Non-US Checker)
+#      7   DCF Evaluator
+#      8   (reserved: the watchlist page)
+#      99  Return Calculator            (structurally last for the life of the kit)
+#
+#  3 is retired; never reuse a number. User-facing text names pages by
+#  their MENU NAMES, never by number — "tool 1" and "page 4" are banned
+#  in UI strings; self-test labels, comments and docstrings are exempt.
+#  Where ONE rendered sentence mentions the same page twice, the first
+#  mention is the exact menu name and later mentions may be "that page"
+#  or "it"; a mention inside a conditional clause prints alone, so it
+#  counts as a first mention and carries the full name.
+# ══════════════════════════════════════════════════════════════════════
 
 from __future__ import annotations
 
@@ -583,7 +605,7 @@ def self_test() -> list[tuple[str, bool, str]]:
 # Nothing on this page needs one — amounts print as plain numbers.
 
 st.set_page_config(
-    page_title="Return Calculator — Tragic Algebra Analyzer",
+    page_title="Return Calculator — Investor Toolkit",
     page_icon="📈",
     layout="centered",
     initial_sidebar_state="collapsed",
