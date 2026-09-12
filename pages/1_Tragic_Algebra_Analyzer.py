@@ -465,10 +465,25 @@ CONCEPTS = {
            ["PaymentsToAcquireOrRedeemEntitysShares"]),
     "Cw": (["PaymentsRelatedToTaxWithholdingForShareBasedCompensation",
             "TreasuryStockValueAcquiredCostMethod"], []),
+    # The Ce list is ordered most-complete-first and must track FASB element
+    # SUCCESSION — deprecations, successors, parents. One list, three filers,
+    # three different holes in one session (DECOMP §6, 12 Sep 2026): parent
+    # tag absent (TXN), successor tag absent (INTU), broad tag
+    # present-and-correct (QCOM). These names were collected from past
+    # filings; the element lifecycle is a dimension that collection never
+    # modelled — when a filer's Ce reads empty, suspect succession before
+    # suspecting the filer.
+    # ProceedsFromIssuanceOrSaleOfEquity is the PARENT-level element and
+    # sits LAST on purpose (12 Sep 2026): it fills only years no narrower
+    # tag answered — TXN tags its employee proceeds there ("proceeds from
+    # common stock transactions"). Its FASB definition spans offerings,
+    # preferred and treasury sales, so it inherits the broad-tag offering
+    # gate below; appended-last is the minimal blast radius by construction.
     "Ce": (["ProceedsFromIssuanceOfSharesUnderIncentiveAndShareBasedCompensationPlans",
             "ProceedsFromStockOptionsExercised", "ProceedsFromIssuanceOfTreasuryStock",
             "ProceedsFromSaleOfTreasuryStock", "ProceedsFromStockPlans",
-            "ProceedsFromEmployeeStockPurchasePlan", "ProceedsFromIssuanceOfCommonStock"], []),
+            "ProceedsFromEmployeeStockPurchasePlan", "ProceedsFromIssuanceOfCommonStock",
+            "ProceedsFromIssuanceOrSaleOfEquity"], []),
     "REV": (["RevenueFromContractWithCustomerExcludingAssessedTax", "Revenues",
              "RevenueFromContractWithCustomerIncludingAssessedTax"], ["Revenue"]),
     "SHD": (["WeightedAverageNumberOfDilutedSharesOutstanding",
@@ -2659,7 +2674,9 @@ def load(ticker: str, n_years: int = 10):
                 "withholding tag. Filers that retire shares on repurchase report it this way. "
                 "The amounts are withholding-sized, so they were accepted.")
 
-    if "ProceedsFromIssuanceOfCommonStock" in tag_sources.get("Ce", []):
+    _CE_BROAD = ("ProceedsFromIssuanceOfCommonStock",
+                 "ProceedsFromIssuanceOrSaleOfEquity")
+    if any(_b in tag_sources.get("Ce", []) for _b in _CE_BROAD):
         # Carvana, 1 Sep 2026 (page 4's run): the broad issuance-proceeds tag
         # was the only Ce name that answered, and it carried the ATM equity
         # programme — hundreds of millions a year of capital raising read as
@@ -2668,15 +2685,19 @@ def load(ticker: str, n_years: int = 10):
         # as the treasury-as-withholding gate above: genuine employee proceeds
         # are small next to the GAAP charge; a raise is not. Sized against the
         # charge where there is one, net income where there is not. The gate
-        # runs only when the broad tag is a Ce source at all — the narrow
+        # runs only when a broad tag is a Ce source at all — the narrow
         # names alone are never gated, matching the Cw gate's own behaviour.
+        # The parent-level ProceedsFromIssuanceOrSaleOfEquity (appended last,
+        # 12 Sep 2026) INHERITS this gate: its FASB definition spans
+        # offerings, preferred and treasury sales — without inheritance the
+        # parent tag rebuilds the Carvana hole one level up. TXN itself never
+        # trips it (max 539 vs 3xG >= 756).
         _ce_capped = 0
         for y in years:
             if not y.Ce:
                 continue
-            if broad_gate_fires(tag_origin["Ce"].get(y.fy),
-                                "ProceedsFromIssuanceOfCommonStock",
-                                y.Ce, y.G, y.N):
+            _org = tag_origin["Ce"].get(y.fy)
+            if _org in _CE_BROAD and broad_gate_fires(_org, _org, y.Ce, y.G, y.N):
                 y.Ce, _ce_capped = 0.0, _ce_capped + 1
         if _ce_capped:
             notes.append(
@@ -2955,7 +2976,13 @@ def load(ticker: str, n_years: int = 10):
          "XBRL tag": "WeightedAverageNumberOfDilutedSharesOutstanding",
          "Status": "used" if _share_route.startswith("the weighted") else
                    "read" if _wv else "not tagged"},
-    ] + [
+    ] + ([{
+        "Line": "— Shares: XBRL route", "Years read": len(_xr["SHO"]),
+        "Latest year": _latest_fy(_xr["SHO"]),
+        "XBRL tag": "per-filing instance route (registered)",
+        "Status": "used — per-class counts summed where nothing undimensioned "
+                  "exists; the route note above names the filings",
+    }] if _xr and _xr["SHO"] else []) + [
         {"Line": f"— {name}", "Years read": _bal_n.get(ks[0], 0),
          "Latest year": _bal_fy.get(ks[0], "—"),
          "XBRL tag": " + ".join(_bal.get(ks[0], [])) or "—",
@@ -3054,6 +3081,15 @@ class XbrlRoute:
                 (parent slice over parent-only count, or whole over whole),
                 for which these two entries are the test cases. NOT lifted
                 by this route, and not claimed to be.
+    only_fys  — duration entries only: restrict the read to exactly these
+                fiscal years; empty = every window year (the GOOGL shape).
+                Adobe's custom withholding tag exists only in its pre-FY2019
+                filings — the standard narrow tag covers FY2019 on — so
+                without the restriction the walk would fetch toward the cap
+                chasing years the concept never tags, and the route note
+                would call FY2019+ "still unread" while the narrow tag
+                reads them: a false sentence. Scoping the read is the
+                truthful shape (12 Sep 2026).
     """
     key: str
     kind: str
@@ -3062,6 +3098,7 @@ class XbrlRoute:
     net: bool = False
     verify: tuple[tuple[int, float], ...] = ()
     up_c: bool = False
+    only_fys: tuple[int, ...] = ()
 
 
 # Verification figures: GOOGL from the 10-K face / §1.14 record; the four
@@ -3073,6 +3110,30 @@ XBRL_REGISTRY: dict[str, tuple[XbrlRoute, ...]] = {
         concepts=("goog:NetProceedsPaymentsRelatedToStockBasedAwardActivities",),
         net=True,
         verify=((2025, 14_167_000_000.0), (2024, 12_190_000_000.0))),),
+    # ADBE — Cw for FY2016-2018 ONLY (12 Sep 2026, the F4/ADBE
+    # decomposition). Adobe's pre-FY2019 withholding is tagged under the
+    # custom concept adbe:CostOfIssuanceOfTreasuryStock — value-searched to
+    # zero standalone hits in companyfacts (custom = invisible to the
+    # aggregation API by design), verification figures pasted from the
+    # FY2018 10-K's raw instance (pre-iXBRL, EX-101.INS adbe-20181130.xml;
+    # one filing carries all three years as comparatives).
+    # NAME SEMANTICS, do not misread: Adobe named the concept
+    # "CostOfIssuanceOfTreasuryStock" while LABELLING the line "Taxes paid
+    # related to net share settlement of equity awards" — the name must NOT
+    # be read as a buyback line; the label and the figures are the identity
+    # (236.400 / 240.126 / 393.193 match the 10-K face withholding line to
+    # the dollar; the treasury PURCHASES are a separate line the
+    # equality-reject already handles). net=False: Adobe's re-issuance
+    # proceeds are a real, separately read Ce line
+    # (ProceedsFromIssuanceOfTreasuryStock, verified to the dollar
+    # FY2016-2018) and keep their credit. FY2019 on reads the standard
+    # narrow withholding tag through _annual exactly as before.
+    "ADBE": (XbrlRoute(
+        key="Cw", kind="duration",
+        concepts=("adbe:CostOfIssuanceOfTreasuryStock",),
+        verify=((2018, 393_193_000.0), (2017, 240_126_000.0),
+                (2016, 236_400_000.0)),
+        only_fys=(2016, 2017, 2018)),),
     "CVNA": (XbrlRoute(
         key="SHO", kind="instant_sum",
         concepts=("us-gaap:CommonStockSharesOutstanding",
@@ -3454,7 +3515,14 @@ def xbrl_route_apply(ticker: str, cik: str, series: dict,
 
     fys = sorted(series["N"])[-n_years:]
     ends = {fy: series["N"][fy][1] for fy in fys}
-    wanted_ends = dict(ends)
+    # Duration reads are scoped to each entry's target years (only_fys), so
+    # the parser never hunts periods the concept does not tag; empty = all.
+    _dur_fys: set = set()
+    for _e in entries:
+        if _e.kind == "duration":
+            _dur_fys.update(_e.only_fys or fys)
+    wanted_ends = ({fy: ends[fy] for fy in ends if fy in _dur_fys}
+                   if _dur_fys else dict(ends))
     # dS needs the year BEFORE the window's earliest; its end date comes from
     # the N series where read, else the earliest end shifted back a year (a
     # calendar guess only a calendar filer can match — a miss is just an
@@ -3479,13 +3547,14 @@ def xbrl_route_apply(ticker: str, cik: str, series: dict,
     fetched = misses = 0
     try:
         subs = _submissions(cik)
-        earliest = min(inst.values()) if need_ins else min(ends.values())
+        earliest = (min(inst.values()) if need_ins
+                    else min(wanted_ends.values()))
         for accession, pdoc, _rep in _xbrl_accessions(subs, earliest):
             if fetched >= 12:
                 break             # budget guard: never more than 12 instances
             done_dur = (not need_dur) or all(
-                (e.key, fy) in merged for e in entries for fy in ends
-                if e.kind == "duration")
+                (e.key, fy) in merged for e in entries
+                for fy in (e.only_fys or ends) if e.kind == "duration")
             done_ins = (not need_ins) or all(
                 (e.key, fy) in merged for e in entries for fy in inst
                 if e.kind == "instant_sum")
@@ -3553,7 +3622,7 @@ def _xbrl_fold(entries: tuple, dead: set, merged: dict, meta: dict,
                     series["Ce"][fy] = (start, end, 0.0)
             if filled and entry.concepts[0] not in tag_sources.get(entry.key, []):
                 tag_sources[entry.key].append(entry.concepts[0])
-            unread = [fy for fy in fys if fy not in filled]
+            unread = [fy for fy in (entry.only_fys or fys) if fy not in filled]
             if filled:
                 notes.append(
                     f"**{entry.key} was read from the filings' own XBRL instances** "
@@ -4595,6 +4664,104 @@ def self_test() -> list[tuple[str, bool, str]]:
                 and treasury_accepted([Year(fy=2019, N=100.0, G=50.0, T=900.0, Cw=120.0)],
                                       {2019: "TreasuryStockValueAcquiredCostMethod"}),
                 "keying on survival instead of origin is the false-sentence class"))
+    # F3 — the parent Ce tag appended last with the offering gate inherited,
+    # and the ADBE scoped route entry (12 Sep 2026; DECOMP §1.2/§1.3, §4).
+    out.append(("F3: the parent proceeds tag sits LAST in the Ce list and inherits the gate",
+                CONCEPTS["Ce"][0][-1] == "ProceedsFromIssuanceOrSaleOfEquity"
+                and not broad_gate_fires("ProceedsFromIssuanceOrSaleOfEquity",
+                                         "ProceedsFromIssuanceOrSaleOfEquity",
+                                         539.0, 252.0, 4000.0)
+                and broad_gate_fires("ProceedsFromIssuanceOrSaleOfEquity",
+                                     "ProceedsFromIssuanceOrSaleOfEquity",
+                                     2000.0, 252.0, 4000.0),
+                "TXN's max 539 vs 3xG=756 never gates; an offering-sized 2,000 does"))
+    _txf = {"facts": {"us-gaap": {
+        "ProceedsFromIssuanceOrSaleOfEquity": {"units": {"USD": [
+            {"form": "10-K", "start": f"{y}-01-01", "end": f"{y}-12-31",
+             "filed": f"{y+1}-02-15", "val": 400e6} for y in range(2016, 2026)]}}}}}
+    _txs: list[str] = []
+    _txo: dict[int, str] = {}
+    _txr = _annual(_txf, CONCEPTS["Ce"][0], [], _txs, True, False, origin=_txo)
+    out.append(("The TXN shape: Ce empty on every narrower name fills from the parent tag",
+                len(_txr) == 10 and _txr[2025][2] == 400e6
+                and _txs == ["ProceedsFromIssuanceOrSaleOfEquity"]
+                and _txo[2025] == "ProceedsFromIssuanceOrSaleOfEquity",
+                "TXN's 'proceeds from common stock transactions' line, read at last"))
+    _mxf = {"facts": {"us-gaap": {
+        "ProceedsFromStockOptionsExercised": {"units": {"USD": [
+            {"form": "10-K", "start": f"{y}-01-01", "end": f"{y}-12-31",
+             "filed": f"{y+1}-02-15", "val": 100e6} for y in (2016, 2017)]}},
+        "ProceedsFromIssuanceOrSaleOfEquity": {"units": {"USD": [
+            {"form": "10-K", "start": f"{y}-01-01", "end": f"{y}-12-31",
+             "filed": f"{y+1}-02-15", "val": 900e6} for y in (2016, 2017, 2018)]}}}}}
+    _mxs: list[str] = []
+    _mxo: dict[int, str] = {}
+    _mxr = _annual(_mxf, CONCEPTS["Ce"][0], [], _mxs, True, False, origin=_mxo)
+    out.append(("Appended-last means fill-only: narrow-covered years are never re-read",
+                _mxr[2016][2] == 100e6 and _mxr[2017][2] == 100e6
+                and _mxr[2018][2] == 900e6
+                and _mxo[2016] == "ProceedsFromStockOptionsExercised"
+                and _mxo[2018] == "ProceedsFromIssuanceOrSaleOfEquity",
+                "the parent adds FY2018 and touches nothing the options tag answered"))
+    _af = {"N": {fy: (f"{fy-1}-12-01", f"{fy}-11-30", 1e9) for fy in range(2016, 2026)},
+           "Cw": {2016: ("2015-12-01", "2016-11-30", 1075e6),
+                  2017: ("2016-12-01", "2017-11-30", 1100e6),
+                  2018: ("2017-12-01", "2018-11-30", 2050e6)},
+           "Ce": {2016: ("2015-12-01", "2016-11-30", 145.697e6)}}
+    _asrc = {"Cw": ["TreasuryStockValueAcquiredCostMethod"],
+             "Ce": ["ProceedsFromIssuanceOfTreasuryStock"]}
+    _aorg = {"Cw": {2016: "TreasuryStockValueAcquiredCostMethod",
+                    2017: "TreasuryStockValueAcquiredCostMethod",
+                    2018: "TreasuryStockValueAcquiredCostMethod"},
+             "Ce": {2016: "ProceedsFromIssuanceOfTreasuryStock"}}
+    _amerged = {("Cw", 2018): 393_193_000.0, ("Cw", 2017): 240_126_000.0,
+                ("Cw", 2016): 236_400_000.0}
+    _adead, _avn = _xbrl_verify(XBRL_REGISTRY["ADBE"], _amerged)
+    _asho, _aupc, _anotes = _xbrl_fold(
+        XBRL_REGISTRY["ADBE"], _adead, _amerged,
+        {"issued_members": set(), "coarse": False, "undimmed": False,
+         "n_members": {}},
+        _af, _asrc, _aorg, list(range(2016, 2026)), 9)
+    out.append(("ADBE route: verified figures OVERWRITE the treasury fill; net=False keeps Ce",
+                not _adead
+                and _af["Cw"][2016][2] == 236_400_000.0
+                and _af["Cw"][2018][2] == 393_193_000.0
+                and _af["Ce"][2016][2] == 145.697e6
+                and _aorg["Cw"][2016] == "adbe:CostOfIssuanceOfTreasuryStock"
+                and "adbe:CostOfIssuanceOfTreasuryStock" in _asrc["Cw"],
+                "the label and the figures are the identity, not the concept name"))
+    out.append(("...and the scoped note names FY2016-2018 filled, calling nothing else unread",
+                any("FY2016, FY2017, FY2018 filled" in n for n in _anotes)
+                and not any("still unread" in n for n in _anotes)
+                and not any("FY2019" in n for n in _anotes),
+                "FY2019 on reads the standard narrow tag; the note must not deny it"))
+    _bdead2, _ = _xbrl_verify(XBRL_REGISTRY["ADBE"],
+                              {("Cw", 2018): 394_193_000.0,
+                               ("Cw", 2017): 240_126_000.0,
+                               ("Cw", 2016): 236_400_000.0})
+    _imm = [Year(fy=2016, N=1168.782, G=349.297, T=1075.0, Cw=1075.0)]
+    _immh = treasury_equal_reject(_imm, {2016: "adbe:CostOfIssuanceOfTreasuryStock"})
+    out.append(("A $1M miss discards ADBE's entry; a route-origin year is equality-immune",
+                _bdead2 == {"Cw"} and _immh == [] and _imm[0].Cw == 1075.0,
+                "the route's verified read is never mistaken for the treasury fallback"))
+    _se = (XbrlRoute(key="Cw", kind="duration",
+                     concepts=("test:ScopedTag",), verify=((2017, 5e6),),
+                     only_fys=(2016, 2017, 2018)),)
+    _sf = {"N": {fy: (f"{fy-1}-01-01", f"{fy}-12-31", 1e9) for fy in range(2016, 2026)},
+           "Cw": {}, "Ce": {}}
+    _ssrc = {"Cw": [], "Ce": []}
+    _sorg2 = {"Cw": {}, "Ce": {}}
+    _smerged = {("Cw", 2017): 5e6, ("Cw", 2018): 6e6}
+    _sdead2, _ = _xbrl_verify(_se, _smerged)
+    _, _, _snotes = _xbrl_fold(_se, _sdead2, _smerged,
+                               {"issued_members": set(), "coarse": False,
+                                "undimmed": False, "n_members": {}},
+                               _sf, _ssrc, _sorg2, list(range(2016, 2026)), 2)
+    out.append(("only_fys scopes the unread list to the entry's own target years",
+                any("FY2016 still unread" in n for n in _snotes)
+                and not any("FY2019" in n for n in _snotes)
+                and not any("FY2025" in n for n in _snotes),
+                "a target year genuinely missing is named; non-target years never are"))
     return out
 
 
