@@ -5840,7 +5840,20 @@ PINS: list[Pin] = [
     # expected). Until one lands, this row failing IS the fix working.
     Pin(ticker="INTU", pin_set="master", his_dE=75.4, his_window=(2017, 2025)),
     Pin(ticker="TXN", pin_set="master", his_dE=92.4, his_window=(2016, 2025)),
-    Pin(ticker="QCOM", pin_set="master", his_dE=91.2, his_window=(2016, 2025)),
+    # QCOM — ±7.0 band, 12 Sep 2026, per the approved fifth deploy. F1's
+    # cadence test returned 217.0M shares of employee issuance to dS
+    # (117.52 -> 84.42, seen live at Δ -6.78 FAIL before this band
+    # shipped — the honest state on record first). Decomposition,
+    # verbatim: ±7.0 = the ordinary ±1.5 plus 5.38 points of FY2018-19
+    # ASR floor-straddle — the per-year V floor discards 3,104.8 of
+    # FY2019 offset that his pooled cash/delivery-matched treatment
+    # keeps — leaving a residual -1.40 inside the ordinary band
+    # (DECOMP §1.1). REVIEW TRIGGER (Chen, 12 Sep 2026): if any future
+    # vintage rolls FY2018 or FY2019 out of his window, the straddle is
+    # gone — the band REVERTS to ±1.5 and the row re-decomposes. A
+    # widened band must never outlive its reason.
+    Pin(ticker="QCOM", pin_set="master", his_dE=91.2, his_window=(2016, 2025),
+        tol={"his_dE": 7.0}),
     Pin(ticker="AMGN", pin_set="master", his_dE=97.3, his_window=(2016, 2025)),
     Pin(ticker="ADI", pin_set="master", his_dE=79.0, his_window=(2017, 2025)),
     Pin(ticker="PAYX", pin_set="master", his_dE=100.1, his_window=(2015, 2025)),
