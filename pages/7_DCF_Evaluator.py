@@ -40,7 +40,43 @@ are valued with net cash read.
 Run:  streamlit run Home.py
 """
 
+# ══════════════════════════════════════════════════════════════════════
+#  THE MENU MAP — FROZEN (toolkit pass, 12 Sep 2026)
+#
+#      Home (entrypoint)
+#      1   Tragic Algebra Analyzer
+#      2   Hundred Bagger Checker       (page title: 100-Bagger Checker)
+#      4   Inflection Checker
+#      5   Financials Checker
+#      6   NonUS Checker                (page title: Non-US Checker)
+#      7   DCF Evaluator
+#      8   (reserved: the watchlist page)
+#      99  Return Calculator            (structurally last for the life of the kit)
+#
+#  3 is retired; never reuse a number. User-facing text names pages by
+#  their MENU NAMES, never by number — "tool 1" and "page 4" are banned
+#  in UI strings; self-test labels, comments and docstrings are exempt.
+#  Where ONE rendered sentence mentions the same page twice, the first
+#  mention is the exact menu name and later mentions may be "that page"
+#  or "it"; a mention inside a conditional clause prints alone, so it
+#  counts as a first mention and carries the full name.
+# ══════════════════════════════════════════════════════════════════════
+
 from __future__ import annotations
+
+FROZEN_MENU = ("Tragic Algebra Analyzer", "100-Bagger Checker", "Inflection Checker",
+               "Financials Checker", "Non-US Checker", "DCF Evaluator",
+               "Return Calculator")
+
+
+def _route_ok(sentence: str) -> bool:
+    """The sweep's test (toolkit pass, 12 Sep 2026): a user-facing route or
+    provenance sentence names a frozen menu page and carries no numeric page
+    reference. Asserted on every standalone sentence producer; inline UI text
+    is covered by the build's tokenizer scan of record and the click-through."""
+    import re as _re
+    return (any(_name in sentence for _name in FROZEN_MENU)
+            and not _re.search(r"(?i)\b(tool|page)s?\s+\d", sentence))
 
 import datetime as dt
 import os
@@ -1903,10 +1939,14 @@ def foreign_filer_note(net_income_tag: str, unread: list[str]) -> str:
             f"from {net_income_tag}, which is right, but this reader knows US-GAAP tag names "
             "for the other lines and an IFRS filing does not use them. ")
     if not unread:
-        return head + "Check each line in the tag panel before trusting any figure below."
+        return head + ("Check each line in the tag panel before trusting any figure below. "
+                       "The Non-US Checker page reads the IFRS names this page does not — "
+                       "prefer it for this ticker.")
     return head + ("Nothing at all was read for: " + ", ".join(unread) + ". Those lines are "
                    "wrong rather than missing — a line that reads nothing is treated as a "
-                   "zero. Treat the whole page as unverified and do not use the valuation.")
+                   "zero. Treat the whole page as unverified and do not use the valuation. "
+                   "The Non-US Checker page reads the IFRS names this page does not — use it "
+                   "for this ticker.")
 
 
 def growth_trend_phrase(cagr3: float, latest: float) -> str:
@@ -3079,7 +3119,8 @@ def growth_years_grid(p: DCFParams, growths: list[float], yearss: list[int]) -> 
 
 BASE_FROM_LATEST = "the latest fiscal year's free cash flow"
 BASE_FROM_MEDIAN = ("the 5-year median — the latest year is a loss on a record whose "
-                    "median is positive, the same rule tool 1's owners'-earnings seed uses")
+                    "median is positive, the same rule the Tragic Algebra Analyzer's owners'-earnings "
+                    "seed uses")
 
 
 def median5_fcf(fcf: list[tuple[int, float]]) -> float:
@@ -3109,7 +3150,7 @@ def nothing_to_discount(latest: float, median5: float) -> str:
             "DCF run on a negative stream prices the company below zero and says nothing. "
             "Whether the burn inflects is not a DCF question — it is the Inflection Checker's, "
             "which projects the operating-margin trend instead of the cash flow, and refuses "
-            "on its own terms when even that trend gives nothing to project. Use page 4.")
+            "on its own terms when even that trend gives nothing to project. Use that page.")
 
 
 def few_fcf_years_refusal(n: int) -> str:
@@ -3229,7 +3270,8 @@ def fcf_cap_note(raw: float | None, growth: float) -> str:
     if raw is None or abs(raw - growth) <= 1e-9:
         return ""
     return (f"Latest FCF growth is {raw:.0%}, outside the [{FCF_GROWTH_FLOOR:.0%}, "
-            f"{FCF_GROWTH_CAP:.0%}] band tool 1 applies to its revenue seed — capped at "
+            f"{FCF_GROWTH_CAP:.0%}] band the Tragic Algebra Analyzer applies to its revenue seed — "
+            "capped at "
             f"{growth:.0%} for the seed. Nothing compounds outside that band for a decade; "
             "if you believe otherwise, that belief belongs in the growth box, stated as yours.")
 
@@ -4235,8 +4277,9 @@ def self_test() -> list[tuple[str, bool, str]]:
                 seed_base_fcf(900.0, 600.0) == (900.0, BASE_FROM_LATEST)
                 and seed_base_fcf(-81.0, 600.0) == (600.0, BASE_FROM_MEDIAN)
                 and seed_base_fcf(-81.0, -40.0)[0] is None, ""))
-    out.append(("...and the nothing-to-discount sentence routes to page 4 without misdescribing the years",
-                "Use page 4" in nothing_to_discount(-81.0, -40.0)
+    out.append(("...and the nothing-to-discount sentence routes to the Inflection Checker without misdescribing the years",
+                "Inflection Checker" in nothing_to_discount(-81.0, -40.0)
+                and "page 4" not in nothing_to_discount(-81.0, -40.0)
                 and "every" not in nothing_to_discount(-81.0, -40.0), ""))
 
     # D9. The Omega correction: excluded and unpriced years never enter the
@@ -4880,6 +4923,23 @@ def self_test() -> list[tuple[str, bool, str]]:
                 and "1,091.7M" in up_c_sentence_dcf("CVNA", 1091.7)
                 and "ΔE" not in up_c_sentence_dcf("CVNA", 1091.7),
                 "the shared sentence's ΔE-pools clause is tool 1's evidence, not this page's"))
+    # ── the sweep (toolkit pass, 12 Sep 2026): route sentences name menu
+    #    pages, never numbers. _route_ok = a frozen menu name present, no
+    #    "tool N" / "page N". Standalone producers only; inline UI text is
+    #    covered by the tokenizer scan of record and the click-through.
+    out.append(("Sweep: IFRS-filer note (partial branch) routes by menu name",
+                _route_ok(foreign_filer_note("ProfitLoss", [])),
+                foreign_filer_note("ProfitLoss", [])[-80:]))
+    out.append(("Sweep: IFRS-filer note (unread branch) routes by menu name",
+                _route_ok(foreign_filer_note("ProfitLoss", ["revenue"])),
+                foreign_filer_note("ProfitLoss", ["revenue"])[-80:]))
+    out.append(("Sweep: nothing-to-discount routes by menu name, no numeric reference",
+                _route_ok(nothing_to_discount(-81.0, -40.0)), nothing_to_discount(-81.0, -40.0)[-70:]))
+    out.append(("Sweep: the median-seed base sentence names the menu page",
+                _route_ok(BASE_FROM_MEDIAN), BASE_FROM_MEDIAN[-70:]))
+    out.append(("Sweep: the FCF cap note names the menu page",
+                _route_ok(fcf_cap_note(0.50, 0.25)), fcf_cap_note(0.50, 0.25)[:70]))
+
     return out
 
 
@@ -4922,7 +4982,7 @@ def _page_footer():
             st.caption("The synthetic case checked by hand to the cent, the linearity identity "
                        "that pins the gap between the legs to the discounted Ω stream, every "
                        "refusal branch, and the shared-reader checks carried verbatim from "
-                       "page 4 and tool 1. They do not use live filings.")
+                       "the Inflection Checker and the Tragic Algebra Analyzer. They do not use live filings.")
             if st.button("Run checks"):
                 _results = self_test()
                 _sev, _line = test_summary(_results)
@@ -5050,7 +5110,8 @@ if years and ticker and st.session_state.get("dcf_tk") == ticker:
             "cost, because the add-back already neutralised the charge. ")
     if _no_capex:
         _cap += (f"Capex read nothing for FY{', FY'.join(str(f) for f in _no_capex)} and was "
-                 "taken as zero in those years — page 4's convention, named here rather than "
+                 "taken as zero in those years — the Inflection Checker's convention, named here rather "
+                 "than "
                  "applied silently. ")
     _cap += "Ω is blank where a year is excluded or carries no average price; the correction below never uses those years either."
     st.caption(_cap)
@@ -5152,8 +5213,8 @@ if years and ticker and st.session_state.get("dcf_tk") == ticker:
         growth = st.number_input("Stage-1 growth, % a year", min_value=-50.0, max_value=100.0,
                                  value=round(_seed_g * 100, 1), step=0.5,
                                  help="Seeded from the latest year-over-year move in FCF, capped "
-                                      f"into [{FCF_GROWTH_FLOOR:.0%}, {FCF_GROWTH_CAP:.0%}] — tool 1's "
-                                      "band for its revenue seed. The 5-year CAGR is in the "
+                                      f"into [{FCF_GROWTH_FLOOR:.0%}, {FCF_GROWTH_CAP:.0%}] — the Tragic "
+                                      "Algebra Analyzer's band for its revenue seed. The 5-year CAGR is in the "
                                       "assumptions block for the trend.") / 100.0
         n_years = int(st.number_input("Stage-1 years", min_value=1, max_value=30,
                                       value=DCF_YEARS_DEFAULT, step=1,
