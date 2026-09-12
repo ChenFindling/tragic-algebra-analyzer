@@ -17,9 +17,9 @@ SECOND Cloud app pointing at this file. Two consequences of that:
     harmless and known, not a bug.
 
 Layout of this file:
-  lines up to the BASELINES banner — tool 1's engine, reader and 159-check
+  lines up to the BASELINES banner — tool 1's engine, reader and 163-check
   self-test, copied VERBATIM from the deployed 1_Tragic_Algebra_Analyzer.py
-  (its lines 1-4767; only this docstring replaced, tool 1's UI dropped).
+  (its lines 1-4864; only this docstring replaced, tool 1's UI dropped).
   The doctrine: what this page checks is what the pages run. A reader
   change in the page files is a reader change here — sync it like
   pages 2, 4, 5 and 6.
@@ -3331,7 +3331,15 @@ def _xbrl_extract(contexts: dict, facts: list, entries: tuple,
                             - dt.date.fromisoformat(start)).days
                     if not 330 <= days <= 400:
                         continue
-                    values.setdefault((entry.key, end_to_fy[end]), val)
+                    # The precision-merge rule runs WITHIN one instance too
+                    # (12 Sep 2026): document order plays the vintage role, so
+                    # a statement tagging the line at millions earlier in the
+                    # document cannot mask a later thousands-precision fact —
+                    # the sibling shape of the cross-filing ADBE artifact,
+                    # closed before it bites (the boundary/stub lesson).
+                    _xbrl_merge_value(values, meta.setdefault("dur_dec", {}),
+                                      (entry.key, end_to_fy[end]), val,
+                                      _xbrl_dec_int(_dec))
         else:  # instant_sum
             ax_prefix, _, ax_local = entry.axis.partition(":")
             ax_class = "std" if ax_prefix in _XBRL_STD_STEMS else "custom"
@@ -3459,6 +3467,48 @@ def _xbrl_merge_meta(into: dict, meta: dict) -> None:
                               if k not in into["n_members"]})
 
 
+def _xbrl_dec_int(dec) -> int | None:
+    """A fact's decimals attribute as an int; None means exact (absent or
+    INF) or unparseable — treated as exact and never displaced."""
+    if dec is None or dec == "INF":
+        return None
+    try:
+        return int(dec)
+    except (TypeError, ValueError):
+        return None
+
+
+def _xbrl_merge_value(merged: dict, merged_dec: dict, k, v, dec) -> None:
+    """Newest filing wins per year — except that an OLDER filing carrying
+    the same year at strictly FINER decimals, agreeing with the held value
+    at the coarser precision's half-unit tolerance, replaces it: same
+    figure, better resolution, not a restatement.
+
+    ADBE FY2018, 12 Sep 2026: a newer filing's comparative tagged the
+    withholding line million-rounded (393,000,000 at decimals=-6) and
+    claimed the slot ahead of the FY2018 original's 393,193,000 at
+    decimals=-3; the verification gate then discarded the whole entry —
+    correctly, by its own contract — over a $193,000 rounding artifact.
+    A disagreement BEYOND the coarse tolerance is a genuine restatement
+    and the newest value keeps the slot (latest-vintage doctrine); a held
+    value with unknown or INF decimals is exact and is never replaced.
+    Applied at BOTH levels: across filings in the walk's merge loop, and
+    within a single instance's fact list, where document order plays the
+    vintage role. Duration facts only — instant sums keep their documented
+    ±1M million-rounding noise (META) unchanged.
+    """
+    if k not in merged:
+        merged[k] = v
+        merged_dec[k] = dec
+        return
+    d_old = merged_dec.get(k)
+    if dec is None or d_old is None or dec <= d_old:
+        return
+    if abs(v - merged[k]) <= 0.5 * (10 ** -d_old):
+        merged[k] = v
+        merged_dec[k] = dec
+
+
 def _xbrl_verify(entries: tuple, merged: dict) -> tuple[set, list[str]]:
     """The registry's contract: each entry's verify figures must reproduce
     to $0.50 / half a share, or the WHOLE entry is discarded. Tolerance
@@ -3547,6 +3597,7 @@ def xbrl_route_apply(ticker: str, cik: str, series: dict,
     need_ins = any(e.kind == "instant_sum" for e in entries)
 
     merged: dict = {}
+    merged_dec: dict = {}
     meta = {"issued_members": set(), "coarse": False, "undimmed": False,
             "n_members": {}}
     notes: list[str] = []
@@ -3573,8 +3624,12 @@ def xbrl_route_apply(ticker: str, cik: str, series: dict,
             if vals is None:
                 misses += 1
                 continue
+            _dd = m.get("dur_dec", {})
             for k, v in vals.items():
-                merged.setdefault(k, v)     # newest filing wins per year
+                # newest filing wins per year; an older, strictly finer,
+                # agreeing duration fact upgrades the resolution — see
+                # _xbrl_merge_value (the ADBE FY2018 rounding artifact).
+                _xbrl_merge_value(merged, merged_dec, k, v, _dd.get(k))
             _xbrl_merge_meta(meta, m)
     except Exception as e:
         notes.append(
@@ -4768,15 +4823,59 @@ def self_test() -> list[tuple[str, bool, str]]:
                 and not any("FY2019" in n for n in _snotes)
                 and not any("FY2025" in n for n in _snotes),
                 "a target year genuinely missing is named; non-target years never are"))
+    # The precision-merge rule (12 Sep 2026): the ADBE FY2018 rounding
+    # artifact — a newer filing's million-rounded comparative must not
+    # displace the original filing's thousands-precision fact.
+    _pm: dict = {}
+    _pmd: dict = {}
+    _xbrl_merge_value(_pm, _pmd, ("Cw", 2018), 393_000_000.0, -6)
+    _xbrl_merge_value(_pm, _pmd, ("Cw", 2018), 393_193_000.0, -3)
+    out.append(("Precision merge: an older, finer, agreeing fact upgrades the resolution",
+                _pm[("Cw", 2018)] == 393_193_000.0 and _pmd[("Cw", 2018)] == -3,
+                "393,193,000 at -3 vs a comparative's 393,000,000 at -6: same figure"))
+    _xbrl_merge_value(_pm, _pmd, ("Ce", 2015), 554_000_000.0, -6)
+    _xbrl_merge_value(_pm, _pmd, ("Ce", 2015), 616_000_000.0, -3)
+    out.append(("...a disagreement beyond the coarse tolerance is a restatement: newest holds",
+                _pm[("Ce", 2015)] == 554_000_000.0 and _pmd[("Ce", 2015)] == -6,
+                "the TXN FY2014-15 restatement era shape — latest vintage wins"))
+    _xbrl_merge_value(_pm, _pmd, ("Cw", 2024), 12_190_000_000.0, None)
+    _xbrl_merge_value(_pm, _pmd, ("Cw", 2024), 12_190_000_128.0, -3)
+    _xbrl_merge_value(_pm, _pmd, ("Cw", 2025), 14_167_000_000.0, -3)
+    _xbrl_merge_value(_pm, _pmd, ("Cw", 2025), 14_167_000_000.0, -6)
+    out.append(("...an exact held value is never displaced, and coarser never replaces finer",
+                _pm[("Cw", 2024)] == 12_190_000_000.0 and _pmd[("Cw", 2024)] is None
+                and _pmd[("Cw", 2025)] == -3
+                and _xbrl_dec_int("INF") is None and _xbrl_dec_int("-3") == -3
+                and _xbrl_dec_int(None) is None and _xbrl_dec_int("x") is None,
+                "unknown decimals means exact; resolution only ever improves"))
+    _px = ('<?xml version="1.0"?><xbrl xmlns="http://www.xbrl.org/2003/instance" '
+           'xmlns:adbe="http://www.adobe.com/20181130">'
+           '<context id="dfy18"><entity><identifier scheme="s">X</identifier></entity>'
+           '<period><startDate>2017-12-02</startDate><endDate>2018-11-30</endDate>'
+           '</period></context>'
+           '<adbe:CostOfIssuanceOfTreasuryStock contextRef="dfy18" unitRef="u" '
+           'decimals="-6">393000000</adbe:CostOfIssuanceOfTreasuryStock>'
+           '<adbe:CostOfIssuanceOfTreasuryStock contextRef="dfy18" unitRef="u" '
+           'decimals="-3">393193000</adbe:CostOfIssuanceOfTreasuryStock></xbrl>')
+    _pctx, _pfacts = _xbrl_parse_instance(_px)
+    _pvals, _pmeta = _xbrl_extract(_pctx, _pfacts, XBRL_REGISTRY["ADBE"],
+                                   {2018: "2018-11-30"}, {})
+    out.append(("...and within one instance: a millions fact first in the document loses to "
+                "the thousands fact",
+                _pvals.get(("Cw", 2018)) == 393193000.0
+                and _pmeta["dur_dec"][("Cw", 2018)] == -3,
+                "document order plays vintage; the finer agreeing fact wins either way"))
     return out
 
 
 # ══════════════════════════════════════════════════════════════════════
 #  BASELINES — everything below this line is this page's own code.
 #  Everything above it is tool 1's engine and reader, copied verbatim
-#  (lines 1–4767 of the deployed 1_Tragic_Algebra_Analyzer.py, 159
+#  (lines 1–4864 of the deployed 1_Tragic_Algebra_Analyzer.py, 163
 #  checks; only the module docstring was replaced). Re-copied 12 Sep
-#  2026 for F3: the parent Ce tag appended last with the offering gate
+#  2026 (third recopy that day) for the precision-merge rule — an older,
+#  finer, agreeing duration fact upgrades the resolution (the ADBE
+#  FY2018 rounding artifact) — after F3: the parent Ce tag with the gate
 #  inherited (the TXN fix), the §6 succession comment, the ADBE scoped
 #  route entry (custom withholding tag, FY2016-2018, net=False), the
 #  only_fys route scoping, and the tag-panel route-source row. Same-day
@@ -5177,18 +5276,35 @@ def summary_line(rows: list[Row]) -> str:
 # page hunts shows in Ω and ΔE before it shows in IV15.
 
 PINS: list[Pin] = [
-    # PDEX — DELIBERATELY UNPINNED 12 Sep 2026 for exactly one run: the
-    # queue E capture cycle (per-year Ω lands in capture blocks this
-    # deploy; PDEX is the designated exhibit). The retired pin IS the
-    # acceptance — the capture must reproduce, to the digit, at the
-    # FY2017-2026 vintage: G 0.688, N 13.662, T 3.408,
-    # dE_3y 106.49638888673734, dE_full 100.59760136949944,
-    # net_cash -8.017000000000001, omega_sum 4.954140336490473,
-    # price 45.67166614532471, shares 3.186135 — with the new omega:YYYY
-    # keys over non-excluded years summing to omega_sum. Re-pin from the
-    # printed block, dated, next deploy (the NFLX 7-Sep protocol).
-    Pin(ticker='PDEX', pin_set='internal', pinned='',
-        latest_fy=0, window=(), core={}, refusals=()),
+    # PDEX — re-pinned 12 Sep 2026 from the queue E capture cycle: the
+    # deliberate one-run unpin (NFLX 7-Sep protocol) whose capture
+    # reproduced every retired-pin figure to the digit and minted the
+    # first per-year Ω pins (omega:YYYY, full precision, summing to
+    # omega_sum; FY2020/FY2025/FY2026 genuinely zero — the PDEX shape).
+    Pin(ticker='PDEX', pin_set='internal', pinned='2026-09-12',
+        latest_fy=2026, window=(2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026),
+        core={
+            'G': 0.688,
+            'N': 13.662,
+            'T': 3.408,
+            'dE_3y': 106.49638888673734,
+            'dE_full': 100.59760136949944,
+            'net_cash': -8.017000000000001,
+            'omega:2017': 0.17157081473493577,
+            'omega:2018': 2.3064656309022906,
+            'omega:2019': 0.40609256873591715,
+            'omega:2020': 0.0,
+            'omega:2021': 0.628814304593563,
+            'omega:2022': 0.5400533746581875,
+            'omega:2023': 0.6621042784438133,
+            'omega:2024': 0.2390393644217652,
+            'omega:2025': 0.0,
+            'omega:2026': 0.0,
+            'omega_sum': 4.954140336490473,
+            'price': 45.67166614532471,
+            'shares': 3.186135,
+        },
+        refusals=()),
     Pin(ticker='XPEL', pin_set='internal', pinned='2026-09-05',
         latest_fy=2025, window=(2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025),
         core={
