@@ -240,11 +240,18 @@ class Pooled:
         return self.sum_OE < 0
 
     def retention(self, t: int) -> float:
-        """Share of reported value growth that survives to year t. dE compounds."""
+        """dE ** t. Under the assumption that the dilution pace producing this
+        dE persists, this approximates the per-share level after t years
+        relative to an undiluted path. dE itself is a level ratio (OE/N),
+        not an annual retention factor — constant dE with N growing at g
+        grows OE at g. The 11 Sep 2026 Reddit concession; the metric and
+        banner wording carry the condition out loud."""
         return self.dE ** t
 
     def true_cagr(self, gaap_growth: float) -> float:
-        """Break-even dE is 1/(1+g). Below it, reported growth never reaches you."""
+        """(1 + g) * dE - 1: per-share growth IF the dilution pace producing
+        this dE persists — the conditional form (11 Sep 2026 concession).
+        The 1/(1+g) break-even holds only under that assumption."""
         return self.dE * (1.0 + gaap_growth) - 1.0
 
 
@@ -928,7 +935,8 @@ def stale_swing_note(net_cash: float, contributions: list[tuple[str, float]]) ->
     return (f" Net cash reads {net_cash:,.0f}M with "
             + ", ".join(f"{n.lower()} at {abs(v):,.0f}M" for n, v in live)
             + f" carried forward; treated as zero instead it would read {alt:,.0f}M, a swing of "
-              f"{abs(alt - net_cash):,.0f}M. Which of the two is right depends on whether the "
+            + (f"{abs(alt - net_cash):,.1f}M" if abs(alt - net_cash) < 1 else f"{abs(alt - net_cash):,.0f}M")
+            + ". Which of the two is right depends on whether the "
               "balance moved to another tag or genuinely ended, so the tag name is the fix and "
               "neither figure is guessed at here.")
 
@@ -2565,7 +2573,7 @@ def load(ticker: str, n_years: int = 10):
                 "no payroll produces. That is a "
                 + ("listing: preferred converts to common and new stock is sold."
                    if first_priced else
-                   "capital event, most often an all-stock acquisition.")
+                   "capital event — an all-stock acquisition or an equity raise.")
                 + " Counting it as compensation would swamp every other year in the pool. The "
                   "pooled figures now cover fewer years, so read them with that in mind.")
 
@@ -2709,7 +2717,9 @@ def load(ticker: str, n_years: int = 10):
         notes.append(
             "No repurchase figure was found for FY"
             + ", FY".join(str(f) for f in _gap)
-            + ", yet the share count fell by more than 1% in each. Those years are almost "
+            + (", yet the share count fell by more than 1% in each." if len(_gap) > 1 else
+               ", yet the share count fell by more than 1% that year.")
+            + " Those years are almost "
               "certainly buybacks tagged under an element this reader does not know. Two "
               "consequences: owners' earnings for those years are a ceiling, since the market "
               "value of shares delivered floors at zero without a repurchase figure; and cash "
@@ -3325,6 +3335,45 @@ def dcf_financial_banner(fin_class: str, fin_reason: str, sic_desc, sic) -> str:
 # the refused-cell formatter with its Uber lesson.
 TOOL1_SEED_NOTE_PREFIXES = ("Revenue is ", "Latest revenue growth is ")
 
+
+
+def _dcf_note_wording(note: str) -> str:
+    """Shared-reader notes rendered on this page, reworded to name this
+    page's own figures — the legs and the Ω correction — instead of tool-1
+    language (HANDOVER-7 §6 B family; toolkit pass, 12 Sep 2026). Targeted
+    fragment swaps, never blanket replacement: each key is distinctive to
+    one note, so an unmatched note passes through untouched."""
+    for old_f, new_f in (
+        ("That leaves the SBC cost understated, so owners' earnings here "
+         "are flattering rather than conservative.",
+         "That leaves the SBC cost understated, so the Ω correction here — "
+         "and leg 2 with it — is flattering rather than conservative."),
+        ("owners' earnings in those years are understated rather than "
+         "flattering. Check the tag panel before using them.",
+         "the Ω correction in those years is overstated, so leg 2 sits below "
+         "where it should — conservative rather than flattering. Check the "
+         "tag panel before using them."),
+        ("Treat ΔE here as a floor, not a measurement.",
+         "Treat the Ω correction here as a ceiling and leg 2 as a floor, "
+         "not measurements."),
+        ("ADDS to owners' earnings instead of subtracting and pushes ΔE above 100%.",
+         "ADDS to the corrected base instead of subtracting, lifting leg 2 "
+         "above leg 1."),
+        ("and ΔE here is a \n"
+         "ceiling rather than a measurement.",
+         "and the Ω correction here is a floor — leg 2 a ceiling — rather "
+         "than a measurement."),
+        ("owners' earnings for those years are a ceiling, since the market "
+         "value of shares delivered floors at zero without a repurchase figure; and cash "
+         "returned to shareholders is understated, which flatters the growth a company "
+         "looks able to fund.",
+         "the Ω correction for those years is a floor and leg 2 a ceiling, "
+         "since the market value of shares delivered floors at zero without "
+         "a repurchase figure; and cash returned to shareholders is "
+         "understated."),
+    ):
+        note = note.replace(old_f, new_f)
+    return note
 
 def page_notes(notes: list[str]) -> list[str]:
     return [n for n in notes if not n.startswith(TOOL1_SEED_NOTE_PREFIXES)]
@@ -4957,6 +5006,26 @@ def self_test() -> list[tuple[str, bool, str]]:
                 bool(_stops) and not _bad,
                 f"{len(_stops)} stop sites" + (f"; missing at source lines {_bad}" if _bad else "")))
 
+    # ── the §6 B family (toolkit pass, 12 Sep 2026): shared-reader notes
+    #    speak this page's language. Each swap fed its own trigger text.
+    _fam = [
+        ("That leaves the SBC cost understated, so owners' earnings here "
+         "are flattering rather than conservative.", "leg 2 with it"),
+        ("Treat ΔE here as a floor, not a measurement.", "leg 2 as a floor"),
+        ("ADDS to owners' earnings instead of subtracting and pushes ΔE above 100%.",
+         "lifting leg 2 above leg 1"),
+        ("owners' earnings for those years are a ceiling, since the market "
+         "value of shares delivered floors at zero without a repurchase figure; and cash "
+         "returned to shareholders is understated, which flatters the growth a company "
+         "looks able to fund.", "leg 2 a ceiling"),
+    ]
+    out.append(("§6 B family: page-language rewording maps every member, passes strangers through",
+                all(new_bit in _dcf_note_wording("x " + old_bit + " y")
+                    and old_bit not in _dcf_note_wording("x " + old_bit + " y")
+                    for old_bit, new_bit in _fam)
+                and _dcf_note_wording("an unrelated note") == "an unrelated note",
+                f"{len(_fam)} members"))
+
     return out
 
 
@@ -5083,7 +5152,7 @@ if submitted:
 years = st.session_state.get("dcf_years", [])
 if years and ticker and st.session_state.get("dcf_tk") == ticker:
     notes, pre, tk = st.session_state["dcf_notes"], st.session_state["dcf_pre"], st.session_state["dcf_tk"]
-    alerts: list[tuple[str, str]] = [("info", n) for n in page_notes(notes)]
+    alerts: list[tuple[str, str]] = [("info", _dcf_note_wording(n)) for n in page_notes(notes)]
 
     # A financial filer is refused BEFORE the table — page 4's Oscar Health
     # reasoning: a bank's CFO − capex is a filed number but not an operating
@@ -5304,19 +5373,17 @@ if years and ticker and st.session_state.get("dcf_tk") == ticker:
     st.subheader("The two legs")
     c1, c2 = st.columns(2)
     with c1:
-        st.metric("Leg 1 — standard FCF definition", d(leg1),
-                  f"{price / leg1:.2f}x price/value at {d(price)}" if price and leg1 > 0 else None,
-                  delta_color="off")
+        st.metric("Leg 1 — standard FCF definition", d(leg1))
         st.caption("CFO − capex. The GAAP stock-comp charge is added back inside CFO, so this "
                    "leg prices stock comp at zero — the convention, comparable to what the "
-                   "public valuation sites print.")
+                   "public valuation sites print."
+                   + (f" Price/value {price / leg1:.2f}x at {d(price)}." if price and leg1 > 0 else ""))
     with c2:
         if leg2 is not None:
-            st.metric("Leg 2 — SBC-corrected", d(leg2),
-                      f"{price / leg2:.2f}x price/value at {d(price)}" if price and leg2 > 0 else None,
-                      delta_color="off")
+            st.metric("Leg 2 — SBC-corrected", d(leg2))
             st.caption("The same DCF with the median-5 Ω subtracted from the base: the measured "
-                       "cost of stock comp, in place of a charge of zero.")
+                       "cost of stock comp, in place of a charge of zero."
+                       + (f" Price/value {price / leg2:.2f}x at {d(price)}." if price and leg2 > 0 else ""))
         else:
             st.error(leg2_refusal)
 
