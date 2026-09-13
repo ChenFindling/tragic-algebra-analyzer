@@ -1102,7 +1102,8 @@ def stale_swing_note(net_cash: float, contributions: list[tuple[str, float]]) ->
     return (f" Net cash reads {net_cash:,.0f}M with "
             + ", ".join(f"{n.lower()} at {abs(v):,.0f}M" for n, v in live)
             + f" carried forward; treated as zero instead it would read {alt:,.0f}M, a swing of "
-              f"{abs(alt - net_cash):,.0f}M. Which of the two is right depends on whether the "
+            + (f"{abs(alt - net_cash):,.1f}M" if abs(alt - net_cash) < 1 else f"{abs(alt - net_cash):,.0f}M")
+            + ". Which of the two is right depends on whether the "
               "balance moved to another tag or genuinely ended, so the tag name is the fix and "
               "neither figure is guessed at here.")
 
@@ -2737,7 +2738,7 @@ def load(ticker: str, n_years: int = 10):
                 "no payroll produces. That is a "
                 + ("listing: preferred converts to common and new stock is sold."
                    if first_priced else
-                   "capital event, most often an all-stock acquisition.")
+                   "capital event — an all-stock acquisition or an equity raise.")
                 + " Counting it as compensation would swamp every other year in the pool. The "
                   "pooled figures now cover fewer years, so read them with that in mind.")
 
@@ -2881,7 +2882,9 @@ def load(ticker: str, n_years: int = 10):
         notes.append(
             "No repurchase figure was found for FY"
             + ", FY".join(str(f) for f in _gap)
-            + ", yet the share count fell by more than 1% in each. Those years are almost "
+            + (", yet the share count fell by more than 1% in each." if len(_gap) > 1 else
+               ", yet the share count fell by more than 1% that year.")
+            + " Those years are almost "
               "certainly buybacks tagged under an element this reader does not know. Two "
               "consequences: owners' earnings for those years are a ceiling, since the market "
               "value of shares delivered floors at zero without a repurchase figure; and cash "
@@ -5184,6 +5187,17 @@ def self_test() -> list[tuple[str, bool, str]]:
                          and "If the dilution pace behind it persists" in _s5)),
                 "own-source scan"))
 
+    # ── job-7 ride wordings (toolkit pass, 12 Sep 2026), pinned at the
+    #    engine's home file; the hash audit carries them to every copy.
+    from pathlib import Path as _P7
+    _s7 = _P7(__file__).read_text(encoding="utf-8")
+    out.append(("Ride wordings: equity-raise cause, sub-1M swing decimal, one-year grammar",
+                "an all-stock acquisition or an equity raise" in _s7
+                and ("most often an all-stock" + " acquisition") not in _s7
+                and ":,.1f}M\" if abs(alt - net_cash) < 1" in _s7
+                and "more than 1% that year." in _s7,
+                "own-source scan"))
+
     return out
 
 
@@ -5852,7 +5866,7 @@ if years and ticker and st.session_state.get("tk") == ticker:
     q3.metric("Per-share level after 10y",
               f"{pooled.retention(10):.1%}"
               if pooled.dE_defined and 0 < pooled.dE <= 1.25 else "—",
-              "vs no dilution, if this ΔE pace holds")
+              "vs no dilution, if ΔE persists")
 
     if pooled.sum_OE < 0 and pooled.dE_defined and price > 0:
         st.info(
