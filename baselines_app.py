@@ -17,9 +17,9 @@ SECOND Cloud app pointing at this file. Two consequences of that:
     harmless and known, not a bug.
 
 Layout of this file:
-  lines up to the BASELINES banner — tool 1's engine, reader and 174-check
+  lines up to the BASELINES banner — tool 1's engine, reader and 175-check
   self-test, copied VERBATIM from the deployed 1_Tragic_Algebra_Analyzer.py
-  (its lines 1-5163; only this docstring replaced, tool 1's UI dropped).
+  (its lines 1-5190; only this docstring replaced, tool 1's UI dropped).
   The doctrine: what this page checks is what the pages run. A reader
   change in the page files is a reader change here — sync it like
   pages 2, 4, 5 and 6.
@@ -290,11 +290,18 @@ class Pooled:
         return self.sum_OE < 0
 
     def retention(self, t: int) -> float:
-        """Share of reported value growth that survives to year t. dE compounds."""
+        """dE ** t. Under the assumption that the dilution pace producing this
+        dE persists, this approximates the per-share level after t years
+        relative to an undiluted path. dE itself is a level ratio (OE/N),
+        not an annual retention factor — constant dE with N growing at g
+        grows OE at g. The 11 Sep 2026 Reddit concession; the metric and
+        banner wording carry the condition out loud."""
         return self.dE ** t
 
     def true_cagr(self, gaap_growth: float) -> float:
-        """Break-even dE is 1/(1+g). Below it, reported growth never reaches you."""
+        """(1 + g) * dE - 1: per-share growth IF the dilution pace producing
+        this dE persists — the conditional form (11 Sep 2026 concession).
+        The 1/(1+g) break-even holds only under that assumption."""
         return self.dE * (1.0 + gaap_growth) - 1.0
 
 
@@ -5163,13 +5170,33 @@ def self_test() -> list[tuple[str, bool, str]]:
                 _route_ok(foreign_filer_note("ProfitLoss", ["revenue"])),
                 foreign_filer_note("ProfitLoss", ["revenue"])[-80:]))
 
+    # ── the 11 Sep 2026 concession (job 5 of the toolkit pass): the
+    #    compounding language is conditional. dE is a level ratio (OE/N),
+    #    not an annual retention factor; dE**t and the 87% break-even hold
+    #    only if the dilution pace persists, and every surface now says so.
+    #    Old absolutes are asserted ABSENT via concatenation so this check
+    #    never matches itself; UI wording is asserted only where UI exists,
+    #    so the check also holds on the Baselines app's engine copy.
+    from pathlib import Path as _P5
+    _s5 = _P5(__file__).read_text(encoding="utf-8")
+    out.append(("Concession wording: conditional everywhere, old absolutes gone",
+                ("Share of reported value growth" + " that survives") not in _s5
+                and ("Value kept" + " after 10y") not in _s5
+                and ("Below the 87%" + " break-even.**") not in _s5
+                and ("Above the 87%" + " break-even**") not in _s5
+                and "dilution pace producing this" in _s5
+                and (("q3.metric(" not in _s5)
+                     or ("Per-share level after 10y" in _s5
+                         and "If the dilution pace behind it persists" in _s5)),
+                "own-source scan"))
+
     return out
 
 
 # ══════════════════════════════════════════════════════════════════════
 #  BASELINES — everything below this line is this page's own code.
 #  Everything above it is tool 1's engine and reader, copied verbatim
-#  (lines 1–5163 of the deployed 1_Tragic_Algebra_Analyzer.py, 174
+#  (lines 1–5190 of the deployed 1_Tragic_Algebra_Analyzer.py, 175
 #  checks; only the module docstring was replaced). Re-copied 12 Sep
 #  2026 (third recopy that day) for the precision-merge rule — an older,
 #  finer, agreeing duration fact upgrades the resolution (the ADBE
