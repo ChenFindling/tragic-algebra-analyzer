@@ -5510,6 +5510,23 @@ def self_test() -> list[tuple[str, bool, str]]:
                 _route_ok(below_line_note([(2024, 500.0, 300.0)]) or ""),
                 (below_line_note([(2024, 500.0, 300.0)]) or "")[-70:]))
 
+    # ── Job 5b on this page (toolkit pass, 12 Sep 2026): the footer
+    #    survives every refusal. Source-level: every st.stop() must be
+    #    immediately preceded (blank lines aside) by a _page_footer() call,
+    #    so the glossary, the checks and the disclaimer render on refusals.
+    from pathlib import Path as _P
+    _src = [l.strip() for l in _P(__file__).read_text(encoding="utf-8").split("\n")]
+    _stops = [i for i, l in enumerate(_src) if l == "st.stop()"]
+    def _footer_above(i):
+        for j in range(i - 1, -1, -1):
+            if _src[j]:
+                return _src[j] == "_page_footer()"
+        return False
+    _bad = [i + 1 for i in _stops if not _footer_above(i)]
+    out.append(("Footer survives refusal: every st.stop() is preceded by _page_footer()",
+                bool(_stops) and not _bad,
+                f"{len(_stops)} stop sites" + (f"; missing at source lines {_bad}" if _bad else "")))
+
     return out
 
 
@@ -5534,6 +5551,50 @@ def _raises(fn) -> bool:
 def _fmt_pct(v):
     return "—" if v is None else f"{v:.1%}"
 
+
+
+# Defined above the UI so the refusal paths can render it before st.stop().
+def _page_footer() -> None:
+    """The glossary, the self-test button and the disclaimer. A refused
+    ticker st.stop()s before the bottom of the script, and these used to
+    die with it (Chen, GRAB, 5 Sep 2026, on the Tragic Algebra Analyzer) —
+    the reader on a refused page is exactly the reader who may want to run
+    the checks. Called before every stop and once at the bottom. Ported in
+    the toolkit pass, 12 Sep 2026."""
+    st.divider()
+    _r1, _r2 = st.columns(2)
+    with _r1:
+        with st.expander("What the numbers mean", expanded=False):
+            st.markdown(
+                "**Operating margin** — GAAP operating income over revenue. The line this page "
+                "projects: one tag in every 10-K, above interest, tax and one-offs.\n\n"
+                "**Incremental margin** — the share of each new revenue dollar that reached operating "
+                "income. When it runs above the current margin, leverage is appearing.\n\n"
+                "**Stage 0** — Burry's extra stage for inflecting hypergrowth: the margin projected "
+                "geometrically to a terminal margin over stated years, then his normal stages. "
+                "That path is a constant growth rate, so the Tragic Algebra Analyzer's engine carries it exactly.\n\n"
+                "**ΔE** — the share of profit that reaches shareholders after the true cost of stock "
+                "comp. Measured here over the profitable years only, never across the losses.\n\n"
+                "**The refusals** — this app's. Wrong shape, a trend that reversed or is one year old, "
+                "flat or noisy margins, no positive start, owners' earnings that never inflected, a "
+                "terminal margin above gross margin, a runway shorter than the path.")
+
+    with _r2:
+        with st.expander("Verify the engine"):
+            st.caption("Ported-engine checks against the Tragic Algebra Analyzer's figures, the Stage 0 "
+                       "identity built by hand, "
+                       "and every shape, gate and refusal on synthetic series. They do not use live filings.")
+            if st.button("Run checks"):
+                _results = self_test()
+                _sev, _line = test_summary(_results)
+                getattr(st, _sev)(_line)
+                for name, ok, got in _results:
+                    st.write(("✅ " if ok else "❌ ") + f"{name} — {got}")
+
+    st.caption(
+        "Research aid, not financial advice. Outputs depend on estimates you supply. The pricing "
+        "follows Michael Burry's published writing; the trend evidence and the refusals are this "
+        "project's own. Independent, not affiliated with or endorsed by him or Scion Asset Management.")
 
 st.set_page_config(
     page_title="Inflection Checker — is the turn visible in the filings, and what is it worth at 15%",
@@ -5609,6 +5670,7 @@ if years and ticker and st.session_state.get("inf_tk") == ticker:
                 getattr(st, kind_)(msg)
             st.write("**What was read from the filings** — every tag, found or missing")
             st.dataframe(pd.DataFrame(pre.get("tags", [])), width='stretch', hide_index=True)
+        _page_footer()
         st.stop()
 
     # ══ trend evidence — always printed, before any refusal ══════════
@@ -5708,6 +5770,7 @@ if years and ticker and st.session_state.get("inf_tk") == ticker:
                 getattr(st, kind_)(msg)
             st.write("**What was read from the filings** — every tag, found or missing")
             st.dataframe(pd.DataFrame(pre.get("tags", [])), width='stretch', hide_index=True)
+        _page_footer()
         st.stop()
 
     # ══ judgement inputs ═════════════════════════════════════════════
@@ -5816,6 +5879,7 @@ if years and ticker and st.session_state.get("inf_tk") == ticker:
                 getattr(st, kind_)(msg)
             st.write("**What was read from the filings** — every tag, found or missing")
             st.dataframe(pd.DataFrame(pre.get("tags", [])), width='stretch', hide_index=True)
+        _page_footer()
         st.stop()
 
     # ── live gates on the boxes ──
@@ -5832,6 +5896,7 @@ if years and ticker and st.session_state.get("inf_tk") == ticker:
                 getattr(st, kind_)(msg)
             st.write("**What was read from the filings** — every tag, found or missing")
             st.dataframe(pd.DataFrame(pre.get("tags", [])), width='stretch', hide_index=True)
+        _page_footer()
         st.stop()
 
     if above_incremental(terminal, _w_incr):
@@ -5861,10 +5926,12 @@ if years and ticker and st.session_state.get("inf_tk") == ticker:
     st.subheader(f"Verdict · {tk}")
     if iv15 != iv15:
         st.error("Required return must exceed the tier's terminal growth cap.")
+        _page_footer()
         st.stop()
     if iv15 < 0:
         st.error(f"**Not investible.** No share price — not even one cent — delivers 15% a year "
                  f"to a long-term shareholder in {tk} on these inputs.")
+        _page_footer()
         st.stop()
     ratio = price / iv15
     er = expected_return(price, par)
@@ -5966,37 +6033,4 @@ if years and ticker and st.session_state.get("inf_tk") == ticker:
 #  REFERENCE
 # ══════════════════════════════════════════════════════════════════════
 
-st.divider()
-_r1, _r2 = st.columns(2)
-with _r1:
-    with st.expander("What the numbers mean", expanded=False):
-        st.markdown(
-            "**Operating margin** — GAAP operating income over revenue. The line this page "
-            "projects: one tag in every 10-K, above interest, tax and one-offs.\n\n"
-            "**Incremental margin** — the share of each new revenue dollar that reached operating "
-            "income. When it runs above the current margin, leverage is appearing.\n\n"
-            "**Stage 0** — Burry's extra stage for inflecting hypergrowth: the margin projected "
-            "geometrically to a terminal margin over stated years, then his normal stages. "
-            "That path is a constant growth rate, so the Tragic Algebra Analyzer's engine carries it exactly.\n\n"
-            "**ΔE** — the share of profit that reaches shareholders after the true cost of stock "
-            "comp. Measured here over the profitable years only, never across the losses.\n\n"
-            "**The refusals** — this app's. Wrong shape, a trend that reversed or is one year old, "
-            "flat or noisy margins, no positive start, owners' earnings that never inflected, a "
-            "terminal margin above gross margin, a runway shorter than the path.")
-
-with _r2:
-    with st.expander("Verify the engine"):
-        st.caption("Ported-engine checks against the Tragic Algebra Analyzer's figures, the Stage 0 "
-                   "identity built by hand, "
-                   "and every shape, gate and refusal on synthetic series. They do not use live filings.")
-        if st.button("Run checks"):
-            _results = self_test()
-            _sev, _line = test_summary(_results)
-            getattr(st, _sev)(_line)
-            for name, ok, got in _results:
-                st.write(("✅ " if ok else "❌ ") + f"{name} — {got}")
-
-st.caption(
-    "Research aid, not financial advice. Outputs depend on estimates you supply. The pricing "
-    "follows Michael Burry's published writing; the trend evidence and the refusals are this "
-    "project's own. Independent, not affiliated with or endorsed by him or Scion Asset Management.")
+_page_footer()
