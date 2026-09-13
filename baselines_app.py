@@ -5961,6 +5961,152 @@ PINS: list[Pin] = [
 ]
 
 
+# ══════════════════════════════════════════════════════════════════════
+#  BASE-RATE CAPTURE — for pages/9_Expectations.py (13 Sep 2026)
+# ══════════════════════════════════════════════════════════════════════
+#
+# One-off capture surface for the Expectations page's pinned base-rate
+# table. For each name below it runs a SEPARATE load(name, 16) — sixteen
+# fiscal years, against the pins' ten, so ten-year stretches can exist —
+# computes the best endpoint CAGR at 5 and 10 years on revenue and on
+# owners' earnings, and prints one paste-ready BASE_RATES block. It
+# changes nothing: no pin is read or written, the pin rows' own load()
+# calls never touch the longer window, and the clean line is indifferent
+# to this section existing. The block is pasted by the session into
+# page 9 as pinned DATA with its as-of date — recomputed by session,
+# never fetched live, exactly like the registry.
+#
+# Definitions (page 9's caption states the same ones, and its self-tests
+# recompute the spot fragments below with the identical function):
+#   "sustained g for k years" = best k-year endpoint CAGR anywhere in
+#   the sixteen-year read — deliberately the GENEROUS reading: when the
+#   table says few names did it, it says so on the reading most
+#   favourable to the bull.
+#   Endpoints must be positive: a CAGR across a sign change is noise.
+#   Owners' earnings skip excluded years as endpoints (the year's share
+#   figures are why it is excluded) and carry no zero-price years at
+#   all (V floors at zero there — the BKNG price-coverage failure — so
+#   OE stops being a measurement). Revenue keeps every filed year: a
+#   capital event does not unmake the revenue figure.
+#   Sixteen years is the read and eleven is the price history, so the
+#   owners'-earnings ten-year column sits at the provider's edge and
+#   some names will drop from it — the spans in the block say which.
+
+BASE_RATE_SPANS = (5, 10)
+
+# Policy-dropped, not fetched: the base table follows the kit's own
+# doctrine about which names this frame reads. Approved 13 Sep 2026.
+BASE_RATE_POLICY_DROPPED = {
+    "KNSL": "insurer — the kit's pages refuse this frame for financials; "
+            "the base table follows its own doctrine",
+    "GRAB": "foreign private issuer reporting under IFRS — the kit routes it to "
+            "the Non-US Checker; the base table keeps to the names its own "
+            "frame reads",
+}
+
+# Burry's master set (this app's master rows, unique), then the internal
+# pins minus the two policy-dropped names. 26 names attempted — the
+# honest N; per-measure coverage will be smaller and the block says so.
+BASE_RATE_NAMES = [
+    "AAPL", "ADBE", "ADI", "AMGN", "AMZN", "COST", "CRM", "CSCO", "GOOGL",
+    "INTU", "META", "MSFT", "NFLX", "NVDA", "PAYX", "QCOM", "TTWO", "TXN",
+    "BBW", "CLMB", "CROX", "PDEX", "PLTR", "RDDT", "TGTX", "XPEL",
+]
+
+
+def best_stretch_cagr(series: dict[int, float], span: int,
+                      excluded=frozenset()) -> tuple[float, int] | None:
+    """Best endpoint CAGR over exactly `span` years: (rate, start fy), or None.
+
+    Endpoint arithmetic only — (v[fy+span] / v[fy]) ** (1/span) - 1 over
+    every pair of years exactly `span` apart where both are present, both
+    positive, and neither an excluded year. Interior holes cannot move an
+    endpoint CAGR; endpoints decide everything, so the rules sit on them.
+    """
+    best = None
+    for fy in sorted(series):
+        v0, v1 = series[fy], series.get(fy + span)
+        if v1 is None or v0 <= 0 or v1 <= 0 or fy in excluded or fy + span in excluded:
+            continue
+        c = (v1 / v0) ** (1.0 / span) - 1.0
+        if best is None or c > best[0]:
+            best = (c, fy)
+    return best
+
+
+def base_rate_read(t: str):
+    """One name's series for the capture. Raises exactly as load() does.
+
+    Returns (rev $M by fy, oe $M by fy, excluded fys, unpriced fys).
+    Revenue is read the way load() reads its own REV series — membership
+    spelled from the same sets, so this call can never drift from the
+    reader — then windowed to its last sixteen filed years, matching the
+    sixteen-year Year window.
+    """
+    years16, _n16, _m16 = load(t, 16)
+    oe = {y.fy: y.OE for y in years16 if y.price > 0}
+    unpriced = tuple(y.fy for y in years16 if y.price <= 0)
+    oe_excl = frozenset(y.fy for y in years16 if y.excluded)
+    cmap = _ticker_map()
+    facts = _facts(cmap[resolve_ticker(t, cmap)])
+    rev_raw = _annual(facts, *CONCEPTS["REV"], [], "REV" in FILL_KEYS,
+                      "REV" in RECENCY_KEYS, {})
+    rev = {fy: rev_raw[fy][2] / 1e6 for fy in sorted(rev_raw)[-16:]}
+    return rev, oe, oe_excl, unpriced
+
+
+def base_rate_capture_block(recs: list[dict], dropped: list[tuple[str, str]],
+                            errors: dict[str, str], today: str) -> str:
+    """The paste-ready block: per-name pinned records, dropped names with
+    their reasons, and two raw spot-check fragments page 9's self-tests
+    recompute with the identical function. Full precision throughout —
+    pins carry exact figures; display rounds."""
+    L = ["# ── BASE_RATES — pinned data for pages/9_Expectations.py ─────────────",
+         f"# Captured {today} by the Baselines app's base-rate capture.",
+         "# Definition: best endpoint CAGR anywhere in the sixteen-year read;",
+         "# endpoints positive; owners' earnings skip excluded years as",
+         "# endpoints and carry no zero-price years. Recomputed by session,",
+         "# never fetched live.",
+         f'BASE_RATES_AS_OF = "{today}"']
+    if errors:
+        L.append("# INCOMPLETE — fetch failures, re-run before pasting: "
+                 + ", ".join(sorted(errors)))
+    L.append("BASE_RATE_ROWS = [")
+    for r in recs:
+        L.append(f"    BaseRateRow(ticker={r['ticker']!r},")
+        for m in ("rev", "oe"):
+            for sp in BASE_RATE_SPANS:
+                b = r[f"{m}{sp}"]
+                if b is None:
+                    L.append(f"                {m}{sp}=None, {m}{sp}_win=None,")
+                else:
+                    L.append(f"                {m}{sp}={b[0]!r}, "
+                             f"{m}{sp}_win=({b[1]}, {b[1] + sp}),")
+        L.append(f"                rev_span={r['rev_span']}, oe_span={r['oe_span']}),")
+    L.append("]")
+    L.append("BASE_RATE_DROPPED = [")
+    for t, why in dropped:
+        L.append(f"    ({t!r},")
+        L.append(f"     {why!r}),")
+    L.append("]")
+    # Spot fragments: the first name in row order with a ten-year stretch
+    # in the measure. Page 9 recomputes each from its raw fragment and
+    # must land on the pinned figure exactly — the table cannot disagree
+    # with the filed series it was computed from.
+    for var, m, ser_key in (("BASE_RATE_SPOT_REV", "rev", "rev_series"),
+                            ("BASE_RATE_SPOT_OE", "oe", "oe_series")):
+        spot = next((r for r in recs if r[f"{m}10"] is not None), None)
+        if spot is None:
+            L.append(f"{var} = None   # no name computed a ten-year stretch here")
+        else:
+            ser = ", ".join(f"{fy}: {v!r}" for fy, v in sorted(spot[ser_key].items()))
+            excl = sorted(spot["oe_excl"]) if m == "oe" else []
+            L.append(f"{var} = ({spot['ticker']!r},")
+            L.append(f"    {{{ser}}},")
+            L.append(f"    {excl!r})")
+    return "\n".join(L)
+
+
 # ── Self-tests for the comparison and vintage logic ───────────────────
 #
 # All synthetic, no network. Per §2, behaviour is tested on real figures,
@@ -6222,6 +6368,31 @@ def baselines_self_test() -> list[tuple[str, bool, str]]:
     out.append(("Unpinned internal name → NOT PINNED with a capture block",
                 row.verdict == "NOT PINNED" and row.block.startswith("Pin(")
                 and "'internal'" in row.block, "capture path"))
+
+    # 13. Base-rate capture arithmetic (Expectations page, 13 Sep 2026):
+    #     the function that computes the pinned table's figures, proved on
+    #     a synthetic series whose best window is known by construction —
+    #     two admissible five-year pairs, 2.0x from FY2010 and 1.5x from
+    #     FY2011, and no ten-year pair at all.
+    _brs = {2010: 100.0, 2011: 100.0, 2015: 200.0, 2016: 150.0}
+    _b5 = best_stretch_cagr(_brs, 5)
+    out.append(("Base-rate capture: best endpoint stretch found, exact, right window",
+                _b5 is not None and abs(_b5[0] - (2.0 ** 0.2 - 1.0)) < 1e-12
+                and _b5[1] == 2010 and best_stretch_cagr(_brs, 10) is None,
+                f"{_b5[0]:.6%} from FY{_b5[1]}" if _b5 else "none"))
+    # 14. ...and the endpoint rules: a non-positive endpoint never anchors
+    #     a stretch (the sign-flip case behaves exactly as if the year were
+    #     excluded), an excluded year never serves as an endpoint, and a
+    #     series with no admissible pair returns None rather than a number.
+    out.append(("Base-rate capture: endpoint rules — positive, not excluded, or None",
+                best_stretch_cagr({2010: -5.0, 2011: 100.0, 2015: 200.0,
+                                   2016: 150.0}, 5)
+                == best_stretch_cagr(_brs, 5, excluded=frozenset({2010}))
+                and best_stretch_cagr({2010: -5.0, 2015: 200.0}, 5) is None
+                and best_stretch_cagr(_brs, 5, excluded=frozenset({2015}))[1] == 2011
+                and best_stretch_cagr(_brs, 5,
+                                      excluded=frozenset({2015, 2016})) is None,
+                "sign, exclusion, and the empty case"))
     return out
 
 
@@ -6294,6 +6465,73 @@ if rows:
                              f"{r.ticker} — {head} (paste to the session, never applied "
                              "by this page)"):
                 st.code(r.block, language="python")
+
+st.divider()
+with st.expander("Base-rate capture — for the Expectations page"):
+    st.caption(
+        "One-off capture for the Expectations page's pinned base-rate table: a separate "
+        "sixteen-fiscal-year load per name (the pin rows' own runs are untouched), best "
+        "endpoint CAGR at 5 and 10 years on revenue and on owners' earnings, printed as "
+        "one paste block for the session. This section fetches only when its own button "
+        "is pressed, reads no pin, writes no pin and moves no figure — the clean line "
+        "above is indifferent to it. KNSL and GRAB are policy-dropped: the base table "
+        "follows the kit's own doctrine about which names this frame reads."
+    )
+    if st.button("Run capture"):
+        _recs: list[dict] = []
+        _dropped = [(t, why) for t, why in sorted(BASE_RATE_POLICY_DROPPED.items())]
+        _errs: dict[str, str] = {}
+        _prog = st.progress(0.0, text="")
+        for _i, _t in enumerate(BASE_RATE_NAMES):
+            _prog.progress(_i / len(BASE_RATE_NAMES),
+                           text=f"Reading {_t} ({_i + 1} of {len(BASE_RATE_NAMES)})…")
+            try:
+                _rev, _oe, _oe_excl, _unpriced = base_rate_read(_t)
+            except ValueError as _e:            # load()'s own refusal — a result
+                _dropped.append((_t, "load refused: " + str(_e).split(". ")[0]))
+                continue
+            except Exception as _e:             # network / throttle / parse
+                _errs[_t] = f"{type(_e).__name__}: {_e}"
+                continue
+            _rec = {"ticker": _t, "rev_series": _rev, "oe_series": _oe,
+                    "oe_excl": _oe_excl, "unpriced": _unpriced,
+                    "rev_span": (min(_rev), max(_rev), len(_rev)) if _rev else None,
+                    "oe_span": (min(_oe), max(_oe), len(_oe)) if _oe else None}
+            for _sp in BASE_RATE_SPANS:
+                _rec[f"rev{_sp}"] = best_stretch_cagr(_rev, _sp)
+                _rec[f"oe{_sp}"] = best_stretch_cagr(_oe, _sp, _oe_excl)
+            _recs.append(_rec)
+        _prog.progress(1.0, text="Done.")
+        st.session_state["base_rate_capture"] = (
+            _recs, _dropped, _errs, dt.date.today().isoformat())
+    if "base_rate_capture" in st.session_state:
+        _recs, _dropped, _errs, _today = st.session_state["base_rate_capture"]
+        if _errs:
+            st.error("**Fetch failures — re-run before pasting; the block below is "
+                     "incomplete and says so in its header:** "
+                     + "; ".join(f"{t}: {m}" for t, m in sorted(_errs.items())))
+
+        def _fmt_stretch(b, sp):
+            return "—" if b is None else f"{b[0]:.1%} (FY{b[1]}→FY{b[1] + sp})"
+
+        st.dataframe(pd.DataFrame([{
+            "Ticker": r["ticker"],
+            "Rev years": (f"{r['rev_span'][2]} (FY{r['rev_span'][0]}–{r['rev_span'][1]})"
+                          if r["rev_span"] else "0"),
+            "Rev best 5y": _fmt_stretch(r["rev5"], 5),
+            "Rev best 10y": _fmt_stretch(r["rev10"], 10),
+            "OE years": (f"{r['oe_span'][2]} (FY{r['oe_span'][0]}–{r['oe_span'][1]})"
+                         if r["oe_span"] else "0"),
+            "OE best 5y": _fmt_stretch(r["oe5"], 5),
+            "OE best 10y": _fmt_stretch(r["oe10"], 10),
+        } for r in _recs]), width='stretch', hide_index=True,
+            height=min(38 * len(_recs) + 40, 1200))
+        for _t, _why in _dropped:
+            st.write(f"· {_t} — {_why}")
+        st.write("**BASE_RATES block** — paste to the session; nothing on this "
+                 "page or any other reads it.")
+        st.code(base_rate_capture_block(_recs, _dropped, _errs, _today),
+                language="python")
 
 st.divider()
 with st.expander("Verify the logic"):
