@@ -1084,7 +1084,8 @@ def stale_swing_note(net_cash: float, contributions: list[tuple[str, float]]) ->
     return (f" Net cash reads {net_cash:,.0f}M with "
             + ", ".join(f"{n.lower()} at {abs(v):,.0f}M" for n, v in live)
             + f" carried forward; treated as zero instead it would read {alt:,.0f}M, a swing of "
-              f"{abs(alt - net_cash):,.0f}M. Which of the two is right depends on whether the "
+            + (f"{abs(alt - net_cash):,.1f}M" if abs(alt - net_cash) < 1 else f"{abs(alt - net_cash):,.0f}M")
+            + ". Which of the two is right depends on whether the "
               "balance moved to another tag or genuinely ended, so the tag name is the fix and "
               "neither figure is guessed at here.")
 
@@ -2971,7 +2972,7 @@ def load(ticker: str, n_years: int = 10, price_symbol: str = "", ads_ratio: floa
             # cover the year cannot measure a change in it.
             _win = sorted(series["N"])[-n_years:]
             _cands = [(_net, "issued minus treasury shares"),
-                      (_cover, "the 10-K cover page"),
+                      (_cover, "the filing cover page"),
                       (_wv, "the weighted-average diluted count")]
             if _sparse and not (_static or _treasury):
                 # nothing wrong with the tagged figures, only with how few of
@@ -3097,7 +3098,7 @@ def load(ticker: str, n_years: int = 10, price_symbol: str = "", ads_ratio: floa
     # the price on screen matching the price in the market, and every ratio
     # (dilution, P/IV15, market cap) comes out invariant.
     _asof = split_asof(shares_out, {fy: v[1] for fy, v in series["N"].items()},
-                       _cover_asof(facts), _share_route == "the 10-K cover page")
+                       _cover_asof(facts), _share_route == "the filing cover page")
     _split_factor, _split_seen = 1.0, []
     for _day, _ratio in sorted(splits.items()):
         if _asof and _day > _asof:
@@ -3393,7 +3394,9 @@ def load(ticker: str, n_years: int = 10, price_symbol: str = "", ads_ratio: floa
         notes.append(
             "No repurchase figure was found for FY"
             + ", FY".join(str(f) for f in _gap)
-            + ", yet the share count fell by more than 1% in each. Those years are almost "
+            + (", yet the share count fell by more than 1% in each." if len(_gap) > 1 else
+               ", yet the share count fell by more than 1% that year.")
+            + " Those years are almost "
               "certainly buybacks tagged under an element this reader does not know. Two "
               "consequences: owners' earnings for those years are a ceiling, since the market "
               "value of shares delivered floors at zero without a repurchase figure; and cash "
@@ -3610,7 +3613,7 @@ def load(ticker: str, n_years: int = 10, price_symbol: str = "", ads_ratio: floa
         {"Line": "— Shares: cover page", "Years read": len(_cover),
          "Latest year": _latest_fy(_cover),
          "XBRL tag": "dei:EntityCommonStockSharesOutstanding",
-         "Status": "used" if _share_route == "the 10-K cover page" else
+         "Status": "used" if _share_route == "the filing cover page" else
                    "read" if _cover else "not tagged"},
         {"Line": "— Shares: outstanding (IFRS)", "Years read": len(_i_out),
          "Latest year": _latest_fy(_i_out),
@@ -4854,13 +4857,13 @@ def self_test() -> list[tuple[str, bool, str]]:
     #     on the basis the rest of the page uses. TransDigm cannot verify this
     #     on the page — its tool 1 verdict is "Not investible" and nothing
     #     renders below it — so its shape is pinned here instead.
-    _sp = share_route_note("sparse", 56.3e6, 58.2e6, "the 10-K cover page", 3, 10, 2012)
+    _sp = share_route_note("sparse", 56.3e6, 58.2e6, "the filing cover page", 3, 10, 2012)
     out.append(("A short share series is described as short, not as static",
                 "stops at FY2012" in _sp and "barely moved" not in _sp,
                 _sp[:72] + "…"))
     out.append(("...and it says how much of the window it actually covers",
                 "3 of the 10 years" in _sp, "3 of the 10 years"))
-    _st = share_route_note("static", 56.3e6, 58.2e6, "the 10-K cover page", 10, 10, 2025)
+    _st = share_route_note("static", 56.3e6, 58.2e6, "the filing cover page", 10, 10, 2025)
     out.append(("A genuinely static count keeps the wording written for it",
                 "barely moved" in _st and "stops at" not in _st, _st[:60] + "…"))
     # 10b. The guard compares one year against itself.
@@ -4901,13 +4904,13 @@ def self_test() -> list[tuple[str, bool, str]]:
 
     out.append(("The treasury note never claims 'far above' about a count that is below",
                 "far above" not in share_route_note("treasury", 791.8e6, 816.0e6,
-                                                    "the 10-K cover page", 10, 10, 2025),
+                                                    "the filing cover page", 10, 10, 2025),
                 "791.8M against 816.0M is not the treasury pattern"))
     out.append(("...and still says it when the count really is above",
                 "far above" in share_route_note("treasury", 1613.0e6, 816.0e6,
-                                                "the 10-K cover page", 10, 10, 2025),
+                                                "the filing cover page", 10, 10, 2025),
                 "1,613.0M against 816.0M"))
-    _tr25 = share_route_note("treasury", 64.5e6, 32.6e6, "the 10-K cover page", 10, 10, 2025,
+    _tr25 = share_route_note("treasury", 64.5e6, 32.6e6, "the filing cover page", 10, 10, 2025,
                              factor=25.0)
     out.append(("Booking's treasury note prints post-split counts, not 64.5M vs 32.6M",
                 "1,612.5M" in _tr25 and "815.0M" in _tr25 and "64.5M" not in _tr25,
@@ -6638,7 +6641,7 @@ if years and ticker and st.session_state.get("nu_tk") == ticker:
     q3.metric("Per-share level after 10y",
               f"{pooled.retention(10):.1%}"
               if pooled.dE_defined and 0 < pooled.dE <= 1.25 else "—",
-              "vs no dilution, if this ΔE pace holds")
+              "vs no dilution, if ΔE persists")
 
     if pooled.sum_OE < 0 and pooled.dE_defined and price > 0:
         st.info(
