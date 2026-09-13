@@ -6,7 +6,7 @@ of stock valuation tools that measures the true cost of stock-based compensation
 spent on buybacks to offset employee grants, plus the market value of shares actually
 delivered — and prices what survives at a 15% required return.
 
-The app lives at **[investor-toolkit.streamlit.app](https://investor-toolkit.streamlit.app/Tragic_Algebra_Analyzer)**.
+The app lives at **[investor-toolkit.streamlit.app](https://investor-toolkit.streamlit.app/)**.
 It began as a single Tragic Algebra page and this repository keeps that name —
 `tragic-algebra-analyzer` — because links to the code are pinned in public posts; the app
 outgrew the name, and the address now says what it is.
