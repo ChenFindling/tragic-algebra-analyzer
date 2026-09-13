@@ -5612,12 +5612,49 @@ def self_test() -> list[tuple[str, bool, str]]:
     out.append(("Sweep: ΔE-ceiling refusal names the menu page",
                 _route_ok(gate_dE(_swhi)[0]), gate_dE(_swhi)[0][:70]))
 
+    # ── Job 5b on this page (toolkit pass, 12 Sep 2026): the footer
+    #    survives every refusal. Source-level: every st.stop() must be
+    #    immediately preceded (blank lines aside) by a _page_footer() call,
+    #    so the glossary, the checks and the disclaimer render on refusals.
+    from pathlib import Path as _P
+    _src = [l.strip() for l in _P(__file__).read_text(encoding="utf-8").split("\n")]
+    _stops = [i for i, l in enumerate(_src) if l == "st.stop()"]
+    def _footer_above(i):
+        for j in range(i - 1, -1, -1):
+            if _src[j]:
+                return _src[j] == "_page_footer()"
+        return False
+    _bad = [i + 1 for i in _stops if not _footer_above(i)]
+    out.append(("Footer survives refusal: every st.stop() is preceded by _page_footer()",
+                bool(_stops) and not _bad,
+                f"{len(_stops)} stop sites" + (f"; missing at source lines {_bad}" if _bad else "")))
+
     return out
 
 
 # ══════════════════════════════════════════════════════════════════════
 #  UI
 # ══════════════════════════════════════════════════════════════════════
+
+
+# Defined above the UI so the refusal paths can render it before st.stop().
+def _page_footer() -> None:
+    """The self-test results and the disclaimer. A refused ticker
+    st.stop()s before the bottom of the script, and these used to die with
+    it (Chen, GRAB, 5 Sep 2026, on the Tragic Algebra Analyzer) — the
+    reader on a refused page is exactly the reader who may want to see the
+    checks. Called before every stop and once at the bottom. Ported in the
+    toolkit pass, 12 Sep 2026."""
+    with st.expander("Verify the engine", expanded=False):
+        _res = self_test()
+        _sev, _txt = test_summary(_res)
+        getattr(st, _sev)(_txt)
+        for _name, _ok, _got in _res:
+            st.write(("✅ " if _ok else "❌ ") + _name + (f" — {_got}" if _got else ""))
+
+    st.caption("Research aid, not financial advice. Outputs depend on estimates you supply. The "
+               "stock-comp adjustment is Burry's Tragic Algebra; the class gate, tangible-book pricing "
+               "and every refusal are this app's own design.")
 
 st.set_page_config(page_title="Financials Checker — banks, insurers, REITs at 15%",
                    page_icon="🏦", layout="centered", initial_sidebar_state="collapsed")
@@ -5687,10 +5724,12 @@ if years and ticker and st.session_state.get("fin_tk") == ticker:
     elif cls == "ordinary":
         st.info(f"**Not this page — an ordinary business.** {_desc}{cls_reason}")
         _notes_and_tags()
+        _page_footer()
         st.stop()
     else:
         st.error(f"**Refused.** {_desc}{cls_reason}")
         _notes_and_tags()
+        _page_footer()
         st.stop()
 
     rows = build_fin_years(years, pre["fin"], pre["fin_bal"], pre["shares_by_fy"],
@@ -5864,6 +5903,7 @@ if years and ticker and st.session_state.get("fin_tk") == ticker:
             st.error(r)
         st.caption("The tables above stand; nothing below is printed.")
         _notes_and_tags()
+        _page_footer()
         st.stop()
     st.success("**Priced.** " + ("Share count, FFO, the dividend and the history it needs were all read."
                                 if cls == "reit" else
@@ -6026,13 +6066,4 @@ if years and ticker and st.session_state.get("fin_tk") == ticker:
 
     _notes_and_tags()
 
-with st.expander("Verify the engine", expanded=False):
-    _res = self_test()
-    _sev, _txt = test_summary(_res)
-    getattr(st, _sev)(_txt)
-    for _name, _ok, _got in _res:
-        st.write(("✅ " if _ok else "❌ ") + _name + (f" — {_got}" if _got else ""))
-
-st.caption("Research aid, not financial advice. Outputs depend on estimates you supply. The "
-           "stock-comp adjustment is Burry's Tragic Algebra; the class gate, tangible-book pricing "
-           "and every refusal are this app's own design.")
+_page_footer()
