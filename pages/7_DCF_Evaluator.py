@@ -4940,6 +4940,23 @@ def self_test() -> list[tuple[str, bool, str]]:
     out.append(("Sweep: the FCF cap note names the menu page",
                 _route_ok(fcf_cap_note(0.50, 0.25)), fcf_cap_note(0.50, 0.25)[:70]))
 
+    # ── Job 5b on this page (toolkit pass, 12 Sep 2026): the footer
+    #    survives every refusal. Source-level: every st.stop() must be
+    #    immediately preceded (blank lines aside) by a _page_footer() call,
+    #    so the glossary, the checks and the disclaimer render on refusals.
+    from pathlib import Path as _P
+    _src = [l.strip() for l in _P(__file__).read_text(encoding="utf-8").split("\n")]
+    _stops = [i for i, l in enumerate(_src) if l == "st.stop()"]
+    def _footer_above(i):
+        for j in range(i - 1, -1, -1):
+            if _src[j]:
+                return _src[j] == "_page_footer()"
+        return False
+    _bad = [i + 1 for i in _stops if not _footer_above(i)]
+    out.append(("Footer survives refusal: every st.stop() is preceded by _page_footer()",
+                bool(_stops) and not _bad,
+                f"{len(_stops)} stop sites" + (f"; missing at source lines {_bad}" if _bad else "")))
+
     return out
 
 
@@ -5082,6 +5099,7 @@ if years and ticker and st.session_state.get("dcf_tk") == ticker:
                 getattr(st, kind_)(msg)
             st.write("**What was read from the filings** — every tag, found or missing")
             st.dataframe(pd.DataFrame(pre.get("tags", [])), width='stretch', hide_index=True)
+        _page_footer()
         st.stop()
 
     # ══ the history — always printed before any further refusal ══════
