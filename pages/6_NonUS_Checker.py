@@ -316,11 +316,18 @@ class Pooled:
         return self.sum_OE < 0
 
     def retention(self, t: int) -> float:
-        """Share of reported value growth that survives to year t. dE compounds."""
+        """dE ** t. Under the assumption that the dilution pace producing this
+        dE persists, this approximates the per-share level after t years
+        relative to an undiluted path. dE itself is a level ratio (OE/N),
+        not an annual retention factor — constant dE with N growing at g
+        grows OE at g. The 11 Sep 2026 Reddit concession; the metric and
+        banner wording carry the condition out loud."""
         return self.dE ** t
 
     def true_cagr(self, gaap_growth: float) -> float:
-        """Break-even dE is 1/(1+g). Below it, reported growth never reaches you."""
+        """(1 + g) * dE - 1: per-share growth IF the dilution pace producing
+        this dE persists — the conditional form (11 Sep 2026 concession).
+        The 1/(1+g) break-even holds only under that assumption."""
         return self.dE * (1.0 + gaap_growth) - 1.0
 
 
@@ -5864,6 +5871,26 @@ def self_test() -> list[tuple[str, bool, str]]:
                 bool(_stops) and not _bad,
                 f"{len(_stops)} stop sites" + (f"; missing at source lines {_bad}" if _bad else "")))
 
+    # ── the 11 Sep 2026 concession (job 5 of the toolkit pass): the
+    #    compounding language is conditional. dE is a level ratio (OE/N),
+    #    not an annual retention factor; dE**t and the 87% break-even hold
+    #    only if the dilution pace persists, and every surface now says so.
+    #    Old absolutes are asserted ABSENT via concatenation so this check
+    #    never matches itself; UI wording is asserted only where UI exists,
+    #    so the check also holds on the Baselines app's engine copy.
+    from pathlib import Path as _P5
+    _s5 = _P5(__file__).read_text(encoding="utf-8")
+    out.append(("Concession wording: conditional everywhere, old absolutes gone",
+                ("Share of reported value growth" + " that survives") not in _s5
+                and ("Value kept" + " after 10y") not in _s5
+                and ("Below the 87%" + " break-even.**") not in _s5
+                and ("Above the 87%" + " break-even**") not in _s5
+                and "dilution pace producing this" in _s5
+                and (("q3.metric(" not in _s5)
+                     or ("Per-share level after 10y" in _s5
+                         and "If the dilution pace behind it persists" in _s5)),
+                "own-source scan"))
+
     return out
 
 
@@ -6608,10 +6635,10 @@ if years and ticker and st.session_state.get("nu_tk") == ticker:
                   f"last 3y: {recent.dE:.1%}" if recent.dE_defined else "last 3y: n/a")
     q2.metric("True SBC cost", f"{_cs}{pooled.sum_omega:,.0f}M",
               f"GAAP says {_cs}{pooled.sum_G:,.0f}M")
-    q3.metric("Value kept after 10y",
+    q3.metric("Per-share level after 10y",
               f"{pooled.retention(10):.1%}"
               if pooled.dE_defined and 0 < pooled.dE <= 1.25 else "—",
-              "of reported growth")
+              "vs no dilution, if this ΔE pace holds")
 
     if pooled.sum_OE < 0 and pooled.dE_defined and price > 0:
         st.info(
@@ -6643,10 +6670,14 @@ if years and ticker and st.session_state.get("nu_tk") == ticker:
         st.error("**Tragic tier.** Stock compensation cost more than the business earned over "
                  "this period. Shareholders were net funders of employee pay.")
     elif pooled.dE < 1 / 1.15:
-        st.warning(f"**Below the 87% break-even.** Even 15% reported growth compounds value per "
-                   f"share at just {pooled.true_cagr(0.15):+.2%} a year.")
+        st.warning(f"**About {pooled.dE * 100:.0f}¢ of each reported dollar reaches shareholders "
+                   f"at this ΔE.** If the dilution pace behind it persists, 15% reported growth "
+                   f"would compound per-share value at {pooled.true_cagr(0.15):+.2%} a year — "
+                   "below the conditional break-even of ΔE = 1/1.15 ≈ 87%.")
     else:
-        st.success("**Above the 87% break-even** — reported growth actually reaches you.")
+        st.success(f"**About {pooled.dE * 100:.0f}¢ of each reported dollar reaches shareholders "
+                   f"at this ΔE.** If the dilution pace behind it persists, 15% reported growth "
+                   f"would still compound per-share value at {pooled.true_cagr(0.15):+.2%} a year.")
 
     # ══ stress ═══════════════════════════════════════════════════════
     st.markdown("---")
