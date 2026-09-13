@@ -6396,7 +6396,7 @@ if years and ticker and st.session_state.get("hb_tk") == ticker:
                 "which understates the return for anything growing its asset base quickly — the "
                 "conservative direction, and the one Burry's formula reads literally.")
 
-    with st.expander("Feed this into the IV15 tool"):
+    with st.expander("Feed this into the Tragic Algebra Analyzer"):
         st.caption(
             "The Tragic Algebra Analyzer asks for a growth rate and has no way to sanity-check "
             "it. This is that ceiling, computed.")
