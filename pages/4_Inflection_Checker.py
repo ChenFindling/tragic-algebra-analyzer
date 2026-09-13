@@ -286,11 +286,18 @@ class Pooled:
         return self.sum_OE < 0
 
     def retention(self, t: int) -> float:
-        """Share of reported value growth that survives to year t. dE compounds."""
+        """dE ** t. Under the assumption that the dilution pace producing this
+        dE persists, this approximates the per-share level after t years
+        relative to an undiluted path. dE itself is a level ratio (OE/N),
+        not an annual retention factor — constant dE with N growing at g
+        grows OE at g. The 11 Sep 2026 Reddit concession; the metric and
+        banner wording carry the condition out loud."""
         return self.dE ** t
 
     def true_cagr(self, gaap_growth: float) -> float:
-        """Break-even dE is 1/(1+g). Below it, reported growth never reaches you."""
+        """(1 + g) * dE - 1: per-share growth IF the dilution pace producing
+        this dE persists — the conditional form (11 Sep 2026 concession).
+        The 1/(1+g) break-even holds only under that assumption."""
         return self.dE * (1.0 + gaap_growth) - 1.0
 
 
@@ -1022,7 +1029,8 @@ def stale_swing_note(net_cash: float, contributions: list[tuple[str, float]]) ->
     return (f" Net cash reads {net_cash:,.0f}M with "
             + ", ".join(f"{n.lower()} at {abs(v):,.0f}M" for n, v in live)
             + f" carried forward; treated as zero instead it would read {alt:,.0f}M, a swing of "
-              f"{abs(alt - net_cash):,.0f}M. Which of the two is right depends on whether the "
+            + (f"{abs(alt - net_cash):,.1f}M" if abs(alt - net_cash) < 1 else f"{abs(alt - net_cash):,.0f}M")
+            + ". Which of the two is right depends on whether the "
               "balance moved to another tag or genuinely ended, so the tag name is the fix and "
               "neither figure is guessed at here.")
 
@@ -2660,7 +2668,7 @@ def load(ticker: str, n_years: int = 10):
                 "no payroll produces. That is a "
                 + ("listing: preferred converts to common and new stock is sold."
                    if first_priced else
-                   "capital event, most often an all-stock acquisition.")
+                   "capital event — an all-stock acquisition or an equity raise.")
                 + " Counting it as compensation would swamp every other year in the pool. The "
                   "pooled figures now cover fewer years, so read them with that in mind.")
 
@@ -2804,7 +2812,9 @@ def load(ticker: str, n_years: int = 10):
         notes.append(
             "No repurchase figure was found for FY"
             + ", FY".join(str(f) for f in _gap)
-            + ", yet the share count fell by more than 1% in each. Those years are almost "
+            + (", yet the share count fell by more than 1% in each." if len(_gap) > 1 else
+               ", yet the share count fell by more than 1% that year.")
+            + " Those years are almost "
               "certainly buybacks tagged under an element this reader does not know. Two "
               "consequences: owners' earnings for those years are a ceiling, since the market "
               "value of shares delivered floors at zero without a repurchase figure; and cash "
@@ -2902,10 +2912,9 @@ def load(ticker: str, n_years: int = 10):
     if is_financial(sic):
         notes.append(f"{sic_desc or 'Financial company'} (SIC {sic}). Investments here back "
                      "policyholder or depositor liabilities rather than belonging to "
-                     "shareholders, so net cash has been set to zero. The Tragic Algebra still "
-                     "works, but treat the valuation as indicative — this framework was built "
-                     "for software, and insurers, banks and REITs need book-value and "
-                     "combined-ratio thinking it does not contain.")
+                     "shareholders, so net cash has been set to zero. This page does not price "
+                     "financials; the Financials Checker prices banks, insurers and REITs on "
+                     "tangible book, returns and payout.")
         cash_total = debt_total = net_cash = 0.0
 
     # First in the list, because it governs how every other note reads.
@@ -3508,9 +3517,10 @@ def financial_sentence(sic_desc: str | None, sic) -> str:
     return (f"{sic_desc or 'Financial company'} (SIC {sic}). The Tragic Algebra Analyzer treats SIC 6000–6799 — "
             "banks, insurers, lenders, brokers, REITs — as financial: their investments back "
             "customer liabilities rather than belonging to shareholders, and for many of them "
-            "the revenue concept this page's trend table is built on is not their revenue. That "
-            "page values them indicatively with net cash set to zero; this page does not price "
-            "them at all, and the table is not shown.")
+            "the revenue concept this page's trend table is built on is not their revenue. The "
+            "Financials Checker prices banks, insurers and REITs; exchanges and the rest are "
+            "priced by no page in this kit yet. This page does not price them at all, and the "
+            "table is not shown.")
 
 
 def shares_gate(shares: float) -> str:
@@ -4811,9 +4821,11 @@ def self_test() -> list[tuple[str, bool, str]]:
     out.append(("IFRS names for the operating lines are in the reader (Grab reports in USD under IFRS)",
                 CONCEPTS["OI"][1] == ["ProfitLossFromOperatingActivities"] and "CostOfSales" in CONCEPTS["COGS"][1]
                 and CONCEPTS["CFO"][1] and CONCEPTS["CAPEX"][1], ""))
-    out.append(("Financial sentence names lenders and brokers too, and what tool 1 does instead",
+    out.append(("Financial sentence names lenders and brokers too, and where financials go instead",
                 "lenders, brokers" in financial_sentence("Real Estate Agents", "6531")
-                and "indicatively" in financial_sentence(None, "6141") and "insurer's revenue" not in financial_sentence(None, "6141"), ""))
+                and "Financials Checker" in financial_sentence(None, "6141")
+                and "indicatively" not in financial_sentence(None, "6141")
+                and "insurer's revenue" not in financial_sentence(None, "6141"), ""))
     out.append(("Shares gate: a zero count refuses before anything per share is printed",
                 shares_gate(0.0).startswith("No share count was read") and shares_gate(155.3) == "", ""))
     _gx = operating_pool([Year(fy=2025, N=447, G=50, dS=8, price=40)],
@@ -5500,8 +5512,9 @@ def self_test() -> list[tuple[str, bool, str]]:
              (2022, 851.0), (2023, 1037.0), (2024, 1022.0), (2025, 150.0)]
     out.append(("Sweep: SHAPE_STALE route sentence names the menu page",
                 _route_ok(op_shape(_swcx)[1]), op_shape(_swcx)[1][-70:]))
-    out.append(("Sweep: financial sentence names the menu page, first mention only",
-                _route_ok(financial_sentence("Real Estate Agents", "6531")),
+    out.append(("Sweep: financial sentence names the menu page and routes to the Financials Checker",
+                _route_ok(financial_sentence("Real Estate Agents", "6531"))
+                and "Financials Checker" in financial_sentence("Real Estate Agents", "6531"),
                 financial_sentence("Real Estate Agents", "6531")[:70]))
     out.append(("Sweep: ΔE-ceiling gate sentence names the menu page",
                 _route_ok(dE_gate(1.30, None, [2023, 2024, 2025])[0]),
