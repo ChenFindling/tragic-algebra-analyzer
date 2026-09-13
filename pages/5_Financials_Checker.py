@@ -291,11 +291,18 @@ class Pooled:
         return self.sum_OE < 0
 
     def retention(self, t: int) -> float:
-        """Share of reported value growth that survives to year t. dE compounds."""
+        """dE ** t. Under the assumption that the dilution pace producing this
+        dE persists, this approximates the per-share level after t years
+        relative to an undiluted path. dE itself is a level ratio (OE/N),
+        not an annual retention factor — constant dE with N growing at g
+        grows OE at g. The 11 Sep 2026 Reddit concession; the metric and
+        banner wording carry the condition out loud."""
         return self.dE ** t
 
     def true_cagr(self, gaap_growth: float) -> float:
-        """Break-even dE is 1/(1+g). Below it, reported growth never reaches you."""
+        """(1 + g) * dE - 1: per-share growth IF the dilution pace producing
+        this dE persists — the conditional form (11 Sep 2026 concession).
+        The 1/(1+g) break-even holds only under that assumption."""
         return self.dE * (1.0 + gaap_growth) - 1.0
 
 
@@ -1049,7 +1056,8 @@ def stale_swing_note(net_cash: float, contributions: list[tuple[str, float]]) ->
     return (f" Net cash reads {net_cash:,.0f}M with "
             + ", ".join(f"{n.lower()} at {abs(v):,.0f}M" for n, v in live)
             + f" carried forward; treated as zero instead it would read {alt:,.0f}M, a swing of "
-              f"{abs(alt - net_cash):,.0f}M. Which of the two is right depends on whether the "
+            + (f"{abs(alt - net_cash):,.1f}M" if abs(alt - net_cash) < 1 else f"{abs(alt - net_cash):,.0f}M")
+            + ". Which of the two is right depends on whether the "
               "balance moved to another tag or genuinely ended, so the tag name is the fix and "
               "neither figure is guessed at here.")
 
@@ -2693,7 +2701,7 @@ def load(ticker: str, n_years: int = 10):
                 "no payroll produces. That is a "
                 + ("listing: preferred converts to common and new stock is sold."
                    if first_priced else
-                   "capital event, most often an all-stock acquisition.")
+                   "capital event — an all-stock acquisition or an equity raise.")
                 + " Counting it as compensation would swamp every other year in the pool. The "
                   "pooled figures now cover fewer years, so read them with that in mind.")
 
@@ -2837,7 +2845,9 @@ def load(ticker: str, n_years: int = 10):
         notes.append(
             "No repurchase figure was found for FY"
             + ", FY".join(str(f) for f in _gap)
-            + ", yet the share count fell by more than 1% in each. Those years are almost "
+            + (", yet the share count fell by more than 1% in each." if len(_gap) > 1 else
+               ", yet the share count fell by more than 1% that year.")
+            + " Those years are almost "
               "certainly buybacks tagged under an element this reader does not know. Two "
               "consequences: owners' earnings for those years are a ceiling, since the market "
               "value of shares delivered floors at zero without a repurchase figure; and cash "
@@ -5629,6 +5639,15 @@ def self_test() -> list[tuple[str, bool, str]]:
                 bool(_stops) and not _bad,
                 f"{len(_stops)} stop sites" + (f"; missing at source lines {_bad}" if _bad else "")))
 
+    # ── ride #8 (toolkit pass, 12 Sep 2026): the ordinary-class refusal
+    #    names its destination — a refusal that strands the user is the
+    #    click-through's third catch.
+    from pathlib import Path as _P8
+    out.append(("Ordinary-class refusal routes to the Tragic Algebra Analyzer",
+                'Use the Tragic Algebra Analyzer page."' in
+                _P8(__file__).read_text(encoding="utf-8"),
+                "own-source scan"))
+
     return out
 
 
@@ -5722,7 +5741,8 @@ if years and ticker and st.session_state.get("fin_tk") == ticker:
     if cls in CLASS_NAME:
         st.success(f"**{CLASS_NAME[cls]}.** {_desc}{cls_reason}")
     elif cls == "ordinary":
-        st.info(f"**Not this page — an ordinary business.** {_desc}{cls_reason}")
+        st.info(f"**Not this page — an ordinary business.** {_desc}{cls_reason} "
+                "Use the Tragic Algebra Analyzer page.")
         _notes_and_tags()
         _page_footer()
         st.stop()
