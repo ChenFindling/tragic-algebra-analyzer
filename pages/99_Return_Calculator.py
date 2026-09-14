@@ -105,6 +105,18 @@ def periods(years: float, per: str) -> float:
     return years * 12 if per == PER_MONTH else years
 
 
+def combined_rate(rate: float, dividend_yield: float) -> float:
+    """Price growth and a reinvested dividend yield compound together
+    multiplicatively: (1+g)(1+y)-1. Chen, 9 Sep 2026: 7% growth with a 3%
+    yield reinvested is 10.21%/yr, not 10% — over 30 years that fifth of a
+    point is ~6% more money, which is why this is a labelled box and not
+    a mental adjustment. Zero yield is an exact no-op by design — the box's
+    default must not perturb a stored rate by a floating-point bit."""
+    if dividend_yield == 0.0:
+        return rate
+    return (1.0 + rate) * (1.0 + dividend_yield) - 1.0
+
+
 def period_rate(rate: float, per: str) -> float:
     """The rate one contribution period earns. Monthly is the rate that
     compounds twelve times to the yearly return — never r/12."""
@@ -593,6 +605,18 @@ def self_test() -> list[tuple[str, bool, str]]:
                 and default_name(FORM_CONTRIB, 0, 0.07, 30, 0, 1_000_000, PER_MONTH)
                 == "0 → 1,000,000 in 30y @ 7% per mo",
                 default_name(FORM_CONTRIB, 0, 0.07, 30, 0, 1_000_000, PER_MONTH)))
+    # 16. The dividend-reinvestment box (Chen, 9 Sep 2026): multiplicative,
+    #     exact at the known answer, a no-op at zero, and invertible.
+    out.append(("7% growth with 3% reinvested yield compounds at 10.21%",
+                abs(combined_rate(0.07, 0.03) - 0.1021) < 1e-12,
+                f"{combined_rate(0.07, 0.03):.4%}"))
+    out.append(("...zero yield changes nothing",
+                combined_rate(0.0842, 0.0) == 0.0842 and combined_rate(0.0, 0.0) == 0.0,
+                "identity at y=0"))
+    out.append(("...and the decomposition inverts it exactly",
+                abs((1.0 + combined_rate(0.07, 0.03)) / 1.03 - 1.0 - 0.07) < 1e-12,
+                "price-only growth recovered from the combined figure"))
+
     return out
 
 
@@ -621,7 +645,7 @@ st.caption("Compound returns: ending amount, required return, years to target, "
 # write back to on change. Load writes `vals`. Nothing the page needs is
 # ever stored only inside a hidden widget.
 _DEFAULTS = {"start": 10_000.0, "rate": 10.0, "years": 10,
-             "contrib": 0.0, "per": PER_YEAR, "target": 1_000_000.0}
+             "contrib": 0.0, "dy": 0.0, "per": PER_YEAR, "target": 1_000_000.0}
 st.session_state.setdefault("vals", dict(_DEFAULTS))
 st.session_state.setdefault("form", FORM_FORWARD)
 st.session_state.setdefault("gen", 0)
@@ -697,16 +721,27 @@ with _k2:
                    index=[PER_YEAR, PER_MONTH].index(vals["per"]),
                    horizontal=True, key=_wkey("per"), on_change=_keep, args=("per", _wkey("per")))
 
+dy_pct = _num("Dividend yield, reinvested % (optional)", "dy", 0.5, format="%.2f",
+              min_value=0.0, max_value=25.0,
+              help="Yield on today's price, dividends reinvested. It compounds with the "
+                   "return multiplicatively: (1+return)×(1+yield)−1 — 7% growth with a 3% "
+                   "yield is 10.21%/yr, not 10%. Saved scenario rows store the combined "
+                   "figure in Return %; solving for the required return shows the "
+                   "price-only growth needed at this yield.")
+
 _loaded = st.session_state.pop("loaded_name", None)
 if _loaded:
     st.info(f"Loaded **{_loaded}** into the inputs.")
 
 # ── compute, or refuse ───────────────────────────────────────────────
 row = None
+_eff = None
+if form in (FORM_FORWARD, FORM_YEARS, FORM_CONTRIB):
+    _eff = combined_rate(rate_pct / 100.0, dy_pct / 100.0)
 if form == FORM_FORWARD:
-    refusal = check_forward(start, rate_pct / 100.0, int(years), contrib)
+    refusal = check_forward(start, _eff, int(years), contrib)
     if not refusal:
-        row = forward_row("", start, rate_pct / 100.0, int(years), contrib, per)
+        row = forward_row("", start, _eff, int(years), contrib, per)
         _m = st.columns(4)
         _m[0].metric("Ending amount", f"{row['Ending']:,.2f}")
         _m[1].metric("Put in", f"{row['Put in']:,.2f}")
@@ -721,10 +756,10 @@ elif form == FORM_RATE:
         _m[1].metric("Put in", f"{row['Put in']:,.2f}")
         _m[2].metric("Multiple", f"{row['Multiple']:,.2f}×")
 elif form == FORM_YEARS:
-    refusal = check_years(start, rate_pct / 100.0, target, contrib, per)
+    refusal = check_years(start, _eff, target, contrib, per)
     if not refusal:
-        row = years_row("", start, rate_pct / 100.0, target, contrib, per)
-        _whole, _bal = reached_after(start, rate_pct / 100.0, target, contrib, per)
+        row = years_row("", start, _eff, target, contrib, per)
+        _whole, _bal = reached_after(start, _eff, target, contrib, per)
         _m = st.columns(3)
         _m[0].metric("Years needed", f"{row['Years']:.2f}")
         _m[1].metric("Reached after", format_periods(_whole, per, short=True))
@@ -733,14 +768,24 @@ elif form == FORM_YEARS:
                    f"{'month' if per == PER_MONTH else 'year'} at or above the target — "
                    f"with a balance of {_bal:,.2f}.")
 else:
-    refusal = check_contrib(start, rate_pct / 100.0, int(years), target, per)
+    refusal = check_contrib(start, _eff, int(years), target, per)
     if not refusal:
-        row = contrib_row("", start, rate_pct / 100.0, int(years), target, per)
+        row = contrib_row("", start, _eff, int(years), target, per)
         _m = st.columns(3)
         _m[0].metric("Required contribution",
                      f"{row['Contribution']:,.2f} / {'mo' if per == PER_MONTH else 'yr'}")
         _m[1].metric("Put in", f"{row['Put in']:,.2f}")
         _m[2].metric("Multiple", f"{row['Multiple']:,.2f}×")
+if not refusal and dy_pct > 0:
+    if form == FORM_RATE and row is not None:
+        _g_only = (1.0 + row["Return %"] / 100.0) / (1.0 + dy_pct / 100.0) - 1.0
+        st.caption(f"With {dy_pct:.2f}% reinvested yield, the price-only growth needed is "
+                   f"{_g_only * 100.0:.2f}%/yr — the required return above is the combined "
+                   "figure.")
+    elif _eff is not None:
+        st.caption(f"Effective return with dividends reinvested: {_eff * 100.0:.2f}%/yr = "
+                   f"(1 + {rate_pct:.2f}%) × (1 + {dy_pct:.2f}%) − 1. The scenario row "
+                   "saves this combined figure in Return %.")
 if refusal:
     st.error(refusal)
 
@@ -755,6 +800,9 @@ with st.expander("Assumptions used"):
         _lines.append(f"target              {target:,.2f}")
     if form != FORM_CONTRIB:
         _lines.append(f"contribution        {contrib:,.2f} per {'month' if per == PER_MONTH else 'year'}")
+    if dy_pct > 0:
+        _lines.append(f"dividend yield      {dy_pct:.2f}% reinvested — combined with the return "
+                      "multiplicatively; Return % in saved rows is the combined figure")
     _lines.append(f"contribution timing paid at the END of each {'month' if per == PER_MONTH else 'year'}")
     if per == PER_MONTH and form != FORM_RATE:
         _lines.append("monthly rate        the rate that compounds to the yearly return, "
