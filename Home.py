@@ -3,7 +3,7 @@ Home.py — entrypoint for the Investor Toolkit (retitled in place, 12 Sep 2026;
 the filename stays Home.py because the Cloud main-file setting pins it).
 
 Streamlit turns every file in pages/ into a nav item automatically, ordered by
-the numeric prefix. THE MENU MAP IS FROZEN (toolkit pass, 12 Sep 2026):
+the numeric prefix. THE MENU MAP IS FROZEN (toolkit pass, 12 Sep 2026; 9 added 13 Sep 2026):
 
     1   Tragic Algebra Analyzer
     2   Hundred Bagger Checker      (renders "100-Bagger Checker" on the page)
@@ -11,7 +11,8 @@ the numeric prefix. THE MENU MAP IS FROZEN (toolkit pass, 12 Sep 2026):
     5   Financials Checker
     6   NonUS Checker               (renders "Non-US Checker" on the page)
     7   DCF Evaluator
-    8   (reserved: the watchlist page, next session)
+    8   (reserved: the watchlist page)
+    9   Expectations                (added 13 Sep 2026)
     99  Return Calculator           (structurally last for the life of the kit)
 
 3 is retired and is never reused; 8 is reserved. Never reuse a number. The
@@ -36,6 +37,7 @@ MENU: list[tuple[str, str, str]] = [
     ("pages/5_Financials_Checker.py",      "🏦", "Financials Checker"),
     ("pages/6_NonUS_Checker.py",           "🌍", "Non-US Checker"),
     ("pages/7_DCF_Evaluator.py",           "🧮", "DCF Evaluator"),
+    ("pages/9_Expectations.py",            "🔭", "Expectations"),
     ("pages/99_Return_Calculator.py",      "📈", "Return Calculator"),
 ]
 
@@ -75,6 +77,15 @@ PAGE_BLURBS: dict[str, str] = {
         "cash flow, so the cost that the usual \"add stock comp back\" convention hides "
         "is visible in dollars per share."
     ),
+    "Expectations": (
+        "The Tragic Algebra Analyzer's question, run backwards. This page never says what "
+        "a company is worth: it solves what today's price implies — the owners'-earnings "
+        "growth that makes IV15 equal the price at your tier and required return, and the "
+        "year-15 exit the price implies at the seeded growth — then puts that implied "
+        "path against the company's own best filed stretches and a pinned base-rate "
+        "table of how many names this kit reads ever sustained such rates. Rappaport and "
+        "Mauboussin's *Expectations Investing*, on that page's engine inverted."
+    ),
     "Return Calculator": (
         "A plain compound-return calculator: ending amount, required return, years to "
         "target, or required contribution, with saved scenarios. Nothing here is wired "
@@ -83,7 +94,7 @@ PAGE_BLURBS: dict[str, str] = {
 }
 
 # ══════════════════════════════════════════════════════════════════════
-#  SELF-TEST — 7 checks, one per page: the frozen path exists on disk.
+#  SELF-TEST — 8 checks, one per page: the frozen path exists on disk.
 #  The numeric prefix in each path IS the frozen map, so these checks pin
 #  the renumbering as well as the menu's existence claims.
 # ══════════════════════════════════════════════════════════════════════
@@ -117,7 +128,7 @@ st.set_page_config(
     page_title="Investor Toolkit — Burry owners' earnings, IV15 and DCF from SEC filings",
     page_icon="🧰",
     layout="centered",
-    # Expanded on Home: the nav IS the toolkit now, seven pages deep, and the
+    # Expanded on Home: the nav IS the toolkit now, eight pages deep, and the
     # menu is the fastest answer to "what does this do". Pages keep their own
     # collapsed default.
     initial_sidebar_state="expanded",
@@ -170,7 +181,7 @@ st.divider()
 
 with st.expander("Verify this page"):
     st.markdown(
-        "Seven checks, one per menu entry: the page each link names exists in the "
+        "Eight checks, one per menu entry: the page each link names exists in the "
         "repository at exactly the path the frozen menu map states. If the map and "
         "the repo ever disagree, this goes red before any user finds a dead link."
     )
