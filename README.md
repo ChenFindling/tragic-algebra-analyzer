@@ -1,12 +1,12 @@
 # 🧰 Investor Toolkit
 
 **Michael Burry's Tragic Algebra and IV15 owners' earnings framework, computed from audited
-SEC EDGAR filings — grown into a toolkit of seven pages, one page per question.** A free set
+SEC EDGAR filings — grown into a toolkit of eight pages, one page per question.** A free set
 of stock valuation tools that measures the true cost of stock-based compensation — the cash
 spent on buybacks to offset employee grants, plus the market value of shares actually
 delivered — and prices what survives at a 15% required return.
 
-The app lives at **[investor-toolkit.streamlit.app](https://investor-toolkit.streamlit.app/)**.
+The app lives at **[investor-toolkit.streamlit.app](https://investor-toolkit.streamlit.app/Tragic_Algebra_Analyzer)**.
 It began as a single Tragic Algebra page and this repository keeps that name —
 `tragic-algebra-analyzer` — because links to the code are pinned in public posts; the app
 outgrew the name, and the address now says what it is.
@@ -45,6 +45,7 @@ read or failed to find.
 | **Financials Checker** | Banks, insurers and REITs, which every other page refuses |
 | **Non-US Checker** | The same algebra for IFRS and non-dollar filers, in the filing currency |
 | **DCF Evaluator** | The standard two-stage DCF, with its stock-comp blind spot priced beside it |
+| **Expectations** | What today's price implies — the growth path and the year-15 exit it takes to deliver the required return |
 | **Return Calculator** | Plain compound-return arithmetic, deliberately last in the menu |
 
 ---
@@ -290,6 +291,47 @@ the filings' own XBRL instances, the verified registry reads them there; and
 umbrella-partnership C-corps (Carvana, Ryan Specialty) get their full history measured and
 their per-share valuation refused, with the reason stated, until the count basis can be
 priced honestly.
+
+## 🔭 Expectations
+
+A reverse DCF, after Alfred Rappaport and Michael Mauboussin's *Expectations Investing*.
+The page never says what a company is worth. It solves what today's price implies: the
+owners'-earnings growth rate at which the Tragic Algebra Analyzer's IV15 equals the price
+at the chosen tier and required return (default 15%, the kit's standard; the box opens
+down to 8% for the market-cost-of-capital reading), and — holding growth at the revenue
+seed — the year-15 exit multiple the price implies when the cash flows are bought and the
+business sold in year 15. Each solve is engine arithmetic run backwards on the same
+verbatim copy of the valuation code every page carries, and each reproduces the forward
+identity live: IV15 at the solved rate must equal the price to the cent on the page, or
+the page refuses its own answer.
+
+The implied rate is stated as the path the tier actually shapes — the stage-1 rate, the
+fade, the exit — together with the demand it places on the first ten years and its
+15-year flat equivalent, because a stage-1 rate quoted as if it ran fifteen years flat
+would overstate the ask. That path is then put against two panels of filed evidence: the
+company's own best five-year stretch and full-window rate, on owners' earnings and on
+revenue; and a base-rate table computed from the 26 names the kit already reads — the
+Burry master set plus the internal regression names, with KNSL and GRAB dropped by the
+kit's own doctrine and the note saying so. The table is pinned data with its as-of date,
+recomputed by session and never fetched live. "Sustained g for k years" means the best
+k-year endpoint CAGR anywhere in a sixteen-year read, endpoints positive — deliberately
+the generous reading, and a best stretch can start at a trough, so every figure carries
+its window. Coverage is honest per column: revenue history under the current tags
+reaches about ten years for many filers, so the ten-year revenue column counts 8 names
+where the ten-year owners'-earnings column counts 21, and the table says so rather than
+pooling around it.
+
+It refuses everything the Tragic Algebra Analyzer refuses, and where that page withholds
+a verdict and still shows its measurements, this page prints no implied number at all:
+financials route to the Financials Checker, IFRS filers to the Non-US Checker,
+umbrella-partnership C-corps and missing share counts stop with the reason stated. Its
+own refusals follow the same rule. A base at or below zero routes to the Inflection
+Checker, because an implied growth rate solved from a negative base is noise. A price at
+or below the zero-growth IV15 is stated as implying decline rather than solved into a
+negative rate. An implied rate beyond 60% a year is stated as beyond any base rate on
+record rather than printed as if it meant something. And the output paragraph carries no
+adjective — the arithmetic, the windows and the counts, with the judgement left where it
+belongs; a self-test scans every output sentence and holds the page to it.
 
 ## 📈 Return Calculator
 
