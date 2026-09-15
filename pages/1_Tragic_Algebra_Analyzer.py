@@ -648,10 +648,24 @@ def _sic(cik: str) -> tuple[str, str]:
 BANK_SIC = {6021, 6022, 6029, 6035, 6036, 6712}
 INSURER_SIC = {6311, 6321, 6324, 6331, 6351, 6361, 6399}
 REIT_SIC = {6798}
-# Lenders, finance companies, functions related to deposit banking, and
-# brokers: a bank when the filing carries deposits and net interest
-# income, otherwise a float business this page does not price (v2).
+# Lenders, finance companies and functions related to deposit banking: a
+# bank when the filing carries deposits and net interest income, otherwise
+# a float business no page in this kit prices.
 PROMOTABLE_SIC = {6099, 6211} | set(range(6111, 6200))
+# Brokers and dealers (14 Sep 2026, Financials Checker v2). The cascade for
+# these two codes: deposits + NII promote to bank first (Schwab's shape,
+# unchanged); else a filing that carries client assets is a broker; else
+# refused. Client-asset evidence is the house pattern — code AND filed
+# lines. The carriers on the evidence of record: IBKR passes on payables
+# (us-gaap through FY2018, srt: since) plus segregated cash; HOOD passes on
+# the segregated element alone (FY2023 on) — so no leg of this list is
+# load-bearing for both, and a dealer or clearing house with none of them
+# (Virtu's shape) still refuses at the same codes.
+BROKER_SIC = {6211, 6221}
+BROKER_CLIENT_TAGS = ["PayablesToCustomers", "srt:PayablesToCustomers",
+                      "ReceivablesFromCustomers",
+                      "CashAndSecuritiesSegregatedUnderFederalAndOtherRegulations",
+                      "CashReserveDepositRequiredAndMade"]
 # Fee businesses inside the 6000s that tool 1 prices as ordinary companies
 # with net cash READ: insurance agents and brokers, asset managers,
 # real-estate services and operators, royalty owners and lessors.
@@ -666,28 +680,39 @@ REIT_PROPERTY_TAGS = ["RealEstateInvestmentPropertyNet", "RealEstateInvestmentPr
 
 FINANCIAL_SIC_TABLE = (
     "This page prices banks (SIC 6021-6036, 6712) whose filings carry deposits and net "
-    "interest income; insurers (6311-6399) whose filings carry premiums earned; and "
-    "equity REITs (6798) whose filings carry real estate. Lenders, finance companies and "
-    "brokers (6099, 6111-6199, 6211) are priced as banks when they hold deposits and "
-    "refused when they do not. Insurance agents (6411), asset managers (6282), real-estate "
-    "services and operators (6500-6553) and royalty owners (6792-6795) are ordinary "
-    "businesses and belong to the Tragic Algebra Analyzer with net cash read. Exchanges "
-    "and dealers (6200, 6221), blank-check companies (6770), investors n.e.c. (6799), "
-    "mortgage REITs and anything else in 6000-6799 are refused.")
+    "interest income; insurers (6311-6399) whose filings carry premiums earned; equity "
+    "REITs (6798) whose filings carry real estate; and brokers (6211, 6221) whose filings "
+    "carry client assets — payables to customers, segregated cash or customer receivables. "
+    "A broker that holds deposits and earns net interest income is priced as a bank. "
+    "Lenders and finance companies (6099, 6111-6199) are priced as banks when they hold "
+    "deposits and refused when they do not. Insurance agents (6411), asset managers "
+    "(6282), real-estate services and operators (6500-6553) and royalty owners (6792-6795) "
+    "are ordinary businesses and belong to the Tragic Algebra Analyzer with net cash read. "
+    "Exchanges (6200), blank-check companies (6770), investors n.e.c. (6799), mortgage "
+    "REITs and anything else in 6000-6799 are refused.")
 
 
 def _tags_present(facts: dict, concepts: list[str]) -> bool:
     """Does the filing tag any of these concepts at all? Presence, not a
     read: the gate asks what kind of balance sheet this is, and a line that
-    was tagged in any annual filing answers that even if it later stopped."""
-    tax = facts.get("facts", {}).get("us-gaap", {})
-    return any(c in tax and tax[c].get("units") for c in concepts)
+    was tagged in any annual filing answers that even if it later stopped.
+    A concept may carry a taxonomy prefix ("srt:PayablesToCustomers");
+    without one it is us-gaap. IBKR, 14 Sep 2026: its live customer
+    payables sit in the SEC's SRT taxonomy, invisible to a us-gaap-only
+    look."""
+    all_tax = facts.get("facts", {})
+    for c in concepts:
+        tax_name, _, name = c.rpartition(":")
+        tax = all_tax.get(tax_name or "us-gaap", {})
+        if name in tax and tax[name].get("units"):
+            return True
+    return False
 
 
 def financial_class(sic: str, facts: dict) -> tuple[str, str]:
-    """(class, reason). class is one of bank, insurer, reit, ordinary,
-    refused. `ordinary` means tool 1 prices it as a normal business; this
-    page does not."""
+    """(class, reason). class is one of bank, insurer, reit, broker,
+    ordinary, refused. `ordinary` means tool 1 prices it as a normal
+    business; the Financials Checker prices the other four."""
     if not (sic and sic.isdigit()):
         return "ordinary", "No SIC code on file; not treated as a financial."
     code = int(sic)
@@ -696,6 +721,7 @@ def financial_class(sic: str, facts: dict) -> tuple[str, str]:
     has_bank = _tags_present(facts, DEPOSIT_TAGS) and _tags_present(facts, NII_TAGS)
     has_prem = _tags_present(facts, PREMIUM_TAGS)
     has_re = _tags_present(facts, REIT_PROPERTY_TAGS)
+    has_client = _tags_present(facts, BROKER_CLIENT_TAGS)
     if code in BANK_SIC:
         if has_bank:
             return "bank", f"SIC {sic} and the filing carries deposits and net interest income."
@@ -711,17 +737,26 @@ def financial_class(sic: str, facts: dict) -> tuple[str, str]:
             return "reit", f"SIC {sic} and the filing carries real estate."
         return "refused", (f"SIC {sic} with no real estate on the balance sheet — a mortgage "
                            "REIT, which is a levered bond book. Not priced on this page.")
-    if code in PROMOTABLE_SIC:
+    if code in PROMOTABLE_SIC or code in BROKER_SIC:
         if has_bank:
             return "bank", (f"SIC {sic} is a lender or broker code, but the filing carries "
                             "deposits and net interest income — a bank in substance.")
-        return "refused", (f"SIC {sic} — a lender, finance company or broker funded without "
+        if code in BROKER_SIC and has_client:
+            return "broker", (f"SIC {sic} and the filing carries client assets — payables to "
+                              "customers, segregated cash or customer receivables — without "
+                              "deposits. A broker in substance.")
+        if code in BROKER_SIC:
+            return "refused", (f"SIC {sic} says broker or dealer, but the filing carries no "
+                               "client-asset line this reader knows — no payables to customers, "
+                               "no segregated cash, no customer receivables. A dealer or "
+                               "principal-trading house, not a client broker. Not priced.")
+        return "refused", (f"SIC {sic} — a lender or finance company funded without "
                            "deposits. Its float is the product, and this page does not price "
-                           "float businesses (Tool A v2).")
+                           "lending float businesses.")
     if code in ORDINARY_SIC:
         return "ordinary", (f"SIC {sic} — a fee business, not a balance-sheet one. The Tragic "
                             "Algebra Analyzer prices it as an ordinary company with net cash read.")
-    return "refused", (f"SIC {sic} — an exchange, dealer, blank-check company or holding "
+    return "refused", (f"SIC {sic} — an exchange, blank-check company or holding "
                        "structure this page does not price.")
 
 
@@ -2980,15 +3015,21 @@ def load(ticker: str, n_years: int = 10):
                      "inside the capital base rather than as borrowings, so they are not "
                      "subtracted here.")
     fin_class, fin_reason = financial_class(sic, facts)
-    if fin_class in ("bank", "insurer", "reit"):
+    if fin_class in ("bank", "insurer", "reit", "broker"):
         # KNSL, 1 Sep 2026: the old banner disclaimed the number and the
         # verdict still printed a fat pitch on 18% premium growth at a
         # software exit. The Financials Checker exists now; route, withhold.
-        notes.append(f"{sic_desc or 'Financial company'} (SIC {sic}). {fin_reason} Investments "
-                     "here back policyholder or depositor liabilities rather than belonging to "
-                     "shareholders, so net cash has been set to zero. The Tragic Algebra below "
+        # Broker joined 14 Sep 2026 (Financials Checker v2): IBKR must route
+        # like an insurer does, never land as ordinary with net cash read.
+        _backing = ("Cash and investments here largely mirror client balances — payables to "
+                    "customers, not shareholder money"
+                    if fin_class == "broker" else
+                    "Investments here back policyholder or depositor liabilities rather than "
+                    "belonging to shareholders")
+        notes.append(f"{sic_desc or 'Financial company'} (SIC {sic}). {fin_reason} {_backing}, "
+                     "so net cash has been set to zero. The Tragic Algebra below "
                      "is real; the valuation frame is not — "
-                     f"{ {'bank': 'a bank', 'insurer': 'an insurer', 'reit': 'a REIT'}[fin_class] } "
+                     f"{ {'bank': 'a bank', 'insurer': 'an insurer', 'reit': 'a REIT', 'broker': 'a broker'}[fin_class] } "
                      "is priced on tangible book, returns and payout, which is the "
                      "Financials Checker page's job. The verdict here is withheld.")
         cash_total = debt_total = net_cash = 0.0
@@ -3133,7 +3174,7 @@ def load(ticker: str, n_years: int = 10):
                           # a real market cap.
                           "ticker": ticker,
                           "shares": diluted, "growth": growth, "sic": sic,
-                          "sic_desc": sic_desc, "financial": fin_class in ("bank", "insurer", "reit", "refused"),
+                          "sic_desc": sic_desc, "financial": fin_class in ("bank", "insurer", "reit", "broker", "refused"),
                           "fin_class": fin_class, "fin_reason": fin_reason,
                           "sh_cov": (_cov_n, len(_win_cov))}
 
@@ -4629,6 +4670,19 @@ def self_test() -> list[tuple[str, bool, str]]:
                 and financial_class("6211", _fx(["Deposits", "InterestIncomeExpenseNet"]))[0] == "bank"
                 and financial_class("6141", _fx([]))[0] == "refused",
                 "Ryan Specialty ordinary; Schwab-shaped promotes; a lender is not priced"))
+    # v2 broker cascade (14 Sep 2026): deposits promote FIRST, client assets
+    # land broker, neither refuses. NII alone is not client evidence.
+    out.append(("Brokers: client assets land 6211/6221 as broker; deposits still promote; a dealer refuses",
+                financial_class("6211", _fx(["InterestIncomeExpenseNet", "PayablesToCustomers"]))[0] == "broker"
+                and financial_class("6221", _fx(["CashAndSecuritiesSegregatedUnderFederalAndOtherRegulations"]))[0] == "broker"
+                and financial_class("6211", _fx(["Deposits", "InterestIncomeExpenseNet", "PayablesToCustomers"]))[0] == "bank"
+                and financial_class("6211", _fx(["InterestIncomeExpenseNet"]))[0] == "refused"
+                and financial_class("6221", _fx([]))[0] == "refused",
+                "IBKR-shaped lands broker; SCHW-shaped promotes; Virtu-shaped refuses"))
+    out.append(("Brokers: a payables line filed under the srt taxonomy is client evidence",
+                financial_class("6211", {"facts": {"srt": {"PayablesToCustomers":
+                                                           {"units": {"USD": []}}}}})[0] == "broker",
+                "IBKR files its live customer payables under srt:, not us-gaap"))
 
     # 21. The META caption (5 Sep 2026): no share counts anywhere → the ΔE
     #     radio must say so instead of offering the polluted pools.
