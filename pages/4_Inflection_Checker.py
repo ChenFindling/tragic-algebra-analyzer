@@ -2913,8 +2913,8 @@ def load(ticker: str, n_years: int = 10):
         notes.append(f"{sic_desc or 'Financial company'} (SIC {sic}). Investments here back "
                      "policyholder or depositor liabilities rather than belonging to "
                      "shareholders, so net cash has been set to zero. This page does not price "
-                     "financials; the Financials Checker prices banks, insurers and REITs on "
-                     "tangible book, returns and payout.")
+                     "financials; the Financials Checker prices banks, insurers, REITs and "
+                     "client-asset brokers on tangible book, returns and payout.")
         cash_total = debt_total = net_cash = 0.0
 
     # First in the list, because it governs how every other note reads.
