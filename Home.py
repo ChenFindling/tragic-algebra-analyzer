@@ -64,7 +64,10 @@ PAGE_BLURBS: dict[str, str] = {
         "Banks, insurers and REITs, which every other page refuses. Priced on a filed "
         "base per share — tangible common equity, or FFO for REITs — the return on it, "
         "and what is kept. Burry publishes no method for financials beyond the stock-comp "
-        "adjustment, so this page is the toolkit's own design, and it says so on the page."
+        "adjustment, so this page is the toolkit's own design, and it says so on the page. "
+        "Brokers that hold client assets without taking deposits — Interactive Brokers' "
+        "shape — are priced here too, on the same tangible-book frame, with the client "
+        "float shown beside the firm's own capital."
     ),
     "Non-US Checker": (
         "The same algebra for companies that file 20-F or 40-F, in the filing currency "
