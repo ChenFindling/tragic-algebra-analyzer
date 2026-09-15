@@ -4774,16 +4774,20 @@ def broker_fix_income(rows: list, n_by_fy: dict[int, str], fin: dict) -> list:
 
 
 def segregated_total(bal: dict) -> tuple[float | None, str]:
-    """Cash + securities components where either reads (the FY2018-on
-    form), else the combined pre-2018 element, else refused. Never both:
-    summing the components with the combined line would double-count."""
+    """Per year: the combined element where filed — it IS the total for
+    that year — else cash + securities components, else refused. Live
+    IBKR run, 15 Sep 2026: the narrow cash-reserve component reaches back
+    into old filings where it is PARTIAL (FY2016: component 5,624 beside
+    combined 24,017), so components-first understated any year both forms
+    coexist. Combined-first per year; never summed with the components,
+    which would double-count."""
+    if bal.get("sego") is not None:
+        return bal["sego"], "combined element (as filed for this year)"
     c, s = bal.get("segc"), bal.get("segs")
     if c is not None or s is not None:
         missing = "cash" if c is None else ("securities" if s is None else "")
         return ((c or 0.0) + (s or 0.0),
                 "cash + securities components" + (f" ({missing} component unread)" if missing else ""))
-    if bal.get("sego") is not None:
-        return bal["sego"], "combined element (the pre-2018 form)"
     return None, "no segregated line read"
 
 
@@ -5131,9 +5135,10 @@ def self_test() -> list[tuple[str, bool, str]]:
        and _rows3[0].N_common is None and "refused" in _rows3[0].n_reason)
 
     # 2e. The display helpers.
-    ok("Segregated: components sum when either reads; the combined element only as fallback",
-       segregated_total({"segc": 50332.0, "segs": 26521.0, "sego": 999.0})[0] == 76853.0
-       and segregated_total({"sego": 20232.0})[0] == 20232.0
+    ok("Segregated: the combined element wins its year (IBKR FY2016: 24,017, not the partial "
+       "5,624 component); components sum only where it is not filed",
+       segregated_total({"segc": 5624.0, "sego": 24017.0})[0] == 24017.0
+       and segregated_total({"segc": 50332.0, "segs": 26521.0})[0] == 76853.0
        and segregated_total({})[0] is None)
     ok("Mix: both lines or nothing (IBKR FY2025: 62.4% NII)",
        abs(broker_mix(3563.0, 2149.0) - 0.6238) < 0.001
