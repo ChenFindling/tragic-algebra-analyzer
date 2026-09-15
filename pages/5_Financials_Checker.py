@@ -600,6 +600,14 @@ CONCEPTS = {
                "ProvisionForLoanAndLeaseLosses", "ProvisionForCreditLosses"], []),
     "NONII": (["NoninterestIncome"], []),
     "NONIX": (["NoninterestExpense"], []),
+    # brokers (v2, 14 Sep 2026): the transactional side of the income mix,
+    # and the NCI slice of consolidated income for the basis arithmetic.
+    "COMM":  (["BrokerageCommissionsRevenue"], []),
+    "NCIN":  (["NetIncomeLossAttributableToNoncontrollingInterest"], []),
+    # consolidated net income re-read as a fin line so the broker page can
+    # print the filed income identity (parent + NCI = consolidated) the way
+    # the float sentence prints Buffett's arithmetic — from filed numbers.
+    "PLC":   (["ProfitLoss"], []),
     # REITs
     "DA":    (["DepreciationAndAmortization", "DepreciationDepletionAndAmortization",
                "DepreciationAmortizationAndAccretionNet", "Depreciation"], []),
@@ -3085,7 +3093,7 @@ def load(ticker: str, n_years: int = 10):
     _signed = lambda k, fy: (series[k][fy][2] / 1e6) if fy in series.get(k, {}) else None
     _fin = {fy: {k.lower(): _signed(k, fy) for k in ("DIV", "PDIV", "NEP", "LOSS", "DACX", "UWO", "UWT",
                                                       "NII", "PTX", "TAX", "BNII", "PROV", "NONII",
-                                                      "NONIX", "DA", "RGAIN", "RIMP")}
+                                                      "NONIX", "DA", "RGAIN", "RIMP", "COMM", "NCIN", "PLC")}
             for fy in fys}
     _fin_bal: dict[str, dict[int, float]] = {}
     _fin_src: dict[str, list[str]] = {}
@@ -3096,11 +3104,43 @@ def load(ticker: str, n_years: int = 10):
         _d = _instant(facts, _ks, "USD", _s, None, prefer_recent=True)
         _fin_bal[_k] = {fy: v / 1e6 for fy, v in _d.items()}
         _fin_src[_k], _fin_n[_k], _fin_fy[_k] = _s, len(_d), _latest_fy(_d)
-    if _fin_src.get("eq") and _fin_src["eq"][0] != "StockholdersEquity":
+    _cls, _cls_reason = financial_class(sic, facts)
+    # The live customer-payables line sits in the SEC's SRT taxonomy (IBKR
+    # since its FY2019 10-K); _instant reads us-gaap, so the srt facts are
+    # shimmed through it — same filters, same recency — and merged per
+    # year, srt years first, the dead us-gaap element serving the history.
+    _srt_tax = facts.get("facts", {}).get("srt", {})
+    if "PayablesToCustomers" in _srt_tax:
+        _ps: list[str] = []
+        _pd = _instant({"facts": {"us-gaap": _srt_tax}}, ["PayablesToCustomers"],
+                       "USD", _ps, None, prefer_recent=True)
+        if _pd:
+            _merged = dict(_fin_bal.get("payc", {}))
+            _merged.update({fy: v / 1e6 for fy, v in _pd.items()})
+            _fin_bal["payc"] = _merged
+            _fin_src["payc"] = ["srt:PayablesToCustomers"] + _fin_src.get("payc", [])
+            _fin_n["payc"] = len(_merged)
+            _fin_fy["payc"] = _latest_fy({fy: 0 for fy in _merged})
+    _eq_basis: dict[int, str] = {}
+    _basis_note = ""
+    if _cls == "broker":
+        # The Up-C basis (§6.8): parent equity resolved per year from the
+        # three filed lines, overriding the eq group's one-winner read —
+        # which would have handed HOOD's FY2025 the consolidated tag and,
+        # on an Up-C the size of IBKR's, a book 3.8x too large.
+        _peq, _eq_basis, _basis_note = broker_parent_equity(
+            _fin_bal.get("eqp", {}), _fin_bal.get("eqc", {}), _fin_bal.get("nci", {}))
+        _fin_bal["eq"] = _peq
+        _fin_fy["eq"] = _latest_fy({fy: 0 for fy in _peq})
+        _fin_src["eq"] = ["broker basis: " + " + ".join(_fin_src.get("eqp", []) +
+                                                        _fin_src.get("eqc", []) +
+                                                        _fin_src.get("nci", []))]
+    elif _fin_src.get("eq") and _fin_src["eq"][0] != "StockholdersEquity":
         notes.append("Shareholders' equity was read from the tag that includes non-controlling "
                      "interests, because the parent-only tag stops earlier or is absent. Tangible "
                      "common equity here is the consolidated figure, so a filer with real minority "
                      "holders reads a little high.")
+    _n_by_fy = broker_income_sources(facts, fys) if _cls == "broker" else {}
     _dps_src: list[str] = []
     _dps = _per_share(facts, ["CommonStockDividendsPerShareDeclared",
                               "CommonStockDividendsPerShareCashPaid"], _dps_src)
@@ -3109,7 +3149,6 @@ def load(ticker: str, n_years: int = 10):
     # split like `diluted` above; split_adjust does not restate this series,
     # so a filer that split inside the window has old years on the old basis.
     _wavg_by_fy = {fy: v / 1e6 * _split_factor for fy, v in _wv.items() if fy in fys}
-    _cls, _cls_reason = financial_class(sic, facts)
     tags = tags + [
         {"Line": f"— {name}", "Years read": _fin_n.get(k, 0), "Latest year": _fin_fy.get(k, "—"),
          "XBRL tag": " + ".join(_fin_src.get(k, [])) or "—",
@@ -3123,6 +3162,7 @@ def load(ticker: str, n_years: int = 10):
                           "dps": _dps, "shares_by_fy": _shares_by_fy, "wavg_by_fy": _wavg_by_fy,
                           "n_source": (tag_sources.get("N") or [""])[0],
                           "cls": _cls, "cls_reason": _cls_reason,
+                          "eq_basis": _eq_basis, "basis_note": _basis_note, "n_by_fy": _n_by_fy,
                           "median_OE": _med, "revenue": latest_rev, "cagr3": cagr3,
                           "leases": lease_total,
                           # The form that resolved against the SEC list. Yahoo uses the
@@ -4000,10 +4040,24 @@ TAX_STATUTORY = 0.21      # used only when the filing's own rate cannot be read
 BANK_SIC = {6021, 6022, 6029, 6035, 6036, 6712}
 INSURER_SIC = {6311, 6321, 6324, 6331, 6351, 6361, 6399}
 REIT_SIC = {6798}
-# Lenders, finance companies, functions related to deposit banking, and
-# brokers: a bank when the filing carries deposits and net interest
-# income, otherwise a float business this page does not price (v2).
+# Lenders, finance companies and functions related to deposit banking: a
+# bank when the filing carries deposits and net interest income, otherwise
+# a float business no page in this kit prices.
 PROMOTABLE_SIC = {6099, 6211} | set(range(6111, 6200))
+# Brokers and dealers (14 Sep 2026, Financials Checker v2). The cascade for
+# these two codes: deposits + NII promote to bank first (Schwab's shape,
+# unchanged); else a filing that carries client assets is a broker; else
+# refused. Client-asset evidence is the house pattern — code AND filed
+# lines. The carriers on the evidence of record: IBKR passes on payables
+# (us-gaap through FY2018, srt: since) plus segregated cash; HOOD passes on
+# the segregated element alone (FY2023 on) — so no leg of this list is
+# load-bearing for both, and a dealer or clearing house with none of them
+# (Virtu's shape) still refuses at the same codes.
+BROKER_SIC = {6211, 6221}
+BROKER_CLIENT_TAGS = ["PayablesToCustomers", "srt:PayablesToCustomers",
+                      "ReceivablesFromCustomers",
+                      "CashAndSecuritiesSegregatedUnderFederalAndOtherRegulations",
+                      "CashReserveDepositRequiredAndMade"]
 # Fee businesses inside the 6000s that tool 1 prices as ordinary companies
 # with net cash READ: insurance agents and brokers, asset managers,
 # real-estate services and operators, royalty owners and lessors.
@@ -4018,28 +4072,39 @@ REIT_PROPERTY_TAGS = ["RealEstateInvestmentPropertyNet", "RealEstateInvestmentPr
 
 FINANCIAL_SIC_TABLE = (
     "This page prices banks (SIC 6021-6036, 6712) whose filings carry deposits and net "
-    "interest income; insurers (6311-6399) whose filings carry premiums earned; and "
-    "equity REITs (6798) whose filings carry real estate. Lenders, finance companies and "
-    "brokers (6099, 6111-6199, 6211) are priced as banks when they hold deposits and "
-    "refused when they do not. Insurance agents (6411), asset managers (6282), real-estate "
-    "services and operators (6500-6553) and royalty owners (6792-6795) are ordinary "
-    "businesses and belong to the Tragic Algebra Analyzer with net cash read. Exchanges "
-    "and dealers (6200, 6221), blank-check companies (6770), investors n.e.c. (6799), "
-    "mortgage REITs and anything else in 6000-6799 are refused.")
+    "interest income; insurers (6311-6399) whose filings carry premiums earned; equity "
+    "REITs (6798) whose filings carry real estate; and brokers (6211, 6221) whose filings "
+    "carry client assets — payables to customers, segregated cash or customer receivables. "
+    "A broker that holds deposits and earns net interest income is priced as a bank. "
+    "Lenders and finance companies (6099, 6111-6199) are priced as banks when they hold "
+    "deposits and refused when they do not. Insurance agents (6411), asset managers "
+    "(6282), real-estate services and operators (6500-6553) and royalty owners (6792-6795) "
+    "are ordinary businesses and belong to the Tragic Algebra Analyzer with net cash read. "
+    "Exchanges (6200), blank-check companies (6770), investors n.e.c. (6799), mortgage "
+    "REITs and anything else in 6000-6799 are refused.")
 
 
 def _tags_present(facts: dict, concepts: list[str]) -> bool:
     """Does the filing tag any of these concepts at all? Presence, not a
     read: the gate asks what kind of balance sheet this is, and a line that
-    was tagged in any annual filing answers that even if it later stopped."""
-    tax = facts.get("facts", {}).get("us-gaap", {})
-    return any(c in tax and tax[c].get("units") for c in concepts)
+    was tagged in any annual filing answers that even if it later stopped.
+    A concept may carry a taxonomy prefix ("srt:PayablesToCustomers");
+    without one it is us-gaap. IBKR, 14 Sep 2026: its live customer
+    payables sit in the SEC's SRT taxonomy, invisible to a us-gaap-only
+    look."""
+    all_tax = facts.get("facts", {})
+    for c in concepts:
+        tax_name, _, name = c.rpartition(":")
+        tax = all_tax.get(tax_name or "us-gaap", {})
+        if name in tax and tax[name].get("units"):
+            return True
+    return False
 
 
 def financial_class(sic: str, facts: dict) -> tuple[str, str]:
-    """(class, reason). class is one of bank, insurer, reit, ordinary,
-    refused. `ordinary` means tool 1 prices it as a normal business; this
-    page does not."""
+    """(class, reason). class is one of bank, insurer, reit, broker,
+    ordinary, refused. `ordinary` means tool 1 prices it as a normal
+    business; the Financials Checker prices the other four."""
     if not (sic and sic.isdigit()):
         return "ordinary", "No SIC code on file; not treated as a financial."
     code = int(sic)
@@ -4048,6 +4113,7 @@ def financial_class(sic: str, facts: dict) -> tuple[str, str]:
     has_bank = _tags_present(facts, DEPOSIT_TAGS) and _tags_present(facts, NII_TAGS)
     has_prem = _tags_present(facts, PREMIUM_TAGS)
     has_re = _tags_present(facts, REIT_PROPERTY_TAGS)
+    has_client = _tags_present(facts, BROKER_CLIENT_TAGS)
     if code in BANK_SIC:
         if has_bank:
             return "bank", f"SIC {sic} and the filing carries deposits and net interest income."
@@ -4063,17 +4129,26 @@ def financial_class(sic: str, facts: dict) -> tuple[str, str]:
             return "reit", f"SIC {sic} and the filing carries real estate."
         return "refused", (f"SIC {sic} with no real estate on the balance sheet — a mortgage "
                            "REIT, which is a levered bond book. Not priced on this page.")
-    if code in PROMOTABLE_SIC:
+    if code in PROMOTABLE_SIC or code in BROKER_SIC:
         if has_bank:
             return "bank", (f"SIC {sic} is a lender or broker code, but the filing carries "
                             "deposits and net interest income — a bank in substance.")
-        return "refused", (f"SIC {sic} — a lender, finance company or broker funded without "
+        if code in BROKER_SIC and has_client:
+            return "broker", (f"SIC {sic} and the filing carries client assets — payables to "
+                              "customers, segregated cash or customer receivables — without "
+                              "deposits. A broker in substance.")
+        if code in BROKER_SIC:
+            return "refused", (f"SIC {sic} says broker or dealer, but the filing carries no "
+                               "client-asset line this reader knows — no payables to customers, "
+                               "no segregated cash, no customer receivables. A dealer or "
+                               "principal-trading house, not a client broker. Not priced.")
+        return "refused", (f"SIC {sic} — a lender or finance company funded without "
                            "deposits. Its float is the product, and this page does not price "
-                           "float businesses (Tool A v2).")
+                           "lending float businesses.")
     if code in ORDINARY_SIC:
         return "ordinary", (f"SIC {sic} — a fee business, not a balance-sheet one. The Tragic "
                             "Algebra Analyzer prices it as an ordinary company with net cash read.")
-    return "refused", (f"SIC {sic} — an exchange, dealer, blank-check company or holding "
+    return "refused", (f"SIC {sic} — an exchange, blank-check company or holding "
                        "structure this page does not price.")
 
 
@@ -4111,6 +4186,33 @@ FIN_BALANCE = {
               "LoansAndLeasesReceivableNetOfDeferredIncome", "NotesReceivableNet"],
     # REITs
     "re":    ["RealEstateInvestmentPropertyNet"],
+    # ── Brokers (v2, 14 Sep 2026). Each side of the Up-C basis is read
+    # under its own key, never merged by prefer_recent: the eq group's
+    # one-winner rule nearly handed HOOD's FY2025 the consolidated tag
+    # (its parent tag stops at FY2024) and would have handed IBKR a book
+    # 3.8x too large had the tags gone the other way. broker_parent_equity
+    # resolves per year from the three lines below; other classes never
+    # consult them.
+    "eqp":   ["StockholdersEquity"],
+    "eqc":   ["StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"],
+    "nci":   ["MinorityInterest"],
+    # Client-asset display lines. The us-gaap payables element died with
+    # IBKR's FY2018 10-K (the FY2019 broker-dealer retagging); the live
+    # line sits in the SEC's SRT taxonomy and is merged in by load, so this
+    # key alone covers FY2009-2018 and the srt read covers the rest.
+    "payc":  ["PayablesToCustomers"],
+    # Segregated split into cash and securities components from the FY2018
+    # 10-K on (IBKR: 50,332 + 26,521 at FY2025); the combined element
+    # covers the years before. segregated_total() sums or falls back.
+    "segc":  ["CashReserveDepositRequiredAndMade"],
+    "segs":  ["SecuritiesReserveDepositRequiredAndMade"],
+    "sego":  ["CashAndSecuritiesSegregatedUnderFederalAndOtherRegulations"],
+    # Margin receivables: both flagships file this under custom or absent
+    # tags (IBKR: ibkr:ReceivablesFromCustomerNet). The row dashes with its
+    # reason — a display line never earns a registry entry (decision of
+    # record, 14 Sep 2026); if the class ever computes from it, the entry
+    # graduates then, with the banked verify figure 90,475 (IBKR FY2025).
+    "recv":  ["ReceivablesFromCustomers"],
 }
 
 FIN_ROWS = (
@@ -4119,14 +4221,18 @@ FIN_ROWS = (
     ("Loss reserves", "resv"), ("Unearned premiums", "upr"), ("Premiums receivable", "prec"),
     ("Reinsurance recoverables", "reins"), ("Deferred acquisition costs", "dac"),
     ("Invested assets", "inv"), ("Deposits", "dep"), ("Loans", "loans"), ("Real estate", "re"),
+    ("Parent-only equity", "eqp"), ("Consolidated equity", "eqc"), ("Noncontrolling interests", "nci"),
+    ("Payables to customers", "payc"), ("Segregated cash", "segc"), ("Segregated securities", "segs"),
+    ("Segregated (combined, pre-2018)", "sego"), ("Customer receivables", "recv"),
 )
 
 # Which balance lines each class shows in its table (all classes show the
 # equity block).
 CLASS_ROWS = {"insurer": ("resv", "upr", "prec", "reins", "dac", "inv"),
-              "bank": ("dep", "loans"), "reit": ("re",)}
+              "bank": ("dep", "loans"), "reit": ("re",),
+              "broker": ("payc", "segc", "segs", "recv", "nci")}
 
-CLASS_NAME = {"bank": "Bank", "insurer": "Insurer", "reit": "REIT"}
+CLASS_NAME = {"bank": "Bank", "insurer": "Insurer", "reit": "REIT", "broker": "Broker"}
 
 
 def _per_share(facts: dict, concepts: list[str], sources: list[str] | None = None
@@ -4548,6 +4654,148 @@ def ffo_growth_seed(cagr5: float | None, cagr10: float | None) -> float | None:
     return min(v for v in (cagr5, cagr10) if v is not None)
 
 
+# ── Broker basis (v2, 14 Sep 2026) ─────────────────────────────────────
+#
+# The Up-C resolution, HANDOVER-5 §6.8. IBG, Inc. holds ~26% of IBG LLC:
+# consolidated equity is 3.8x the parent's, and the consolidated income
+# slice is pre-tax passthrough for the LLC members, so any mix of bases
+# flatters both book and return. The page prices parent over parent only,
+# each side from filed lines, and refuses where a filed line is missing —
+# never scaled by an ownership ratio.
+
+BROKER_N_PRIORITY = ("NetIncomeLoss", "NetIncomeLossAvailableToCommonStockholdersBasic",
+                     "ProfitLoss")
+BROKER_PARENT_N = ("NetIncomeLoss", "NetIncomeLossAvailableToCommonStockholdersBasic")
+
+
+def broker_parent_equity(eqp: dict, eqc: dict, nci: dict
+                         ) -> tuple[dict[int, float], dict[int, str], str]:
+    """Per-year parent-only equity from the three filed lines, with the
+    reason per year and a one-line basis note for the which-is-whose block.
+
+    Rungs, per year: (1) the parent tag as filed; (2) consolidated minus
+    the filed NCI line — a subtraction of two filed lines, the same move
+    as tangible_common, printed as arithmetic (HOOD FY2025: 9,151 − 11 =
+    9,140); if NCI was never filed in ANY year, the consolidated tag IS
+    the parent figure by identity (HOOD's FY2022-24 comparatives prove the
+    reading: duplicate-tagged, equal to the parent values to the digit);
+    (3) consolidated with NCI filed elsewhere but not this year — the
+    deduction is missing, not zero (the mirror rule's spirit) — refuse the
+    year. A year no tag answers stays absent and refuses downstream."""
+    out: dict[int, float] = {}
+    why: dict[int, str] = {}
+    nci_ever = bool(nci)
+    for fy in sorted(set(eqp) | set(eqc)):
+        if fy in eqp:
+            out[fy] = eqp[fy]
+            why[fy] = "parent-only tag as filed"
+        elif fy in nci:
+            out[fy] = eqc[fy] - nci[fy]
+            why[fy] = (f"consolidated − NCI: {eqc[fy]:,.0f} − {nci[fy]:,.0f} "
+                       f"= {out[fy]:,.0f}")
+        elif not nci_ever:
+            out[fy] = eqc[fy]
+            why[fy] = "consolidated tag; no NCI line ever filed — parent by identity"
+        else:
+            why[fy] = (f"consolidated tag with NCI filed in other years but not FY{fy} — "
+                       "the deduction is missing, not zero; the year is refused")
+    if any("consolidated − NCI" in w for w in why.values()):
+        note = ("parent-only by filed subtraction where the parent tag stops: "
+                + next(w for fy, w in sorted(why.items(), reverse=True)
+                       if "consolidated − NCI" in w))
+    elif out and all(w == "parent-only tag as filed" for fy, w in why.items() if fy in out):
+        note = "parent-only equity read from the parent tag in every year"
+    else:
+        note = "parent-only equity; see the per-year reasons"
+    return out, why, note
+
+
+def broker_income_sources(facts: dict, fys: list[int]) -> dict[int, str]:
+    """Which net-income concept supplies each window year, in the reader's
+    priority order and with its filters (annual forms, full-year period,
+    latest filing wins, earlier concept wins the year). The reader's own
+    per-year fill is not exported, so the basis guard rebuilds it: IBKR's
+    NetIncomeLoss died after FY2014 and every window year single-sources
+    from available-to-common — but the guard is written for the filer that
+    mixes. Calendar attribution by period end; both flagships are
+    December filers, and a broker with an odd year-end resolves any
+    unmatched year as unknown, which the guard refuses rather than
+    guesses."""
+    won: dict[int, str] = {}
+    tax = facts.get("facts", {}).get("us-gaap", {})
+    for concept in BROKER_N_PRIORITY:
+        got: dict[int, tuple[str, float]] = {}
+        for row in tax.get(concept, {}).get("units", {}).get("USD", []):
+            if row.get("form") not in ANNUAL_FORMS:
+                continue
+            s, e = row.get("start"), row.get("end")
+            if not (s and e):
+                continue
+            if not 330 <= (dt.date.fromisoformat(e) - dt.date.fromisoformat(s)).days <= 400:
+                continue
+            fy, filed = int(e[:4]), row.get("filed", "")
+            if fy not in got or filed > got[fy][0]:
+                got[fy] = (filed, float(row.get("val", 0.0)))
+        for fy in got:
+            if fy in fys and fy not in won:
+                won[fy] = concept
+    return won
+
+
+def broker_fix_income(rows: list, n_by_fy: dict[int, str], fin: dict) -> list:
+    """Enforce parent-basis income per year, in place. A year sourced from
+    a parent tag stands (available-to-common is after NCI by definition).
+    A ProfitLoss year is consolidated: subtract the filed NCI-income line
+    (rung 2, arithmetic in the reason) or refuse the year if that line did
+    not answer. An unknown source with any NCI on record refuses — the
+    guard never guesses which side of the LLC a figure sits on."""
+    for r in rows:
+        srcv = n_by_fy.get(r.fy)
+        if srcv in BROKER_PARENT_N:
+            r.n_reason = ("parent slice as tagged — " +
+                          ("available to common, after NCI and preferred by definition"
+                           if srcv == BROKER_PARENT_N[1] else "attributable to parent"))
+            continue
+        if srcv == "ProfitLoss":
+            ncin = (fin.get(r.fy) or {}).get("ncin")
+            if ncin is not None:
+                r.N_common = r.N - ncin
+                r.n_reason = (f"consolidated net income less filed NCI income: "
+                              f"{r.N:,.0f} − {ncin:,.0f} = {r.N_common:,.0f}")
+            else:
+                r.N_common = None
+                r.n_reason = ("consolidated net income with no NCI-income line read — the "
+                              "parent slice cannot be stated, so the year is refused")
+            continue
+        r.N_common = None
+        r.n_reason = ("the net-income source for this year could not be identified as "
+                      "parent or consolidated — refused rather than guessed")
+    return rows
+
+
+def segregated_total(bal: dict) -> tuple[float | None, str]:
+    """Cash + securities components where either reads (the FY2018-on
+    form), else the combined pre-2018 element, else refused. Never both:
+    summing the components with the combined line would double-count."""
+    c, s = bal.get("segc"), bal.get("segs")
+    if c is not None or s is not None:
+        missing = "cash" if c is None else ("securities" if s is None else "")
+        return ((c or 0.0) + (s or 0.0),
+                "cash + securities components" + (f" ({missing} component unread)" if missing else ""))
+    if bal.get("sego") is not None:
+        return bal["sego"], "combined element (the pre-2018 form)"
+    return None, "no segregated line read"
+
+
+def broker_mix(nii: float | None, comm: float | None) -> float | None:
+    """NII's share of NII + commissions — those two filed lines only,
+    never total revenue. Half a mix is a wrong number: both or nothing,
+    the expense ratio's doctrine."""
+    if nii is None or comm is None or (nii + comm) <= 0:
+        return None
+    return nii / (nii + comm)
+
+
 # ── The engine ─────────────────────────────────────────────────────────
 
 @dataclass
@@ -4820,6 +5068,76 @@ def self_test() -> list[tuple[str, bool, str]]:
     ok("Gate: 6200 → refused (exchanges)", financial_class("6200", bank)[0] == "refused")
     ok("Gate: 6770 → refused (SPAC)", financial_class("6770", none)[0] == "refused")
     ok("Gate: 6799 → refused (investors n.e.c.)", financial_class("6799", none)[0] == "refused")
+    # 2b. The broker cascade (v2, 14 Sep 2026). Deposits promote FIRST;
+    #     client assets land broker; a dealer with neither refuses.
+    payb = _facts_with("InterestIncomeExpenseNet", "PayablesToCustomers")
+    segb = _facts_with("CashAndSecuritiesSegregatedUnderFederalAndOtherRegulations")
+    ok("Gate: 6211 with client payables and no deposits → broker (IBKR)",
+       financial_class("6211", payb)[0] == "broker")
+    ok("Gate: 6211 on the segregated line alone → broker (HOOD lands on one readable signal)",
+       financial_class("6211", segb)[0] == "broker")
+    ok("Gate: 6221 with client assets → broker; without → refused as a dealer",
+       financial_class("6221", segb)[0] == "broker"
+       and financial_class("6221", none)[0] == "refused"
+       and "dealer" in financial_class("6221", none)[1].lower())
+    ok("Gate: 6211 with deposits AND payables → bank; the promotion outranks the broker landing (SCHW)",
+       financial_class("6211", _facts_with("Deposits", "InterestIncomeExpenseNet",
+                                           "PayablesToCustomers"))[0] == "bank")
+    ok("Gate: 6211 with NII alone → refused; NII is not client evidence",
+       financial_class("6211", _facts_with("InterestIncomeExpenseNet"))[0] == "refused")
+    ok("Gate: srt:PayablesToCustomers is client evidence (IBKR's live tag)",
+       financial_class("6211", {"facts": {"srt": {"PayablesToCustomers":
+                                                  {"units": {"USD": []}}}}})[0] == "broker")
+    ok("Gate: broker joins the class tables", "broker" in CLASS_ROWS and "broker" in CLASS_NAME
+       and "brokers (6211, 6221)" in FINANCIAL_SIC_TABLE)
+
+    # 2c. The Up-C basis resolver — the §6.8 machinery, on HOOD's and
+    #     IBKR's filed figures.
+    _bp, _bw, _bn = broker_parent_equity({2024: 7972.0}, {2024: 7972.0, 2025: 9151.0},
+                                         {2024: 0.0, 2025: 11.0})
+    ok("Basis: parent tag wins the year it answers", _bp[2024] == 7972.0
+       and _bw[2024] == "parent-only tag as filed")
+    ok("Basis: the subtraction rung prints its arithmetic (HOOD FY2025: 9,151 − 11 = 9,140)",
+       _bp[2025] == 9140.0 and "9,151 − 11 = 9,140" in _bw[2025]
+       and "9,151 − 11 = 9,140" in _bn)
+    _bp2, _bw2, _ = broker_parent_equity({}, {2024: 500.0, 2025: 600.0}, {2024: 20.0})
+    ok("Basis: NCI filed elsewhere but not this year → the year is refused, not zeroed",
+       2025 not in _bp2 and "missing, not zero" in _bw2[2025] and _bp2[2024] == 480.0)
+    _bp3, _bw3, _ = broker_parent_equity({}, {2024: 500.0}, {})
+    ok("Basis: NCI never filed anywhere → consolidated is parent by identity",
+       _bp3[2024] == 500.0 and "no NCI line ever filed" in _bw3[2024])
+    ok("Basis: IBKR's filed equity identity is exact (5,363 + 15,109 = 20,472)",
+       broker_parent_equity({}, {2025: 20472.0}, {2025: 15109.0})[0][2025] == 5363.0)
+
+    # 2d. The income guard, on fabricated rows shaped like the flagships.
+    class _BR:
+        def __init__(self, fy, N, ncin=None, plc=None):
+            self.fy, self.N, self.N_common = fy, N, N
+            self.n_reason = ""
+            self.lines = {"ncin": ncin, "plc": plc}
+    _rows = [_BR(2024, 600.0), _BR(2025, 4357.0, ncin=3373.0)]
+    broker_fix_income(_rows, {2024: "NetIncomeLossAvailableToCommonStockholdersBasic",
+                              2025: "ProfitLoss"}, {2025: {"ncin": 3373.0}})
+    ok("Income guard: a parent-sourced year stands; a ProfitLoss year subtracts filed NCI "
+       "(IBKR identity: 4,357 − 3,373 = 984)",
+       _rows[0].N_common == 600.0 and _rows[1].N_common == 984.0
+       and "4,357 − 3,373 = 984" in _rows[1].n_reason)
+    _rows2 = [_BR(2025, 4357.0)]
+    broker_fix_income(_rows2, {2025: "ProfitLoss"}, {2025: {}})
+    _rows3 = [_BR(2025, 100.0)]
+    broker_fix_income(_rows3, {}, {2025: {}})
+    ok("Income guard: ProfitLoss with no NCI line refuses; an unknown source refuses",
+       _rows2[0].N_common is None and "refused" in _rows2[0].n_reason
+       and _rows3[0].N_common is None and "refused" in _rows3[0].n_reason)
+
+    # 2e. The display helpers.
+    ok("Segregated: components sum when either reads; the combined element only as fallback",
+       segregated_total({"segc": 50332.0, "segs": 26521.0, "sego": 999.0})[0] == 76853.0
+       and segregated_total({"sego": 20232.0})[0] == 20232.0
+       and segregated_total({})[0] is None)
+    ok("Mix: both lines or nothing (IBKR FY2025: 62.4% NII)",
+       abs(broker_mix(3563.0, 2149.0) - 0.6238) < 0.001
+       and broker_mix(3563.0, None) is None and broker_mix(None, 2149.0) is None)
     ok("Gate: 7372 → ordinary, not a financial", financial_class("7372", none)[0] == "ordinary")
     ok("Gate: empty SIC → ordinary, says no SIC",
        financial_class("", none)[0] == "ordinary" and "No SIC" in financial_class("", none)[1])
@@ -5679,7 +5997,8 @@ st.set_page_config(page_title="Financials Checker — banks, insurers, REITs at 
                    page_icon="🏦", layout="centered", initial_sidebar_state="collapsed")
 st.title("🏦 Financials Checker")
 st.caption("Tangible book, the return on it, what is kept — and the price that returns 15%. "
-           "For the three structures the other pages refuse: insurers, banks, REITs.")
+           "For the structures the other pages refuse: insurers, banks, REITs — and brokers, "
+           "whose balance sheets are their clients' assets.")
 
 if not _sec_contact():
     st.warning(
@@ -5754,6 +6073,18 @@ if years and ticker and st.session_state.get("fin_tk") == ticker:
 
     rows = build_fin_years(years, pre["fin"], pre["fin_bal"], pre["shares_by_fy"],
                            pre["wavg_by_fy"], pre["n_source"])
+    if cls == "broker":
+        # Basis enforcement (v2): parent income per year, then ROTE
+        # recomputed on the fixed figures — a ProfitLoss year that loses
+        # its NCI subtraction must lose its ROTE cell with it. Years whose
+        # equity the resolver refused carry the resolver's reason.
+        rows = broker_fix_income(rows, pre.get("n_by_fy", {}), pre["fin"])
+        _prev_tbv = None
+        for _r in rows:
+            if _r.eq is None and "refused" in pre.get("eq_basis", {}).get(_r.fy, ""):
+                _r.tbv_reason = pre["eq_basis"][_r.fy]
+            _r.rote = rote(_r.N_common, _r.tbv, _prev_tbv)
+            _prev_tbv = _r.tbv
     latest = rows[-1]
     fys = [r.fy for r in rows]
 
@@ -5824,6 +6155,65 @@ if years and ticker and st.session_state.get("fin_tk") == ticker:
         st.caption("Net interest margin is refused: average earning assets are not in XBRL. "
                    "Efficiency = noninterest expense over net interest income plus fees. "
                    "Regulatory capital ratios are out of scope.")
+    elif cls == "broker":
+        _sg = {r.fy: segregated_total(r.bal) for r in rows}
+        _mx = {r.fy: broker_mix(r.lines.get("bnii"), r.lines.get("comm")) for r in rows}
+        _mf = money_fmt([v for r in rows for v in (r.lines.get("bnii"), r.lines.get("comm"),
+                                                    r.bal.get("payc"), _sg[r.fy][0],
+                                                    r.bal.get("recv"), r.bal.get("nci"))
+                         if v is not None])
+        st.dataframe(pd.DataFrame([{
+            "FY": _fyl(r),
+            "Net interest income": cell(r.lines.get("bnii"), _mf),
+            "Commissions": cell(r.lines.get("comm"), _mf),
+            "NII share": pct(_mx[r.fy]),
+            "Payables to customers": cell(r.bal.get("payc"), _mf),
+            "Segregated": cell(_sg[r.fy][0], _mf),
+            "Customer receivables": cell(r.bal.get("recv"), _mf),
+            "NCI": cell(r.bal.get("nci"), _mf),
+        } for r in rows]), width='stretch', hide_index=True)
+        if latest.bal.get("payc") is not None and latest.eq:
+            st.caption(f"**The client float.** Payables to customers, FY{latest.fy}: "
+                       f"{latest.bal['payc']:,.0f} — about {latest.bal['payc'] / latest.eq:,.0f}x "
+                       "the parent's own equity. The balance sheet is the clients' money; the "
+                       "firm's capital is the sliver that absorbs the mistakes. That is why net "
+                       "cash is meaningless here and the page prices tangible book instead.")
+        st.caption("NII share = net interest income over net interest income plus commissions — "
+                   "those two filed lines only, not total revenue. A filer whose transactional "
+                   "revenue is not tagged as commissions (payment for order flow usually is not) "
+                   "shows a dash, not a flattering ratio on half a denominator. "
+                   f"Segregated, FY{latest.fy}: {_sg[latest.fy][1]}. "
+                   "Customer receivables: filed under a custom tag at both flagships; shown only "
+                   "when a standard tag carries it. Nothing is priced from a dashed cell.")
+        _eqp_d, _eqc_d, _nci_d = (pre["fin_bal"].get(k, {}) for k in ("eqp", "eqc", "nci"))
+        _idfy = [r.fy for r in rows if r.fy in _eqp_d and r.fy in _eqc_d and r.fy in _nci_d]
+        _idtxt = []
+        if _idfy:
+            _f0 = _idfy[-1]
+            _gap = _eqp_d[_f0] + _nci_d[_f0] - _eqc_d[_f0]
+            _idtxt.append(f"equity, FY{_f0}: parent {_eqp_d[_f0]:,.0f} + NCI {_nci_d[_f0]:,.0f} "
+                          f"= consolidated {_eqc_d[_f0]:,.0f}"
+                          + (" — exact" if abs(_gap) <= 1 else f" — off by {_gap:,.0f}"))
+        _nidfy = [r.fy for r in rows
+                  if r.N_common is not None and (r.lines.get("ncin") is not None)
+                  and (r.lines.get("plc") is not None)
+                  and pre.get("n_by_fy", {}).get(r.fy) in BROKER_PARENT_N]
+        if _nidfy:
+            _f1 = _nidfy[-1]
+            _r1 = next(r for r in rows if r.fy == _f1)
+            _gap = _r1.N_common + _r1.lines["ncin"] - _r1.lines["plc"]
+            _idtxt.append(f"income, FY{_f1}: parent {_r1.N_common:,.0f} + NCI "
+                          f"{_r1.lines['ncin']:,.0f} = consolidated {_r1.lines['plc']:,.0f}"
+                          + (" — exact" if abs(_gap) <= 1 else f" — off by {_gap:,.0f}"))
+        _bas = pre.get("basis_note") or "parent-only"
+        _mixed = {fy: w for fy, w in pre.get("eq_basis", {}).items()
+                  if fy in [r.fy for r in rows] and w != "parent-only tag as filed"}
+        st.caption("**Basis.** Both sides of every ratio are the parent's slice: " + _bas
+                   + (". " + "; ".join(f"FY{fy}: {w}" for fy, w in sorted(_mixed.items()))
+                      if _mixed else "")
+                   + (". Filed identity — " + "; ".join(_idtxt) + "." if _idtxt else ".")
+                   + " A year where the parent slice cannot be stated from filed lines is "
+                     "refused, never scaled from an ownership ratio.")
     else:
         _ffo = {r.fy: ffo(r.N_common, r.lines.get("da"), r.lines.get("rgain"), r.lines.get("rimp")) for r in rows}
         _ffops = {r.fy: (_ffo[r.fy][0] / r.wavg if _ffo[r.fy][0] is not None and r.wavg else None) for r in rows}
@@ -6080,6 +6470,8 @@ if years and ticker and st.session_state.get("fin_tk") == ticker:
                f"growth           derived {pct(derived_growth(_ret0, _payout))} year 1 — filed TBV/share CAGR {pct(tbvps_cagr(rows))}",
                f"years            {_years}",
                f"exit             {_exit:.2f}× tangible book — seed terminal ROTE ÷ 15% (P/E {cell(exit_pe('book', _exit, _retT), '{:.1f}')}×)"]
+    if cls == "broker":
+        _a += [f"basis            {pre.get('basis_note') or 'parent-only'} — both sides of every ratio are the parent slice"]
     _a += [f"IV15             ${_iv15:,.2f} = stream ${_streamv:,.2f} ({pct(_sh_s, 0)}) + exit ${_exitv:,.2f} ({pct(_sh_e, 0)})",
            "not read         net cash, ROIC, NIM, NAV, regulatory capital — refused on this page by design"]
     st.code("\n".join(_a))
