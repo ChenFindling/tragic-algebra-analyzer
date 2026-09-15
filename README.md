@@ -6,7 +6,7 @@ of stock valuation tools that measures the true cost of stock-based compensation
 spent on buybacks to offset employee grants, plus the market value of shares actually
 delivered — and prices what survives at a 15% required return.
 
-The app lives at **[investor-toolkit.streamlit.app](https://investor-toolkit.streamlit.app/)**.
+The app lives at **[investor-toolkit.streamlit.app](https://investor-toolkit.streamlit.app/Tragic_Algebra_Analyzer)**.
 It began as a single Tragic Algebra page and this repository keeps that name —
 `tragic-algebra-analyzer` — because links to the code are pinned in public posts; the app
 outgrew the name, and the address now says what it is.
@@ -42,7 +42,7 @@ read or failed to find.
 | **Tragic Algebra Analyzer** | Owners' earnings after the true cost of stock comp, and the IV ladder that follows |
 | **100-Bagger Checker** | Can this business fund a hundredfold in twenty years, on Mayer's criteria |
 | **Inflection Checker** | Is a loss-to-profit story actually in the filings, and what is it worth if it continues |
-| **Financials Checker** | Banks, insurers and REITs, which every other page refuses |
+| **Financials Checker** | Banks, insurers, REITs and client-asset brokers, which every other page refuses |
 | **Non-US Checker** | The same algebra for IFRS and non-dollar filers, in the filing currency |
 | **DCF Evaluator** | The standard two-stage DCF, with its stock-comp blind spot priced beside it |
 | **Expectations** | What today's price implies — the growth path and the year-15 exit it takes to deliver the required return |
@@ -250,6 +250,13 @@ NIM, NAV and the moat tiers do not appear. Refusals are frequent and specific: n
 means no bank, goodwill exceeding equity means no book to price, a dividend above FFO is
 not projected, and a preferred-stock line that stops being filed is carried forward and
 named rather than silently zeroed.
+
+Brokers whose balance sheets are client assets — payables to customers, segregated cash,
+margin receivables — are priced on the same frame; a broker that holds deposits is still a
+bank, and exchanges and dealers are still refused. Where a broker sits under an Up-C holding
+structure, book and income are the parent's slice only, each read from its own filed line —
+consolidated figures are never scaled by an ownership ratio, and a year whose parent slice
+cannot be stated from filed lines is refused.
 
 ## 🌍 Non-US Checker
 
