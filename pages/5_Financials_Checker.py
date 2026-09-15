@@ -6211,8 +6211,12 @@ if years and ticker and st.session_state.get("fin_tk") == ticker:
                           f"{_r1.lines['ncin']:,.0f} = consolidated {_r1.lines['plc']:,.0f}"
                           + (" — exact" if abs(_gap) <= 1 else f" — off by {_gap:,.0f}"))
         _bas = pre.get("basis_note") or "parent-only"
+        # HOOD, 15 Sep 2026: when the only mixed year is the latest, the
+        # summary note already quotes its arithmetic — the per-year list
+        # repeated it. A year whose sentence the note carries is skipped.
         _mixed = {fy: w for fy, w in pre.get("eq_basis", {}).items()
-                  if fy in [r.fy for r in rows] and w != "parent-only tag as filed"}
+                  if fy in [r.fy for r in rows] and w != "parent-only tag as filed"
+                  and w not in _bas}
         st.caption("**Basis.** Both sides of every ratio are the parent's slice: " + _bas
                    + (". " + "; ".join(f"FY{fy}: {w}" for fy, w in sorted(_mixed.items()))
                       if _mixed else "")
