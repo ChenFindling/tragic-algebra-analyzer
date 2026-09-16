@@ -941,6 +941,46 @@ def treasury_mixed_note(accepted_fys: list[int]) -> str:
             "repurchases rather than withholding, the tag panel names the line to check.")
 
 
+GATE2_REASON = "no share price — excluded per Gate 2"
+
+
+def gate2_exclusions(years) -> list[int]:
+    """Gate 2 (HANDOVER §5.3, from the article audit; landed 16 Sep 2026).
+
+    Burry drops N, G and C for any year whose V is null for lack of a
+    price; until today this page kept such years in the pools behind a
+    one-line hedge. A year with no share price cannot price the shares it
+    delivered: omega loses exactly the market value of every share handed
+    out, owners' earnings read high by the same amount, and pooled ΔE is
+    flattered. The years are excluded the way a listing year is — reason
+    on the year, asterisk in the table, pools over what remains.
+
+    Applies only when at least one year carries a price: with none at all
+    the price fetch itself failed and price_coverage_refusal upstream owns
+    the page — excluding everything here would empty every pool on a
+    transient provider error. Returns the excluded fiscal years, oldest
+    first.
+    """
+    if not any(y.price > 0 for y in years):
+        return []
+    hit = [y for y in years if y.price == 0]
+    for y in hit:
+        y.excluded = GATE2_REASON
+    return sorted(y.fy for y in hit)
+
+
+def gate2_note(excluded_fys: list[int]) -> str:
+    """The page's sentence for gate2_exclusions — years named, direction
+    stated, no hedge."""
+    fys = ", ".join(f"FY{f}" for f in excluded_fys)
+    year_word = "those years" if len(excluded_fys) > 1 else "that year"
+    return (f"{fys} excluded — no share price, per Gate 2. The market value of shares "
+            f"delivered cannot be priced in {year_word}, so the true stock-comp cost "
+            "there is understated by exactly the market value of every share handed "
+            "out — the flattering direction. The pooled figures cover the priced "
+            "years only.")
+
+
 def treasury_accepted(years, origin_cw: dict) -> bool:
     """Whether the treasury-accepted sentence may print.
 
@@ -2619,6 +2659,14 @@ def load(ticker: str, n_years: int = 10):
     if _pc:
         raise ValueError(f"{ticker} cannot be valued from these filings — " + _pc)
 
+    # Gate 2 sits here, above every consumer of the year list: the
+    # negative-Ω note, the share ladder and the pools all read `excluded`,
+    # and a later site would leave the RIVN-shape note claiming a year
+    # "is not excluded" after Gate 2 excluded it.
+    _g2 = gate2_exclusions(years)
+    if _g2:
+        notes.append(gate2_note(_g2))
+
     # No silent partial averages: name every window year whose average stands
     # on fewer months than the fiscal year has, and say WHICH partial truth
     # it is — listed mid-year, or months missing from the history (§1.7).
@@ -2790,9 +2838,6 @@ def load(ticker: str, n_years: int = 10):
               "and the pooled ΔE weights whichever era has more years. The tag panel shows how "
               "many years each line actually read.")
 
-    if any(y.price == 0 for y in years):
-        notes.append("No share price for some years — their stock-comp cost is understated, so "
-                     "owners' earnings and ROIC read high for those years.")
     if not any(y.Cw for y in years) and not capped_any:
         notes.append("No tax-withholding line found. That understates the SBC cost, so owners' "
                      "earnings here are flattering rather than conservative.")
@@ -6230,6 +6275,31 @@ def self_test() -> list[tuple[str, bool, str]]:
                 and ("almost never does" + ", so the ") in _s55,
                 "IBKR, FIN-V2 §7.1: the premise may not fire on a filer with no buybacks read"))
 
+
+    # ── B1: Gate 2 no-price-year exclusion, 16 Sep 2026 ─────────────
+    _g2y = [Year(fy=2022, N=50.0, G=5.0, price=0.0),
+            Year(fy=2023, N=100.0, G=10.0, Cw=12.0, price=50.0),
+            Year(fy=2024, N=100.0, Cw=8.0, price=55.0)]
+    _g2x = gate2_exclusions(_g2y)
+    out.append(("Gate 2: the unpriced year is excluded with the reason on the year, priced years untouched",
+                _g2x == [2022] and _g2y[0].excluded == GATE2_REASON
+                and not _g2y[1].excluded and not _g2y[2].excluded,
+                "HANDOVER §5.3: drop N, G and C where V is null for lack of a price"))
+    _g2p = pool(_g2y)
+    out.append(("Gate 2: the pools cover the priced years only",
+                _g2p.years == 2 and _g2p.sum_N == 200.0 and abs(_g2p.dE - 0.95) < 1e-12,
+                "the excluded year's 55.0M of flattered owners' earnings never enters"))
+    _g2z = [Year(fy=2022, N=50.0, price=0.0)]
+    out.append(("Gate 2: with no price anywhere, nothing is excluded — the refusal upstream owns that page",
+                gate2_exclusions(_g2z) == [] and not _g2z[0].excluded,
+                "a transient provider failure must not empty the pools"))
+    out.append(("Gate 2: the note names the years, the old hedge is retired, and every last-three claim states priced coverage",
+                "FY2022, FY2023 excluded — no share price, per Gate 2" in gate2_note([2022, 2023])
+                and "that year" in gate2_note([2024])
+                and ("cost is under" + "stated, so") not in _s55
+                and _s55.count("({recent.years} pri" + "ced)") == 4,
+                "the sentence is exact, the hedge is gone, all four sites conditioned"))
+
     return out
 
 
@@ -6400,7 +6470,9 @@ if years and ticker and st.session_state.get("hb_tk") == ticker:
             "in a normal year.")
     if _seed_from_pooled:
         st.warning(
-            (f"**ΔE over the last three years is {recent.dE:.1%}, which cannot be projected "
+            (f"**ΔE over the last three years"
+             + ("" if recent.years == 3 else f" ({recent.years} priced)")
+             + f" is {recent.dE:.1%}, which cannot be projected "
              "forward.** Stock compensation has swamped earnings over that window, and a "
              "negative or absurd ratio applied to next year's profit is not a forecast. "
              if recent.dE_defined else
@@ -6408,7 +6480,9 @@ if years and ticker and st.session_state.get("hb_tk") == ticker:
              # 107.3% ratio "stock compensation swamping earnings", which is
              # not what happened and does not even sound wrong. Name the
              # denominator instead.
-             f"**ΔE cannot be measured here: net income over the last three years pools to "
+             f"**ΔE cannot be measured here: net income over the last three years"
+             + ("" if recent.years == 3 else f" ({recent.years} priced)")
+             + f" pools to "
              f"{money(recent.sum_N)}.** Both sides of the ratio are negative, so it comes out "
              f"positive — the {recent.dE:.1%} it produces is arithmetic on a loss, not a share "
              "of profit reaching shareholders, because there is no profit to share. ")
@@ -7047,7 +7121,9 @@ if years and ticker and st.session_state.get("hb_tk") == ticker:
         st.caption(
             f"ΔE pooled: {dE_caption(pooled.dE, pooled.dE_defined, False)} over "
             f"{pooled.years} years, {dE_caption(recent.dE, recent.dE_defined, False)} over the "
-            f"last three. "
+            f"last three"
+            + ("" if recent.years == 3 else f" ({recent.years} priced)")
+            + ". "
             + (f"The last three years cannot be projected, so the box above shows "
                + (f"the 5-year median of owners' earnings rather than a ΔE applied to net "
                   f"income — the same fallback the Tragic Algebra Analyzer uses. " if median_OE > 0 else
@@ -7058,7 +7134,9 @@ if years and ticker and st.session_state.get("hb_tk") == ticker:
                f"{applied_dE:.1%}, which is how the Tragic Algebra Analyzer seeds it too — ")
             + f"the latest year as filed "
             f"came in at {money(latest.OE)}."
-            + (f" The {use_dE:.1%} measured over the last three years is left as filed above "
+            + (f" The {use_dE:.1%} measured over the last three years"
+               + ("" if recent.years == 3 else f" ({recent.years} priced)")
+               + " is left as filed above "
                "but is not projected: shareholders cannot keep more than every reported dollar "
                "for fifteen years running." if dE_capped else ""))
 
