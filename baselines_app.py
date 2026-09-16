@@ -6260,19 +6260,65 @@ PINS: list[Pin] = [
             'shares': 0.0,
         },
         refusals=('shares_read_nothing', 'note:foreign_filer')),
-    # CVNA / RYAN — capture-only entries, added 15 Sep 2026 with §5.5 G
-    # (the as-exchanged basis; the Up-C stops lifted this session). The
-    # deliberate capture→pin cycle, the F3/PDEX mechanic: deploy 1 runs
-    # them NOT PINNED — the designed movement is the clean line growing
-    # ", 2 not pinned" and nothing else — Chen pastes the two printed
-    # capture blocks, and the app-only deploy 2 sets the pins dated with
-    # this session. Successor standing line from that deploy on:
-    # "21 pass, 2 fail, 2 refused as pinned, 6 window mismatch,
-    # 1 not comparable". First run after this deploy is slower on these
-    # two rows: the count route fetches ~9 CVNA and ~5 RYAN instances,
-    # once per 24h cache window.
-    Pin(ticker='CVNA', pin_set='internal'),
-    Pin(ticker='RYAN', pin_set='internal'),
+    # CVNA / RYAN — pinned 16 Sep 2026 from Chen's pasted capture blocks,
+    # the deliberate capture→pin cycle of the §5.5 G session (as-exchanged
+    # basis; deploy 1 ran them NOT PINNED by design, the only movement in
+    # the clean line). Every figure verified against the session's record
+    # before pinning: N is the filed CONSOLIDATED income (CVNA 1,895 =
+    # 1,407 + 488; RYAN 214.157 = 63.399 + 150.758 — the identities exact
+    # as pasted 15 Sep 2026); dE_3y reproduced the registered predictions
+    # to the digit (−51.52% / 81.39%), RYAN's dE_full likewise (93.53%);
+    # CVNA carries no dE_full key — cumulative consolidated losses, the
+    # n/a-losses shape, same as GRAB's absent keys; every omega:YYYY equals
+    # the live year table Chen pasted before the build; shares are the
+    # registry's verified per-class sums (CVNA ×5 split-adjusted). The two
+    # net_cash figures are first captures, not comparisons. Standing clean
+    # line from this deploy on: "21 pass, 2 fail, 2 refused as pinned,
+    # 6 window mismatch, 1 not comparable".
+    Pin(ticker='CVNA', pin_set='internal', pinned='2026-09-16',
+        latest_fy=2025, window=(2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025),
+        core={
+            'G': 96.0,
+            'N': 1895.0,
+            'T': 0.0,
+            'dE_3y': -51.5241911053978,
+            'net_cash': -2714.0,
+            'omega:2016': 0.0,
+            'omega:2017': 0.6559999999999999,
+            'omega:2018': 470.78026509189607,
+            'omega:2019': 421.93925969163575,
+            'omega:2020': 3040.0744053761164,
+            'omega:2021': 246.22950485229492,
+            'omega:2022': 876.7577835977821,
+            'omega:2023': 310.50405588145054,
+            'omega:2024': 1774.3856129741669,
+            'omega:2025': 1885.9377713155748,
+            'omega_sum': 9027.264658780918,
+            'price': 64.00866603851318,
+            'shares': 1091.695,
+        },
+        refusals=()),
+    Pin(ticker='RYAN', pin_set='internal', pinned='2026-09-16',
+        latest_fy=2025, window=(2019, 2020, 2021, 2022, 2023, 2024, 2025),
+        core={
+            'G': 69.451,
+            'N': 214.157,
+            'T': 0.0,
+            'dE_3y': 81.39305798890413,
+            'dE_full': 93.52507499884722,
+            'net_cash': -3193.3269999999998,
+            'omega:2019': 0.0,
+            'omega:2020': 0.0,
+            'omega:2021': 78.256,
+            'omega:2022': 31.12821054283301,
+            'omega:2023': 33.336901357221606,
+            'omega:2024': 125.54977450858561,
+            'omega:2025': 178.11695234604548,
+            'omega_sum': 446.38783875468573,
+            'price': 62.84083334604899,
+            'shares': 264.112311,
+        },
+        refusals=()),
     # AAPL — re-pinned 8 Sep 2026 after the §1.7 price-range deploy.
     # FY2016 is a thirteen-month fiscal year (27 Sep 2015 – Sep 2016);
     # the old range=11y form returned no bar for its boundary month, so
