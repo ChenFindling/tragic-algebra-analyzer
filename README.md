@@ -453,3 +453,7 @@ on estimates you supply — change the growth rate and the answer changes a grea
 follow the published writing of the authors named on each page; this project is independent
 and is not affiliated with or endorsed by any of them, including Michael Burry or Scion Asset
 Management.
+
+---
+
+Free, and staying free. If it's been useful: [ko-fi.com/investortoolkit](https://ko-fi.com/investortoolkit)
