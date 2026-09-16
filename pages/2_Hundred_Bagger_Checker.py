@@ -908,6 +908,39 @@ def treasury_equal_reject(years, origin_cw: dict) -> list[tuple[int, float]]:
     return hits
 
 
+def switched_series_notes(notes: list[str], first_split_notes: list[str],
+                          winner_split_notes: list[str]) -> list[str]:
+    """Notes after the share-count ladder replaces the series.
+
+    TM printed phantom split notes from an abandoned share series (page 6's
+    session, 4 Sep 2026; landed in the residue sweep, 16 Sep 2026): the
+    first-choice series tripped split_adjust, the ladder then put that
+    series aside, and the note announcing its split stayed — a split
+    announced from a series the page does not use, on a company that never
+    split. A note that describes what the page is not reasoning from is the
+    false-sentence class. The abandoned series' split notes are dropped,
+    every other note collected so far stands, and the winning series' own
+    split notes are appended.
+    """
+    return [n for n in notes if n not in first_split_notes] + winner_split_notes
+
+
+def treasury_mixed_note(accepted_fys: list[int]) -> str:
+    """The sentence for a treasury line accepted in some years and rejected
+    in others (ASML, 4 Sep 2026, queued from page 6's session; landed in
+    the residue sweep, 16 Sep 2026). The rejection note says how many years
+    fell to the size test; this one names the years that stand, so both
+    sides of the split are on the page. No direction is claimed — whether
+    the pooled figures run harsh or flattering depends on which side
+    misread the tag — and the tag panel names the line to check.
+    """
+    fys = ", ".join(f"FY{f}" for f in accepted_fys)
+    return (f"The same treasury line passed the size test in {fys} and stands as tax "
+            "withholding there: those amounts are withholding-sized next to the charge. "
+            "One tag, split by the size test — if the accepted years look like ordinary "
+            "repurchases rather than withholding, the tag panel names the line to check.")
+
+
 def treasury_accepted(years, origin_cw: dict) -> bool:
     """Whether the treasury-accepted sentence may print.
 
@@ -2330,6 +2363,10 @@ def load(ticker: str, n_years: int = 10):
         for _fy, _v in _xr["SHO"].items():
             shares_out.setdefault(_fy, _v)
     shares_out, notes = split_adjust(shares_out)
+    # Held apart: if the share-count ladder below replaces the series, the
+    # first-choice series' split notes leave with it (TM's phantom pair —
+    # see switched_series_notes; residue sweep, 16 Sep 2026).
+    _split_notes0 = list(notes)
     if _xr:
         notes.extend(_xr["notes"])
         if _upcb:
@@ -2409,7 +2446,9 @@ def load(ticker: str, n_years: int = 10):
             else:
                 _pick, _share_route = _wv, "the weighted-average diluted count"
             shares_out, _extra = split_adjust(_pick)
-            notes.extend(_extra)
+            # The abandoned first-choice series' split notes go with the
+            # series (TM's phantom pair; residue sweep, 16 Sep 2026).
+            notes[:] = switched_series_notes(notes, _split_notes0, _extra)
             notes.append(
                 ("The share count read as {:,.1f}M against a weighted-average diluted count of "
                  "{:,.1f}M — that far above the average means issued shares, with the difference "
@@ -2417,8 +2456,16 @@ def load(ticker: str, n_years: int = 10):
                  "used too many shares. Switched to {}."
                  ).format(_was / 1e6, _wv[_latw] / 1e6, _share_route)
                 if _treasury else
-                ("The share count barely moved while the company was buying stock back, so the "
-                 "tag being read is not shares outstanding. Switched to {}.").format(_share_route))
+                # IBKR, 15 Sep 2026 (FIN-V2 §7.1): the buyback premise fired on
+                # a filer with no buybacks read at all; it now prints where
+                # buybacks were read and the test stands alone where they were
+                # not (residue sweep, 16 Sep 2026 — same conditioning as the
+                # other carriers' share_route_note).
+                (("The share count barely moved while the company was buying stock back, so the "
+                  if series.get("T") else
+                  "The share count barely moved across the whole window, which a real "
+                  "outstanding count almost never does, so the ")
+                 + "tag being read is not shares outstanding. Switched to {}.").format(_share_route))
             if _share_route.startswith("the weighted"):
                 notes.append(
                     "That count is an average over each year rather than a year-end snapshot, so "
@@ -2649,6 +2696,14 @@ def load(ticker: str, n_years: int = 10):
                 "Either means it is an ordinary repurchase, and charging it as withholding "
                 "would count the same dollars twice — once as cash out, once as the market value "
                 "of shares delivered.")
+            # ASML (4 Sep 2026; landed 16 Sep 2026): on a mixed filer the
+            # accepted years are named beside the rejection, so both sides
+            # of the size test are on the page.
+            _tacc = sorted(y.fy for y in years
+                           if y.Cw and tag_origin["Cw"].get(y.fy)
+                           == "TreasuryStockValueAcquiredCostMethod")
+            if _tacc:
+                notes.append(treasury_mixed_note(_tacc))
         elif treasury_accepted(years, tag_origin["Cw"]):
             # JPM, 1 Sep 2026 (page 5's run): the treasury tag was in the
             # sources but no year survived the filters, so this "accepted"
@@ -2709,7 +2764,9 @@ def load(ticker: str, n_years: int = 10):
         notes.append(
             "No repurchase figure was found for FY"
             + ", FY".join(str(f) for f in _gap)
-            + ", yet the share count fell by more than 1% in each. Those years are almost "
+            + (", yet the share count fell by more than 1% in each." if len(_gap) > 1 else
+               ", yet the share count fell by more than 1% that year.")
+            + " Those years are almost "
               "certainly buybacks tagged under an element this reader does not know. Two "
               "consequences: owners' earnings for those years are a ceiling, since the market "
               "value of shares delivered floors at zero without a repurchase figure; and cash "
@@ -3214,6 +3271,18 @@ def roic_caveat(r: RoicYear, fye_month: int) -> str:
                     "snapshot taken mid-cycle rather than at a quiet point")
     return "; ".join(bits)
 
+
+
+def dE_caption(dE: float, defined: bool, no_counts: bool) -> str:
+    """The ΔE radio caption. META, 5 Sep 2026 (Chen): a dual-class filer with
+    no share count in ANY year still displayed pooled ΔE (60.4%/56.4%) as
+    selectable figures — but with every year's share change reading zero, the
+    whole buyback is charged as cost and the pools are meaningless (his META
+    is 83.3%). A number the page cannot stand behind must not be offered as a
+    choice."""
+    if no_counts:
+        return "n/a — no share counts read"
+    return f"{dE:.1%}" if defined else "n/a — losses"
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -6128,6 +6197,39 @@ def self_test() -> list[tuple[str, bool, str]]:
     out.append(("Sweep: carried-forward-capital note names the menu page",
                 bool(_sw) and _route_ok(_sw), _sw[:80]))
 
+
+    # ── Residue sweep, 16 Sep 2026 ──────────────────────────────────
+    _tm_adj, _tm_ph = split_adjust({2016: 100e6, 2017: 3_300_000_000.0,
+                                    2018: 3_300_000_000.0})
+    out.append(("Ladder switch drops the abandoned series' split notes and keeps the rest",
+                len(_tm_ph) == 1 and switched_series_notes(
+                    _tm_ph + ["a note about something else"], _tm_ph, []
+                ) == ["a note about something else"],
+                "TM's phantom pair: a split note may describe the series in use, no other"))
+    _asml = treasury_mixed_note([2016, 2019, 2021])
+    out.append(("Mixed treasury filer: the accepted years are named beside the rejection",
+                "FY2016, FY2019, FY2021" in _asml
+                and _asml.startswith("The same treasury line passed the size test"),
+                "ASML: one tag split by the size test; both sides now on the page"))
+    out.append(("A one-year repurchase gap gets the singular sentence, not \"in each\"",
+                (", yet the share count fell by more than 1% that y" + "ear.") in _s55
+                and ("if len(_gap) > 1" + " else") in _s55,
+                "the toolkit pass's ride covered the six reader carriers and silently "
+                "excluded this file's own copy — the carrier-set lesson twice"))
+    out.append(("dE_caption ported: the undefined ratio may never print as usable",
+                dE_caption(0.833, True, False) == "83.3%"
+                and dE_caption(5.138, False, False) == "n/a — losses"
+                and dE_caption(0.604, True, True) == "n/a — no share counts read",
+                "CVNA read 513.8% pooled; the doctrine calls that not usable, so it may not print"))
+    out.append(("The ΔE-pooled caption runs both tokens through dE_caption, never raw",
+                ("ΔE pooled: {dE_capt" + "ion(pooled.dE") in _s55
+                and ("ΔE pooled: {pooled" + ".dE:.1%}") not in _s55,
+                "NCI-HANDOVER §6's sharpest residue item, landed 16 Sep 2026"))
+    out.append(("The static switch premise is conditional on buybacks actually read",
+                ("if series.get(\"T\")" + " else") in _s55
+                and ("almost never does" + ", so the ") in _s55,
+                "IBKR, FIN-V2 §7.1: the premise may not fire on a filer with no buybacks read"))
+
     return out
 
 
@@ -6937,8 +7039,14 @@ if years and ticker and st.session_state.get("hb_tk") == ticker:
                 "Share change": "{:+,.1f}", "Avg price": "${:,.2f}",
                 "True SBC cost": _mfmt, "Owners' earnings": _mfmt}, na_rep="—"),
             width="stretch", hide_index=True)
+        # CVNA, 16 Sep 2026 (NCI-HANDOVER §6): this caption printed the raw
+        # undefined ratio ("ΔE pooled: 513.8%...") beside a doctrine that
+        # calls it not usable. dE_caption — tool 1's guard, ported verbatim —
+        # now owns both tokens; the no-counts case never reaches this caption,
+        # the zero-shares stop upstream owns it.
         st.caption(
-            f"ΔE pooled: {pooled.dE:.1%} over {pooled.years} years, {recent.dE:.1%} over the "
+            f"ΔE pooled: {dE_caption(pooled.dE, pooled.dE_defined, False)} over "
+            f"{pooled.years} years, {dE_caption(recent.dE, recent.dE_defined, False)} over the "
             f"last three. "
             + (f"The last three years cannot be projected, so the box above shows "
                + (f"the 5-year median of owners' earnings rather than a ΔE applied to net "
