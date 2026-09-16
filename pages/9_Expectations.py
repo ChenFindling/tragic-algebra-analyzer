@@ -1365,6 +1365,46 @@ def treasury_mixed_note(accepted_fys: list[int]) -> str:
             "repurchases rather than withholding, the tag panel names the line to check.")
 
 
+GATE2_REASON = "no share price — excluded per Gate 2"
+
+
+def gate2_exclusions(years) -> list[int]:
+    """Gate 2 (HANDOVER §5.3, from the article audit; landed 16 Sep 2026).
+
+    Burry drops N, G and C for any year whose V is null for lack of a
+    price; until today this page kept such years in the pools behind a
+    one-line hedge. A year with no share price cannot price the shares it
+    delivered: omega loses exactly the market value of every share handed
+    out, owners' earnings read high by the same amount, and pooled ΔE is
+    flattered. The years are excluded the way a listing year is — reason
+    on the year, asterisk in the table, pools over what remains.
+
+    Applies only when at least one year carries a price: with none at all
+    the price fetch itself failed and price_coverage_refusal upstream owns
+    the page — excluding everything here would empty every pool on a
+    transient provider error. Returns the excluded fiscal years, oldest
+    first.
+    """
+    if not any(y.price > 0 for y in years):
+        return []
+    hit = [y for y in years if y.price == 0]
+    for y in hit:
+        y.excluded = GATE2_REASON
+    return sorted(y.fy for y in hit)
+
+
+def gate2_note(excluded_fys: list[int]) -> str:
+    """The page's sentence for gate2_exclusions — years named, direction
+    stated, no hedge."""
+    fys = ", ".join(f"FY{f}" for f in excluded_fys)
+    year_word = "those years" if len(excluded_fys) > 1 else "that year"
+    return (f"{fys} excluded — no share price, per Gate 2. The market value of shares "
+            f"delivered cannot be priced in {year_word}, so the true stock-comp cost "
+            "there is understated by exactly the market value of every share handed "
+            "out — the flattering direction. The pooled figures cover the priced "
+            "years only.")
+
+
 def treasury_accepted(years, origin_cw: dict) -> bool:
     """Whether the treasury-accepted sentence may print.
 
@@ -2794,6 +2834,14 @@ def load(ticker: str, n_years: int = 10):
     if _pc:
         raise ValueError(f"{ticker} cannot be valued from these filings — " + _pc)
 
+    # Gate 2 sits here, above every consumer of the year list: the
+    # negative-Ω note, the share ladder and the pools all read `excluded`,
+    # and a later site would leave the RIVN-shape note claiming a year
+    # "is not excluded" after Gate 2 excluded it.
+    _g2 = gate2_exclusions(years)
+    if _g2:
+        notes.append(gate2_note(_g2))
+
     # No silent partial averages: name every window year whose average stands
     # on fewer months than the fiscal year has, and say WHICH partial truth
     # it is — listed mid-year, or months missing from the history (§1.7).
@@ -2999,8 +3047,6 @@ def load(ticker: str, n_years: int = 10):
     if _holes:
         notes.append(_holes)
 
-    if any(y.price == 0 for y in years):
-        notes.append("No share price for some years — their SBC cost is understated.")
     if not any(y.Cw for y in years) and not capped_any:
         # The "flattering" claim holds only where the GAAP charge itself read.
         # On Shell neither read, and the buyback was charged in full as stock
@@ -5727,40 +5773,31 @@ def self_test() -> list[tuple[str, bool, str]]:
                 chr(0xA2) not in _s7,
                 "the shareholder-quality banner reads cents; no stray glyph in this file"))
 
-    return out
 
-
-# ══════════════════════════════════════════════════════════════════════
-    # ── the 11 Sep 2026 concession (job 5 of the toolkit pass): the
-    #    compounding language is conditional. dE is a level ratio (OE/N),
-    #    not an annual retention factor; dE**t and the 87% break-even hold
-    #    only if the dilution pace persists, and every surface now says so.
-    #    Old absolutes are asserted ABSENT via concatenation so this check
-    #    never matches itself; UI wording is asserted only where UI exists,
-    #    so the check also holds on the Baselines app's engine copy.
-    from pathlib import Path as _P5
-    _s5 = _P5(__file__).read_text(encoding="utf-8")
-    out.append(("Concession wording: conditional everywhere, old absolutes gone",
-                ("Share of reported value growth" + " that survives") not in _s5
-                and ("Value kept" + " after 10y") not in _s5
-                and ("Below the 87%" + " break-even.**") not in _s5
-                and ("Above the 87%" + " break-even**") not in _s5
-                and "dilution pace producing this" in _s5
-                and (("q3.metric(" not in _s5)
-                     or ("Per-share level after 10y" in _s5
-                         and "If the dilution pace behind it persists" in _s5)),
-                "own-source scan"))
-
-    # ── job-7 ride wordings (toolkit pass, 12 Sep 2026), pinned at the
-    #    engine's home file; the hash audit carries them to every copy.
-    from pathlib import Path as _P7
-    _s7 = _P7(__file__).read_text(encoding="utf-8")
-    out.append(("Ride wordings: equity-raise cause, sub-1M swing decimal, one-year grammar",
-                "an all-stock acquisition or an equity raise" in _s7
-                and ("most often an all-stock" + " acquisition") not in _s7
-                and ":,.1f}M\" if abs(alt - net_cash) < 1" in _s7
-                and "more than 1% that year." in _s7,
-                "own-source scan"))
+    # ── B1: Gate 2 no-price-year exclusion, 16 Sep 2026 ─────────────
+    _g2y = [Year(fy=2022, N=50.0, G=5.0, price=0.0),
+            Year(fy=2023, N=100.0, G=10.0, Cw=12.0, price=50.0),
+            Year(fy=2024, N=100.0, Cw=8.0, price=55.0)]
+    _g2x = gate2_exclusions(_g2y)
+    out.append(("Gate 2: the unpriced year is excluded with the reason on the year, priced years untouched",
+                _g2x == [2022] and _g2y[0].excluded == GATE2_REASON
+                and not _g2y[1].excluded and not _g2y[2].excluded,
+                "HANDOVER §5.3: drop N, G and C where V is null for lack of a price"))
+    _g2p = pool(_g2y)
+    out.append(("Gate 2: the pools cover the priced years only",
+                _g2p.years == 2 and _g2p.sum_N == 200.0 and abs(_g2p.dE - 0.95) < 1e-12,
+                "the excluded year's 55.0M of flattered owners' earnings never enters"))
+    _g2z = [Year(fy=2022, N=50.0, price=0.0)]
+    out.append(("Gate 2: with no price anywhere, nothing is excluded — the refusal upstream owns that page",
+                gate2_exclusions(_g2z) == [] and not _g2z[0].excluded,
+                "a transient provider failure must not empty the pools"))
+    out.append(("Gate 2: the note names the years, the old hedge is retired, and a short recent pool says so",
+                "FY2022, FY2023 excluded — no share price, per Gate 2" in gate2_note([2022, 2023])
+                and "that year" in gate2_note([2024])
+                and ("their SBC cost is under" + "stated.") not in _s7
+                and ((("Satisfy your" + "self") not in _s7)
+                     or (("({recent.years} pri" + "ced)") in _s7)),
+                "the sentence is exact, the hedge is gone, the caption states priced coverage when short"))
 
     return out
 
