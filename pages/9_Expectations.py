@@ -2460,6 +2460,7 @@ def load(ticker: str, n_years: int = 10):
     # lifts by itself.
     _xr = xbrl_route_apply(ticker, cmap[ticker], series, tag_sources,
                            tag_origin, n_years)
+    _upcb = up_c_income_rebase(ticker, facts, series, tag_sources)
 
     shares_out = _instant(facts, ["CommonStockSharesOutstanding", "CommonStockSharesIssued",
                                   "EntityCommonStockSharesOutstanding"], unit="shares")
@@ -2477,6 +2478,8 @@ def load(ticker: str, n_years: int = 10):
     shares_out, notes = split_adjust(shares_out)
     if _xr:
         notes.extend(_xr["notes"])
+        if _upcb:
+            notes.extend(_upcb["notes"])
     # A share count that includes treasury stock is not a share count. AutoZone
     # tags CommonStockSharesIssued: ~25.7M shares, of which ~9M sit in treasury
     # and only ~16.6M are outstanding. Every per-share figure was computed
@@ -3174,7 +3177,7 @@ def load(ticker: str, n_years: int = 10):
          "Status": "read" if _bal.get(ks[0]) else "none of the tags this reader knows are in "
                                                  "the filing"}
         for name, ks in BALANCE_ROWS]
-    return years, notes, {"tags": tags, "net_cash": net_cash, "cash": cash_total, "debt": debt_total,
+    return years, notes, {"up_c_basis": _upcb, "tags": tags, "net_cash": net_cash, "cash": cash_total, "debt": debt_total,
                           "median_OE": _med, "revenue": latest_rev, "cagr3": cagr3,
                           "leases": lease_total,
                           # The form that resolved against the SEC list. Yahoo uses the
@@ -3762,20 +3765,230 @@ def _xbrl_verify(entries: tuple, merged: dict, merged_dec: dict | None = None,
 
 
 def up_c_sentence(ticker: str, total_m: float) -> str:
-    """The right-reason refusal for umbrella-partnership C-corps."""
+    """The surviving Up-C refusal (§5.5 G, 15 Sep 2026): counts fold, but
+    the consolidated income legs could not be read and verified, so the
+    as-exchanged basis cannot be stood behind and nothing per share is
+    printed. For a verified filer the basis banner replaces this stop."""
     return (
-        f"**Valuation withheld — Up-C structure.** {ticker}'s per-class share counts "
-        f"were read from its filings' own XBRL instances and summed "
-        f"({total_m:,.1f}M across the classes), so the table, the true SBC cost and "
-        "the ΔE pools above are real measurements. But this is an "
-        "umbrella-partnership C-corp: a large share of the economics sits in LLC "
-        "units outside the parent company — for Ryan Specialty over half the summed "
-        "count, for Carvana roughly a third — while the net income read here is the "
-        "parent's slice only. Dividing the parent's slice by the full count would "
-        "understate every per-share figure by about that fraction, so no per-share "
-        "value or verdict is printed. This lifts when the NCI fix lands (price the "
-        "parent slice over the parent-only count, or the whole company over the "
-        "whole count); the share counts read here are that job's test data.")
+        f"**Valuation withheld — Up-C structure, consolidated income unverified.** "
+        f"{ticker}'s per-class share counts were read from its filings' own XBRL "
+        f"instances and summed ({total_m:,.1f}M across the classes), so the table "
+        "and the measurements above are real. This page prices umbrella-partnership "
+        "C-corps on the as-exchanged basis — filed consolidated earnings over that "
+        "full count — but the consolidated income legs (the filed consolidated "
+        "net-income line, or the parent's slice plus the filed noncontrolling-"
+        "interest line) could not be read and verified for this filer, and the "
+        "parent's slice alone over the full count would understate every per-share "
+        "figure. Nothing per share is printed until the legs verify.")
+
+
+# ── §5.5 G — the as-exchanged income basis for Up-C filers (15 Sep 2026) ──
+#
+# The counts above fold (queue G); this block re-bases the INCOME to match.
+# An umbrella-partnership C-corp's parent-slice net income over the summed
+# A+B count mixes bases (Ryan Specialty's parent slice is ~30-40% of a
+# steady-state year; Carvana's varies wildly with the waterfall and parent
+# tax items). Parent-slice owners' earnings do not exist as filed — SBC,
+# withholding and buybacks are whole-company cash flows — so the honest
+# whole-over-whole basis is: filed CONSOLIDATED net income over the
+# as-exchanged Class A + Class B count, at the Class A price the exchange
+# right gives every unit. Never a ratio; filed lines only.
+#
+# Pairing evidence (session of record, 15 Sep 2026): Carvana's LLC Units
+# exchange five-to-four, and holders deliver Class B COMMON shares one for
+# one against the Class A shares issued (B common = 0.8 × Class A Units =
+# exactly the shares issuable), so the A+B common sum IS the as-exchanged
+# count with the 5:4 ratio already baked in — an exchange nets the common
+# count to zero, which is queue G's exchange-invariance finding. Carvana's
+# participation-threshold Class B Units are option-like overhang outside
+# the count — the same treatment every filer's unvested awards get: dS
+# prices delivery when it happens. Ryan Specialty's LLC common units pair
+# 1:1 with Class B common. The intra-group Class A Non-Convertible
+# Preferred Units Carvana Group issued to Carvana Co. (FY2025, against the
+# Senior Notes proceeds) are parent-held, not NCI; the per-year identity
+# below is the standing tripwire should any waterfall change ever break
+# the filed three-leg sum.
+#
+# Income verification (Chen's companyconcept pastes, 15 Sep 2026): the
+# identity ProfitLoss = NetIncomeLoss + NCI holds TO THE DOLLAR in every
+# year either filer has ever filed, on every vintage — 10/10 CVNA years,
+# 7/7 RYAN years. CVNA FY2018 is the one genuine restatement (parent
+# −61,754K → −55,476K, NCI mirroring −192,991K → −199,269K, consolidated
+# invariant at −254,745K): newest-wins keeps the identity exact on both
+# vintages. CVNA re-tagged FY2019/FY2020 legs in whole millions in later
+# filings — all three legs together, so newest-wins stays identity-exact.
+# Pre-check of record: NetIncomeLossAttributableToRedeemableNoncontrolling-
+# Interest returns NoSuchKey for BOTH CIKs (15 Sep 2026) — no second NCI
+# leg exists; the three-leg identity is the whole story.
+#
+# The two named limits (stated on the page, with direction, NEVER adjusted
+# for and never called anything but what they are): the Tax Receivable
+# Agreements — cvna:TaxReceivableAgreementLiabilityNoncurrent $2,228M at
+# FY2025 (from $65M — the valuation-allowance release landing the
+# obligation essentially at once), ryan:TaxReceivableAgreementLiabilities-
+# Noncurrent $458,997K at FY2025 (from $436,296K) — transfer value to
+# pre-IPO holders outside this arithmetic; and the tax-status difference —
+# the NCI slice of LLC income is pre-tax at the member level, so
+# consolidated tax expense understates the as-exchanged tax burden. Both
+# directions: flattering.
+
+@dataclass(frozen=True)
+class UpCIncome:
+    """One Up-C filer's consolidated-income legs and named-limit anchors."""
+    pl: str                                  # consolidated net income concept
+    parent: str                              # parent-slice concept
+    nci: str                                 # NCI income concept
+    verify: tuple[tuple[int, float], ...]    # (fy, consolidated USD) pastes
+    tra_tag: str                             # filed TRA liability tag
+    tra_fy: int                              # its latest balance-sheet year
+    tra_val_m: float                         # latest balance, $M
+    tra_prior_m: float                       # prior-year balance, $M
+
+
+UP_C_INCOME: dict[str, UpCIncome] = {
+    "CVNA": UpCIncome(
+        pl="ProfitLoss", parent="NetIncomeLoss",
+        nci="NetIncomeLossAttributableToNoncontrollingInterest",
+        verify=((2025, 1_895_000_000.0), (2024, 404_000_000.0)),
+        tra_tag="cvna:TaxReceivableAgreementLiabilityNoncurrent",
+        tra_fy=2025, tra_val_m=2228.0, tra_prior_m=65.0),
+    "RYAN": UpCIncome(
+        pl="ProfitLoss", parent="NetIncomeLoss",
+        nci="NetIncomeLossAttributableToNoncontrollingInterest",
+        verify=((2025, 214_157_000.0), (2024, 229_913_000.0)),
+        tra_tag="ryan:TaxReceivableAgreementLiabilitiesNoncurrent",
+        tra_fy=2025, tra_val_m=459.0, tra_prior_m=436.3),
+}
+
+
+def _income_identity_unit(vals: list[float]) -> float:
+    """The coarsest rounding step among the identity's legs: 1e6 when every
+    leg is a whole number of millions, 1e3 when thousands, else dollars.
+    The identity gate is half of this — strictly below one unit — so a
+    filer whose legs are filed at mixed precision is never refused over a
+    legitimate rounding gap, and a real disagreement still fails loudly."""
+    for unit in (1e6, 1e3):
+        if all(abs(v) % unit == 0 for v in vals):
+            return unit
+    return 1.0
+
+
+def up_c_income_rebase(ticker: str, facts: dict, series: dict,
+                       tag_sources: dict) -> dict | None:
+    """Re-base series['N'] to filed consolidated income for a registered
+    Up-C filer. One dict lookup and out for everyone else — the untouched-
+    shape control. Per year: the consolidated tag stands where filed (it is
+    consolidated by definition); else parent + filed NCI, an addition of
+    two filed lines with the arithmetic in the note, never a ratio; a year
+    with neither reading, or a failed three-leg identity, is DROPPED with a
+    note naming it and the size of any disagreement — missing is not zero.
+    The whole fold is discarded (ok=False, series untouched) when the
+    registered verification figures do not reproduce to under fifty cents,
+    and the page then refuses with the surviving Up-C stop."""
+    spec = UP_C_INCOME.get(ticker)
+    if spec is None or not series.get("N"):
+        return None
+    res = {"ok": False, "notes": [], "identity": "", "fy": 0,
+           "parent_m": 0.0, "nci_m": 0.0, "pl_m": 0.0}
+    pl = _annual(facts, [spec.pl], [])
+    par = _annual(facts, [spec.parent], [])
+    nci = _annual(facts, [spec.nci], [])
+    for vfy, vval in spec.verify:
+        got = pl[vfy][-1] if vfy in pl else (
+            par[vfy][-1] + nci[vfy][-1] if vfy in par and vfy in nci else None)
+        if got is None or abs(got - vval) >= 0.5:
+            res["notes"].append(
+                f"**Up-C income fold DISCARDED for {ticker}** — the registered "
+                f"verification figure for FY{vfy} ({vval:,.0f}) "
+                + ("was not readable from any consolidated leg."
+                   if got is None else
+                   f"did not reproduce (read {got:,.0f}, off by "
+                   f"{abs(got - vval):,.0f}).")
+                + " Net income stays as first read and the per-share valuation "
+                  "is withheld; nothing below prices on a basis this page "
+                  "cannot stand behind.")
+            return res
+    rebased: dict[int, tuple] = {}
+    dropped: list[str] = []
+    for fy in sorted(series["N"]):
+        has3 = fy in pl and fy in par and fy in nci
+        if has3:
+            legs = [pl[fy][-1], par[fy][-1], nci[fy][-1]]
+            gap = abs(legs[0] - (legs[1] + legs[2]))
+            if gap >= 0.5 * _income_identity_unit(legs):
+                dropped.append(f"FY{fy} (identity off by {gap:,.0f})")
+                continue
+        if fy in pl:
+            rebased[fy] = (pl[fy][0], pl[fy][1], pl[fy][-1])
+        elif fy in par and fy in nci:
+            s = par[fy][-1] + nci[fy][-1]
+            rebased[fy] = (par[fy][0], par[fy][1], s)
+            res["notes"].append(
+                f"FY{fy}: no consolidated net-income tag filed for the year — "
+                f"priced from the two filed slices, {par[fy][-1] / 1e6:,.1f} + "
+                f"{nci[fy][-1] / 1e6:,.1f} = {s / 1e6:,.1f} ($M, parent + "
+                "noncontrolling). An addition of filed lines, never a ratio.")
+        else:
+            dropped.append(f"FY{fy} (no consolidated reading; the "
+                           "noncontrolling deduction is missing, not zero)")
+    if dropped:
+        res["notes"].append(
+            "Years dropped from the window — no consolidated income could be "
+            "stated from filed lines: " + "; ".join(dropped) + ". The pooled "
+            "figures cover fewer years; read them with that in mind.")
+    if not rebased:
+        res["notes"].append(
+            f"**Up-C income fold DISCARDED for {ticker}** — no year offered a "
+            "readable consolidated figure. The per-share valuation is withheld.")
+        return res
+    for fy in list(series["N"]):
+        if fy in rebased:
+            series["N"][fy] = rebased[fy]
+        else:
+            del series["N"][fy]
+    if spec.pl not in tag_sources["N"]:
+        tag_sources["N"].append(spec.pl)
+    last = max(rebased)
+    res.update(ok=True, fy=last, pl_m=rebased[last][-1] / 1e6)
+    if last in par and last in nci:
+        res.update(parent_m=par[last][-1] / 1e6, nci_m=nci[last][-1] / 1e6)
+        res["identity"] = (
+            f"The filed identity for FY{last}: {res['parent_m']:,.1f} + "
+            f"{res['nci_m']:,.1f} = {res['pl_m']:,.1f} (parent + "
+            "noncontrolling = consolidated, $M) — exact as filed. ")
+    res["notes"].append(
+        f"As-exchanged basis (Up-C): net income re-based to the filed "
+        f"consolidated figure for FY{min(rebased)}–FY{last}, verified against "
+        "the registered filings figures; the basis statement above the inputs "
+        "says what this means and names its limits.")
+    return res
+
+
+def up_c_basis_banner(ticker: str, total_m: float, basis: dict) -> str:
+    """The as-exchanged basis statement (§5.5 G) — what basis, what the
+    count is, the filed identity, and the two named limits with directions.
+    The banned false sentence is pinned by a self-test: nothing here may
+    claim the TRA or the tax-status difference is accounted for, and
+    nothing may size them down."""
+    spec = UP_C_INCOME[ticker]
+    return (
+        f"**Priced on the as-exchanged basis — Up-C structure.** {ticker}'s "
+        f"per-class share counts were read from its filings' own XBRL "
+        f"instances and summed ({total_m:,.1f}M across the classes). Part of "
+        "an umbrella-partnership C-corp's economics sits in LLC units outside "
+        "the parent, so every per-share figure here divides **consolidated "
+        "earnings** — net income with the noncontrolling interest's share, as "
+        "filed — by that full as-exchanged count: one basis on both sides. "
+        + basis.get("identity", "")
+        + "The Class A price applies to every unit through the exchange "
+        "right. Two real limits are named here, not adjusted for: the **Tax "
+        f"Receivable Agreement** (`{spec.tra_tag}`, ${spec.tra_val_m:,.0f}M "
+        f"at FY{spec.tra_fy}, from ${spec.tra_prior_m:,.0f}M a year earlier) "
+        "transfers value to pre-IPO holders outside this arithmetic — "
+        "direction: flattering. And the **tax-status difference**: the "
+        "noncontrolling slice of LLC income is pre-tax at the member level, "
+        "so consolidated tax expense understates the tax a fully public "
+        "company would bear on the same earnings — direction: flattering.")
 
 
 def xbrl_route_apply(ticker: str, cik: str, series: dict,
@@ -4924,7 +5137,153 @@ def self_test() -> list[tuple[str, bool, str]]:
                 and _us == {2025: 264112311.0}
                 and "Up-C" in up_c_sentence("RYAN", 264.1)
                 and "withheld" in up_c_sentence("RYAN", 264.1),
-                "counts fold, valuation refuses for the true reason until §5.5 G"))
+                "counts fold; the sentence is now the surviving stop — §5.5 G landed 15 Sep 2026"))
+    # ── §5.5 G: the as-exchanged income basis (15 Sep 2026) ──────────
+    # Figures throughout are the session's pastes and Chen's live tables,
+    # never invented constants.
+    def _g5f(**tags):
+        rows = lambda d: [{"start": f"{fy}-01-01", "end": f"{fy}-12-31",
+                           "val": v, "form": "10-K", "fy": fy, "fp": "FY",
+                           "filed": f"{fy + 1}-02-20", "accn": f"a{fy}-{v}"}
+                          for fy, v in d.items()]
+        return {"facts": {"us-gaap": {k: {"units": {"USD": rows(v)}}
+                                      for k, v in tags.items()}}}
+    def _g5n(*fys):
+        return {"N": {fy: (f"{fy}-01-01", f"{fy}-12-31", 1.0) for fy in fys}}
+    out.append(("UP_C income spec: both filers, three legs, the pasted verify pairs",
+                set(UP_C_INCOME) == {"CVNA", "RYAN"}
+                and UP_C_INCOME["CVNA"].verify == ((2025, 1_895_000_000.0), (2024, 404_000_000.0))
+                and UP_C_INCOME["RYAN"].verify == ((2025, 214_157_000.0), (2024, 229_913_000.0))
+                and UP_C_INCOME["CVNA"].nci == "NetIncomeLossAttributableToNoncontrollingInterest"
+                and "cvna:" in UP_C_INCOME["CVNA"].tra_tag
+                and "ryan:" in UP_C_INCOME["RYAN"].tra_tag,
+                "companyconcept pastes of 15 Sep 2026"))
+    out.append(("Identity unit: millions-rounded legs gate at $0.5M, thousands at $500, dollars at 50 cents",
+                _income_identity_unit([1_895_000_000.0, 404_000_000.0]) == 1e6
+                and _income_identity_unit([214_157_000.0, 63_399_000.0]) == 1e3
+                and _income_identity_unit([214_157_000.0, 63_399_500.0]) == 1.0,
+                "mixed-precision legs never refuse over legitimate rounding"))
+    _g5a = _g5f(ProfitLoss={2025: 1_895_000_000.0, 2024: 404_000_000.0},
+               NetIncomeLoss={2025: 1_407_000_000.0, 2024: 210_000_000.0},
+               NetIncomeLossAttributableToNoncontrollingInterest={2025: 488_000_000.0, 2024: 194_000_000.0})
+    _g5s1 = _g5n(2024, 2025); _g5t = {"N": []}
+    _g5r1 = up_c_income_rebase("CVNA", _g5a, _g5s1, _g5t)
+    out.append(("PL rung: the consolidated figure stands per year, the identity prints, the tag panel names it",
+                _g5r1 is not None and _g5r1["ok"]
+                and _g5s1["N"][2025][2] == 1_895_000_000.0
+                and _g5s1["N"][2024][2] == 404_000_000.0
+                and "1,407.0 + 488.0 = 1,895.0" in _g5r1["identity"]
+                and "ProfitLoss" in _g5t["N"],
+                "the pasted FY2025/FY2024 legs end to end"))
+    _g5b = _g5f(NetIncomeLoss={2025: 63_399_000.0},
+                NetIncomeLossAttributableToNoncontrollingInterest={2025: 150_758_000.0})
+    _g5s2 = _g5n(2025)
+    _g5r2 = up_c_income_rebase("RYAN", {"facts": {"us-gaap": {
+        **_g5b["facts"]["us-gaap"],
+        "ProfitLoss": {"units": {"USD": [{"start": "2024-01-01", "end": "2024-12-31",
+                                          "val": 229_913_000.0, "form": "10-K", "fy": 2024,
+                                          "fp": "FY", "filed": "2025-02-21", "accn": "r24"},
+                                         {"start": "2025-01-01", "end": "2025-12-31",
+                                          "val": 214_157_000.0, "form": "10-K", "fy": 2025,
+                                          "fp": "FY", "filed": "2026-02-13", "accn": "r25"}]}}}}},
+        _g5n(2024, 2025), {"N": []})
+    out.append(("Verification gate: the pasted figures pass exact; a $1M miss discards the whole fold",
+                _g5r2 is not None and _g5r2["ok"]
+                and (lambda s, r: r is not None and not r["ok"]
+                     and s["N"][2025][2] == 1.0
+                     and any("DISCARDED" in n for n in r["notes"]))(
+                    _g5s2, up_c_income_rebase("RYAN", _g5f(
+                        ProfitLoss={2025: 215_157_000.0, 2024: 229_913_000.0}), _g5s2, {"N": []})),
+                "series untouched on a discard; the surviving stop owns the page"))
+    _g5s3 = _g5n(2024, 2025)
+    _g5r3 = up_c_income_rebase("CVNA", _g5f(
+        ProfitLoss={2024: 404_000_000.0},
+        NetIncomeLoss={2025: 1_407_000_000.0, 2024: 210_000_000.0},
+        NetIncomeLossAttributableToNoncontrollingInterest={2025: 488_000_000.0, 2024: 194_000_000.0}),
+        _g5s3, {"N": []})
+    out.append(("Addition rung: a year with no consolidated tag prices from the two filed slices, arithmetic in the note",
+                _g5r3 is not None and _g5r3["ok"]
+                and _g5s3["N"][2025][2] == 1_895_000_000.0
+                and any("1,407.0 + 488.0 = 1,895.0" in n for n in _g5r3["notes"]),
+                "an addition of filed lines, never a ratio"))
+    _g5s4 = _g5n(2023, 2024, 2025)
+    _g5r4 = up_c_income_rebase("CVNA", _g5f(
+        ProfitLoss={2025: 1_895_000_000.0, 2024: 404_000_000.0},
+        NetIncomeLoss={2025: 1_407_000_000.0, 2024: 210_000_000.0, 2023: 450_000_000.0},
+        NetIncomeLossAttributableToNoncontrollingInterest={2025: 488_000_000.0, 2024: 194_000_000.0}),
+        _g5s4, {"N": []})
+    out.append(("Missing NCI where filed elsewhere drops the year — the deduction is missing, not zero",
+                _g5r4 is not None and _g5r4["ok"] and 2023 not in _g5s4["N"]
+                and 2024 in _g5s4["N"] and 2025 in _g5s4["N"]
+                and any("FY2023" in n and "missing, not zero" in n for n in _g5r4["notes"]),
+                "the fin-v2 refusal rung, mirrored"))
+    _g5s5 = _g5n(2024, 2025)
+    _g5r5 = up_c_income_rebase("CVNA", _g5f(
+        ProfitLoss={2025: 1_895_000_000.0, 2024: 404_000_000.0},
+        NetIncomeLoss={2025: 1_408_000_000.0},
+        NetIncomeLossAttributableToNoncontrollingInterest={2025: 488_000_000.0}),
+        _g5s5, {"N": []})
+    out.append(("A million-dollar identity gap drops the year and names the size",
+                _g5r5 is not None and _g5r5["ok"] and 2025 not in _g5s5["N"]
+                and 2024 in _g5s5["N"] and _g5s5["N"][2024][2] == 404_000_000.0
+                and any("identity off by 1,000,000" in n for n in _g5r5["notes"]),
+                "three legs that do not sum are not a basis"))
+    _g5s6 = _g5n(2025)
+    out.append(("Unregistered ticker: one dict lookup, series untouched",
+                up_c_income_rebase("PDEX", _g5f(ProfitLoss={2025: 1.0}), _g5s6, {"N": []}) is None
+                and _g5s6["N"][2025][2] == 1.0,
+                "the untouched-shape control, same as the route's"))
+    _g5s7 = _g5n(2018)
+    _g5c7 = _g5f(ProfitLoss={2018: -254_745_000.0, 2024: 404_000_000.0,
+                             2025: 1_895_000_000.0})
+    for _g5cc, _g5o, _g5w in ((("NetIncomeLoss"), -61_754_000.0, -55_476_000.0),
+                           (("NetIncomeLossAttributableToNoncontrollingInterest"),
+                            -192_991_000.0, -199_269_000.0)):
+        _g5c7["facts"]["us-gaap"][_g5cc] = {"units": {"USD": [
+            {"start": "2018-01-01", "end": "2018-12-31", "val": _g5o, "form": "10-K",
+             "fy": 2018, "fp": "FY", "filed": "2019-02-27", "accn": "v1"},
+            {"start": "2018-01-01", "end": "2018-12-31", "val": _g5w, "form": "10-K",
+             "fy": 2019, "fp": "FY", "filed": "2020-02-26", "accn": "v2"}]}}
+    _g5r7 = up_c_income_rebase("CVNA", _g5c7, _g5s7, {"N": []})
+    out.append(("CVNA FY2018 restatement shape: newest-wins legs still sum to the invariant consolidated figure",
+                _g5r7 is not None and _g5r7["ok"]
+                and _g5s7["N"][2018][2] == -254_745_000.0,
+                "parent −61,754→−55,476 mirrored by NCI −192,991→−199,269; identity exact on both vintages"))
+    _g5cv = [(150.0, 73.0, 310.50405588145054), (404.0, 91.0, 1774.3856129741669),
+           (1895.0, 96.0, 1885.9377713155748)]
+    _g5cd = sum(n + g - o for n, g, o in _g5cv) / sum(n for n, g, o in _g5cv)
+    out.append(("CVNA re-based 3-year pool: −51.5% from the pasted consolidated series and the live Ω table",
+                abs(_g5cd - (-0.5152)) < 5e-4,
+                f"registered prediction of record: {_g5cd:.2%}"))
+    _g5ry = [(63.057, 8.153, 0.0), (70.513, 10.8, 0.0), (56.632, 67.534, 78.256),
+           (163.257, 77.48, 31.12821054283301), (194.480, 69.743, 33.336901357221606),
+           (229.913, 78.995, 125.54977450858561), (214.157, 69.451, 178.11695234604548)]
+    _g5d3 = sum(n + g - o for n, g, o in _g5ry[-3:]) / sum(n for n, g, o in _g5ry[-3:])
+    _g5df = sum(n + g - o for n, g, o in _g5ry) / sum(n for n, g, o in _g5ry)
+    out.append(("RYAN re-based pools: 81.4% (3y) and 93.5% (full) from the pasted series and the live Ω table",
+                abs(_g5d3 - 0.8139) < 5e-4 and abs(_g5df - 0.9353) < 5e-4,
+                f"the 166% two-stage explanation closed: {_g5d3:.1%} / {_g5df:.1%}"))
+    _g5u1 = up_c_basis_banner("CVNA", 1091.7, {"identity": "The filed identity for FY2025: "
+                             "1,407.0 + 488.0 = 1,895.0 (parent + noncontrolling = consolidated, $M) — exact as filed. "})
+    _g5u2 = up_c_basis_banner("RYAN", 264.1, {"identity": ""})
+    out.append(("Banner: basis, count, identity, both limits with directions, the filed TRA tags and balances",
+                "as-exchanged" in _g5u1 and "1,091.7M" in _g5u1
+                and "1,407.0 + 488.0 = 1,895.0" in _g5u1
+                and _g5u1.count("flattering") == 2 and _g5u2.count("flattering") == 2
+                and "cvna:TaxReceivableAgreementLiabilityNoncurrent" in _g5u1
+                and "$2,228M" in _g5u1 and "$65M" in _g5u1
+                and "ryan:TaxReceivableAgreementLiabilitiesNoncurrent" in _g5u2
+                and "$459M" in _g5u2,
+                "what basis, what count, what limits — the house shape"))
+    out.append(("The banned false sentence is unwritable: no sizing-down words, no accounted-for claim, and the banner never withholds",
+                all(w not in _g5u1 and w not in _g5u2
+                    for w in ("included", "including", "negligible", "immaterial",
+                              " small", "accounted for"))
+                and "withheld" not in _g5u1 and "withheld" not in _g5u2
+                and "Up-C" in up_c_sentence("RYAN", 264.1)
+                and "withheld" in up_c_sentence("RYAN", 264.1)
+                and "unverified" in up_c_sentence("RYAN", 264.1),
+                "NCI-BRIEF §4's banned sentence, pinned"))
     out.append(("XBRL registry gate: an unregistered ticker returns None untouched",
                 xbrl_route_apply("PDEX", "0000788920",
                                  {"N": {2025: ("a", "b", 1.0)}}, {}, {}, 10) is None
@@ -6241,21 +6600,24 @@ if years and ticker and st.session_state.get("exp_tk") == ticker:
                     "True SBC cost": _mfmt, "Owners' earnings": _mfmt}, na_rep="—"),
                 width='stretch', hide_index=True)
 
-    # ══ Up-C stop — the Tragic Algebra Analyzer's, verbatim in substance ═
-    # CVNA and RYAN: real per-class counts summed by the XBRL route, and the
-    # per-share division still cannot be stood behind (net income is the
-    # parent's slice, the count spans everything). Refuse BEFORE the inputs;
-    # lifts with the NCI fix, for which those registry entries are the tests.
+    # ══ Up-C basis (§5.5 G, 15 Sep 2026) — the Tragic Algebra Analyzer's,
+    # verbatim in substance: verified consolidated income → the basis
+    # banner and the solve on one basis; unverified → the surviving stop
+    # (an implied growth rate is a per-share claim).
+    _upcb = pre.get("up_c_basis")
     if any(e.up_c for e in XBRL_REGISTRY.get(tk, ())) and pre.get("shares", 0) > 0:
-        st.error(up_c_sentence(tk, pre.get("shares", 0.0)))
-        st.caption(f"ΔE measured all the same — last 3 years: "
-                   f"{dE_caption(recent.dE, recent.dE_defined, False)} · full period: "
-                   f"{dE_caption(pooled.dE, pooled.dE_defined, False)}. Real measurements "
-                   "of the whole business; only the per-share division is refused, and an "
-                   "implied growth rate is a per-share claim.")
-        _record_inside_stop()
-        _page_footer()
-        st.stop()
+        if _upcb and _upcb.get("ok"):
+            st.info(up_c_basis_banner(tk, pre.get("shares", 0.0), _upcb))
+        else:
+            st.error(up_c_sentence(tk, pre.get("shares", 0.0)))
+            st.caption(f"ΔE measured all the same — last 3 years: "
+                       f"{dE_caption(recent.dE, recent.dE_defined, False)} · full period: "
+                       f"{dE_caption(pooled.dE, pooled.dE_defined, False)}. Measured figures "
+                       "as the income was read; only the per-share division is refused, and an "
+                       "implied growth rate is a per-share claim.")
+            _record_inside_stop()
+            _page_footer()
+            st.stop()
 
     # ══ financial stop — page-specific: routed in full, no indicative solve ═
     # Where the Tragic Algebra Analyzer withholds its verdict and still shows
