@@ -295,9 +295,12 @@ swallows the cash flow entirely — or too few years are both priced and free of
 events to measure it at all — the corrected leg says so instead of printing a number it
 cannot stand behind. Where a filer's stock-comp line or per-class share counts live only in
 the filings' own XBRL instances, the verified registry reads them there; and
-umbrella-partnership C-corps (Carvana, Ryan Specialty) get their full history measured and
-their per-share valuation refused, with the reason stated, until the count basis can be
-priced honestly.
+umbrella-partnership C-corps (Carvana, Ryan Specialty) are priced on the as-exchanged
+basis: filed consolidated net income over the full Class A + Class B count, verified year
+by year against the filings' own figures, with the Tax Receivable Agreement and the NCI
+tax-status difference named on the page as real limits — stated with their direction,
+never adjusted for. Where those consolidated legs cannot be read and verified, the
+per-share valuation is still refused with the reason stated.
 
 ## 🔭 Expectations
 
@@ -330,8 +333,11 @@ pooling around it.
 
 It refuses everything the Tragic Algebra Analyzer refuses, and where that page withholds
 a verdict and still shows its measurements, this page prints no implied number at all:
-financials route to the Financials Checker, IFRS filers to the Non-US Checker,
-umbrella-partnership C-corps and missing share counts stop with the reason stated. Its
+financials route to the Financials Checker, IFRS filers to the Non-US Checker, and
+missing share counts stop with the reason stated. Umbrella-partnership C-corps solve on
+the as-exchanged basis — consolidated earnings over the full Class A + Class B count —
+behind the same basis statement and named limits as the Tragic Algebra Analyzer, and
+stop only when that basis cannot be verified from filed lines. Its
 own refusals follow the same rule. A base at or below zero routes to the Inflection
 Checker, because an implied growth rate solved from a negative base is noise. A price at
 or below the zero-growth IV15 is stated as implying decline rather than solved into a
@@ -376,9 +382,13 @@ pages, and it sits last in the menu on purpose.
   and REITs, zeroes net cash, withholds the verdict and routes to the Financials Checker,
   which prices them on tangible book or FFO — the toolkit's own design, labelled as such.
   Exchanges and the remaining financial structures are priced by no page yet.
-* **Complex structures.** Umbrella-partnership C-corps are measured in full and their
-  per-share valuation is refused with the reason stated, until the count basis can be
-  priced honestly.
+* **Complex structures.** Umbrella-partnership C-corps are priced on the as-exchanged
+  basis — filed consolidated net income over the full Class A + Class B count — with two
+  named limits stated on the page and never adjusted for: the Tax Receivable Agreement
+  (a real liability transferring value to pre-IPO holders outside the arithmetic) and the
+  NCI tax-status difference (the noncontrolling slice of LLC income is pre-tax at the
+  member level). Both flatter the figures; the page says so. A filer whose consolidated
+  legs cannot be read and verified is still refused with the reason stated.
 * **Bundled line items.** Burry reads the 10-K footnotes by hand because filers combine
   line items — the buyback line often carries RSU withholding tax. Because Ω = C + V, that
   particular error cancels here under Burry's tax treatment assumption (V is overstated by
