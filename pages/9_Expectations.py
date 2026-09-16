@@ -1332,6 +1332,39 @@ def treasury_equal_reject(years, origin_cw: dict) -> list[tuple[int, float]]:
     return hits
 
 
+def switched_series_notes(notes: list[str], first_split_notes: list[str],
+                          winner_split_notes: list[str]) -> list[str]:
+    """Notes after the share-count ladder replaces the series.
+
+    TM printed phantom split notes from an abandoned share series (page 6's
+    session, 4 Sep 2026; landed in the residue sweep, 16 Sep 2026): the
+    first-choice series tripped split_adjust, the ladder then put that
+    series aside, and the note announcing its split stayed — a split
+    announced from a series the page does not use, on a company that never
+    split. A note that describes what the page is not reasoning from is the
+    false-sentence class. The abandoned series' split notes are dropped,
+    every other note collected so far stands, and the winning series' own
+    split notes are appended.
+    """
+    return [n for n in notes if n not in first_split_notes] + winner_split_notes
+
+
+def treasury_mixed_note(accepted_fys: list[int]) -> str:
+    """The sentence for a treasury line accepted in some years and rejected
+    in others (ASML, 4 Sep 2026, queued from page 6's session; landed in
+    the residue sweep, 16 Sep 2026). The rejection note says how many years
+    fell to the size test; this one names the years that stand, so both
+    sides of the split are on the page. No direction is claimed — whether
+    the pooled figures run harsh or flattering depends on which side
+    misread the tag — and the tag panel names the line to check.
+    """
+    fys = ", ".join(f"FY{f}" for f in accepted_fys)
+    return (f"The same treasury line passed the size test in {fys} and stands as tax "
+            "withholding there: those amounts are withholding-sized next to the charge. "
+            "One tag, split by the size test — if the accepted years look like ordinary "
+            "repurchases rather than withholding, the tag panel names the line to check.")
+
+
 def treasury_accepted(years, origin_cw: dict) -> bool:
     """Whether the treasury-accepted sentence may print.
 
@@ -2262,7 +2295,7 @@ def dual_class_signal(outstanding: dict[int, float], wavg: dict[int, float],
 
 def share_route_note(kind: str, was: float, wavg: float, route: str,
                      covered: int, window: int, last_fy: int,
-                     factor: float = 1.0) -> str:
+                     factor: float = 1.0, any_T: bool = True) -> str:
     """Explain why the tagged share count was put aside, and for which reason.
 
     There were two wordings for three situations, so the third borrowed the
@@ -2295,8 +2328,17 @@ def share_route_note(kind: str, was: float, wavg: float, route: str,
                          f"(x{factor:g}), like every other share figure here."
                          if abs(factor - 1.0) > 0.01 else "")
     if kind == "static":
-        return ("The share count barely moved while the company was buying stock back, so the "
-                "tag being read is not shares outstanding. Switched to {}.").format(route)
+        # IBKR, 15 Sep 2026 (FIN-V2 §7.1): the canned premise "while the
+        # company was buying stock back" fired on a filer with no buybacks
+        # read at all. The static test never needed it — a real outstanding
+        # count almost never sits still to the share — so the premise now
+        # prints where buybacks were read and the test stands alone where
+        # they were not. Landed in the residue sweep, 16 Sep 2026.
+        return (("The share count barely moved while the company was buying stock back, so the "
+                 if any_T else
+                 "The share count barely moved across the whole window, which a real "
+                 "outstanding count almost never does, so the ")
+                + "tag being read is not shares outstanding. Switched to {}.").format(route)
     # sparse: nothing wrong with the figures, there are just too few of them
     return ("The tagged share count is not wrong, there is too little of it: {} of the {} years "
             "in this window carry one and the series stops at FY{}. A year with no count shows "
@@ -2476,6 +2518,10 @@ def load(ticker: str, n_years: int = 10):
     # UnboundLocalError on every ticker that tripped the ladder (AZO, HRB, TDG)
     # while leaving every other ticker working. Keep this line above the ladder.
     shares_out, notes = split_adjust(shares_out)
+    # Held apart: if the share-count ladder below replaces the series, the
+    # first-choice series' split notes leave with it (TM's phantom pair —
+    # see switched_series_notes; residue sweep, 16 Sep 2026).
+    _split_notes0 = list(notes)
     if _xr:
         notes.extend(_xr["notes"])
         if _upcb:
@@ -2557,7 +2603,9 @@ def load(ticker: str, n_years: int = 10):
             else:
                 _pick, _share_route = _wv, "the weighted-average diluted count"
             shares_out, _extra = split_adjust(_pick)
-            notes.extend(_extra)
+            # The abandoned first-choice series' split notes go with the
+            # series (TM's phantom pair; residue sweep, 16 Sep 2026).
+            notes[:] = switched_series_notes(notes, _split_notes0, _extra)
             # Held back until the post-filing split factor below is known, so
             # the figures quoted are on the same basis as every other share
             # count on the page. Booking is the case: 64.5M against 32.6M is
@@ -2642,7 +2690,8 @@ def load(ticker: str, n_years: int = 10):
               f"makes the adjustment unnecessary and it will stop being applied.")
 
     if _route_note:
-        notes.append(share_route_note(*_route_note, factor=_split_factor))
+        notes.append(share_route_note(*_route_note, factor=_split_factor,
+                                      any_T=bool(series.get("T"))))
     if _route_extra:
         notes.append(_route_extra)
 
@@ -2837,6 +2886,14 @@ def load(ticker: str, n_years: int = 10):
                 "Either means it is an ordinary repurchase, and charging it as withholding "
                 "would count the same dollars twice — once as cash out, once as the market value "
                 "of shares delivered.")
+            # ASML (4 Sep 2026; landed 16 Sep 2026): on a mixed filer the
+            # accepted years are named beside the rejection, so both sides
+            # of the size test are on the page.
+            _tacc = sorted(y.fy for y in years
+                           if y.Cw and tag_origin["Cw"].get(y.fy)
+                           == "TreasuryStockValueAcquiredCostMethod")
+            if _tacc:
+                notes.append(treasury_mixed_note(_tacc))
         elif treasury_accepted(years, tag_origin["Cw"]):
             # JPM, 1 Sep 2026 (page 5's run): the treasury tag was in the
             # sources but no year survived the filters, so this "accepted"
@@ -5643,6 +5700,32 @@ def self_test() -> list[tuple[str, bool, str]]:
                 and ":,.1f}M\" if abs(alt - net_cash) < 1" in _s7
                 and "more than 1% that year." in _s7,
                 "own-source scan"))
+
+
+    # ── Residue sweep, 16 Sep 2026 ──────────────────────────────────
+    _tm_adj, _tm_ph = split_adjust({2016: 100e6, 2017: 3_300_000_000.0,
+                                    2018: 3_300_000_000.0})
+    out.append(("Ladder switch drops the abandoned series' split notes and keeps the rest",
+                len(_tm_ph) == 1 and switched_series_notes(
+                    _tm_ph + ["a note about something else"], _tm_ph, []
+                ) == ["a note about something else"],
+                "TM's phantom pair: a split note may describe the series in use, no other"))
+    _asml = treasury_mixed_note([2016, 2019, 2021])
+    out.append(("Mixed treasury filer: the accepted years are named beside the rejection",
+                "FY2016, FY2019, FY2021" in _asml
+                and _asml.startswith("The same treasury line passed the size test"),
+                "ASML: one tag split by the size test; both sides now on the page"))
+    out.append(("The static switch note drops the buyback premise when no buyback was read",
+                "buying stock back" in share_route_note("static", 56.3e6, 58.2e6,
+                                                        "the 10-K cover page", 10, 10, 2025)
+                and "buying stock back" not in share_route_note(
+                    "static", 56.3e6, 58.2e6, "the 10-K cover page", 10, 10, 2025, any_T=False)
+                and "not shares outstanding" in share_route_note(
+                    "static", 56.3e6, 58.2e6, "the 10-K cover page", 10, 10, 2025, any_T=False),
+                "IBKR, FIN-V2 §7.1: no buybacks were read, so the premise was false"))
+    out.append(("The cent glyph is spelled out — cents, one word (Chen, 16 Sep 2026)",
+                chr(0xA2) not in _s7,
+                "the shareholder-quality banner reads cents; no stray glyph in this file"))
 
     return out
 
