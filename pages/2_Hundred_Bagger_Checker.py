@@ -1933,6 +1933,39 @@ CONCEPTS = {
 EQUITY = [["StockholdersEquity"],
           ["StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"]]
 MINORITY = [["MinorityInterest"]]
+
+
+def equity_preference(up_c_verified: bool) -> tuple[list[str], list[str]]:
+    """Which equity tag leads the capital base. Parent-only equity is right
+    when net income is the parent's slice — mixing bases misstates the
+    return by exactly the minority's share, in either direction. A verified
+    Up-C rebase makes net income CONSOLIDATED (§5.5 G), so the capital base
+    flips to the consolidated equity tag for the same one-basis reason
+    (CVNA tool-2 screenshot, 16 Sep 2026: the old preference left ROIC
+    dividing consolidated income by the parent's slice of capital)."""
+    return (EQUITY[1], EQUITY[0]) if up_c_verified else (EQUITY[0], EQUITY[1])
+
+
+def nci_capital_note(minority_m: float, equity_m: float, up_c_verified: bool) -> str:
+    """The NCI capital note, in the basis the page is actually on. The
+    pre-§5.5 G wording claimed parent-slice income beside parent-slice
+    equity — true then, false the moment a verified Up-C rebase made the
+    income consolidated (CVNA screenshot, 16 Sep 2026). The non-Up-C
+    wording is the original, moved verbatim."""
+    if not (minority_m > 0 and equity_m > 0 and minority_m / equity_m > 0.05):
+        return ""
+    if up_c_verified:
+        return (
+            f"Non-controlling interests are {minority_m / equity_m:.0%} of consolidated "
+            "equity. Income and the capital base here are both consolidated — the "
+            "as-exchanged basis the statement above the inputs describes — so ROIC is "
+            "the whole business's return, one basis on both sides.")
+    return (
+        f"Non-controlling interests are {minority_m / equity_m:.0%} of "
+        "shareholders' equity. Net income here is the parent's slice only, and so is the "
+        "equity used in the capital base — consistent, but both understate the "
+        "consolidated business. Read ROIC as the return on your slice.")
+
 # DebtLongtermAndShorttermCombinedAmount is LAST because it is broader,
 # not a synonym: it is the whole debt balance, long-term and current
 # together. Progressive, 25 Aug 2026: it does not tag
@@ -2714,8 +2747,9 @@ def load(ticker: str, n_years: int = 10):
     bal: dict[str, list[str]] = {k: [] for k in
                                  ("equity", "debt", "leases", "cash", "investments", "goodwill")}
     _skips: list[tuple[str, int, str, int]] = []
-    eq = _instant(facts, EQUITY[0], "USD", bal["equity"], _skips, True) or \
-        _instant(facts, EQUITY[1], "USD", bal["equity"], _skips, True)
+    _eqg1, _eqg2 = equity_preference(bool(_upcb and _upcb.get("ok")))
+    eq = _instant(facts, _eqg1, "USD", bal["equity"], _skips, True) or \
+        _instant(facts, _eqg2, "USD", bal["equity"], _skips, True)
     minority = _instant_sum(facts, MINORITY, None, None, True)
     debt = _instant_sum(facts, DEBT, bal["debt"], _skips, True)
     fin_lease = _instant_sum(facts, FIN_LEASE, bal["leases"], _skips, True)
@@ -2775,13 +2809,10 @@ def load(ticker: str, n_years: int = 10):
         )
 
     latest_cap = caps.get(fys[-1], Capital(fy=fys[-1]))
-    if latest_cap.minority > 0 and latest_cap.equity > 0 \
-            and latest_cap.minority / latest_cap.equity > 0.05:
-        notes.append(
-            f"Non-controlling interests are {latest_cap.minority/latest_cap.equity:.0%} of "
-            "shareholders' equity. Net income here is the parent's slice only, and so is the "
-            "equity used in the capital base — consistent, but both understate the "
-            "consolidated business. Read ROIC as the return on your slice.")
+    _ncin = nci_capital_note(latest_cap.minority, latest_cap.equity,
+                             bool(_upcb and _upcb.get("ok")))
+    if _ncin:
+        notes.append(_ncin)
     fin_class, fin_reason = financial_class(sic, facts)
     if fin_class in ("bank", "insurer", "reit", "broker", "refused"):
         notes.append(
@@ -5770,6 +5801,25 @@ def self_test() -> list[tuple[str, bool, str]]:
                     not in mixed_n_note(["NetIncomeLoss", "IncomeLossFromContinuingOperations"], False)
                 and mixed_n_note(["NetIncomeLoss"], False) == "",
                 "the basis banner replaced it for the Up-C filers; every other filer unchanged (16 Sep 2026)"))
+    out.append(("Equity preference follows the income basis: consolidated leads for a verified Up-C rebase",
+                equity_preference(True) == (EQUITY[1], EQUITY[0])
+                and equity_preference(False) == (EQUITY[0], EQUITY[1]),
+                "one basis on both sides of ROIC (16 Sep 2026)"))
+    out.append(("NCI capital note: basis-true in both branches, silent under 5%",
+                "your slice" in nci_capital_note(220.0, 1000.0, False)
+                and "both consolidated" in nci_capital_note(220.0, 1000.0, True)
+                and "parent's slice" not in nci_capital_note(220.0, 1000.0, True)
+                and nci_capital_note(40.0, 1000.0, False) == ""
+                and nci_capital_note(40.0, 1000.0, True) == "",
+                "the pre-§5.5 G wording verbatim for every non-Up-C filer"))
+    from pathlib import Path as _P55
+    _s55 = _P55(__file__).read_text(encoding="utf-8")
+    out.append(("The ΔE-pooled caption formats money escaped for markdown, never plain()",
+                ("{plain(latest.N)} of net" + " income") not in _s55
+                and ("came in at {plain(" + "latest.OE)}") not in _s55
+                and ("{plain(" + "latest.N)} of net income as a ceiling") not in _s55
+                and ("\"parent's share\" if" + " w.minority else") not in _s55,
+                "plain() is for st.metric and st.code; a markdown caption pairs its dollars into math (16 Sep 2026)"))
     out.append(("XBRL registry gate: an unregistered ticker returns None untouched",
                 xbrl_route_apply("PDEX", "0000788920",
                                  {"N": {2025: ("a", "b", 1.0)}}, {}, {}, 10) is None
@@ -6466,7 +6516,7 @@ if years and ticker and st.session_state.get("hb_tk") == ticker:
                f"Net income over this window pools to {money(pooled.sum_N)}, so ΔE has no "
                f"denominator to be a share of — the {use_dE:.0%} it computes is two negatives "
                "divided. Every recent year was negative, so ")
-            + f"the box holds {plain(latest.N)} of net income as a ceiling — not a measurement of "
+            + f"the box holds {money(latest.N)} of net income as a ceiling — not a measurement of "
             "what reaches shareholders. On this company stock issuance has been running ahead "
             "of profit, which is exactly what owners' earnings are meant to capture. Enter what "
             "you think the business earns in a normal year, and the arithmetic below becomes "
@@ -6780,7 +6830,9 @@ if years and ticker and st.session_state.get("hb_tk") == ticker:
                 ("less other expense", -latest_r.other_expense,
                  "forensic D&A, normalised tax, cyclical — yours to set"),
                 ("= adjusted return", latest_r.numerator, ""),
-                ("Shareholders' equity", w.equity, "parent's share" if w.minority else ""),
+                ("Shareholders' equity", w.equity,
+                 ("consolidated, as-exchanged basis" if (_upcb and _upcb.get("ok"))
+                  else "parent's share") if w.minority else ""),
                 ("plus borrowings", w.debt, "short and long term"),
                 ("plus finance leases", w.finance_leases, "capitalised leases are debt in all "
                                                           "but name"),
@@ -6891,13 +6943,13 @@ if years and ticker and st.session_state.get("hb_tk") == ticker:
             + (f"The last three years cannot be projected, so the box above shows "
                + (f"the 5-year median of owners' earnings rather than a ΔE applied to net "
                   f"income — the same fallback the Tragic Algebra Analyzer uses. " if median_OE > 0 else
-                  f"{plain(latest.N)} of net income as a ceiling, because the 5-year median is "
+                  f"{money(latest.N)} of net income as a ceiling, because the 5-year median is "
                   f"negative as well — the same fallback the Tragic Algebra Analyzer uses. ")
                if _seed_from_pooled else
-               f"The box above shows {plain(latest.N)} of net income times "
+               f"The box above shows {money(latest.N)} of net income times "
                f"{applied_dE:.1%}, which is how the Tragic Algebra Analyzer seeds it too — ")
             + f"the latest year as filed "
-            f"came in at {plain(latest.OE)}."
+            f"came in at {money(latest.OE)}."
             + (f" The {use_dE:.1%} measured over the last three years is left as filed above "
                "but is not projected: shareholders cannot keep more than every reported dollar "
                "for fifteen years running." if dE_capped else ""))
