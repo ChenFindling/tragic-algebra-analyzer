@@ -195,6 +195,11 @@ with st.expander("Verify this page"):
         for name, ok, got in _results:
             st.write(("✅ " if ok else "❌ ") + f"{name} — {got}")
 
+st.markdown(
+    "Free, and staying free. If it's been useful: "
+    "[ko-fi.com/investortoolkit](https://ko-fi.com/investortoolkit)"
+)
+
 st.caption(
     "Research aid, not financial advice. Outputs depend on estimates you supply — change the "
     "growth rate and the answer changes a great deal. Methods follow the published writing of "
