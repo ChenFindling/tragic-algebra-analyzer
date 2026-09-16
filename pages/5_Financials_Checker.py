@@ -1323,6 +1323,34 @@ def gate2_note(excluded_fys: list[int]) -> str:
             "years only.")
 
 
+def shd_input_seed(diluted: float, wv: dict, split_factor: float) -> tuple[float, str]:
+    """SHD input-seed fallback (HANDOVER §1.10 job 3, the RDDT-era item;
+    landed 16 Sep 2026).
+
+    The seed cascade read `wavg` from dual_class_signal's same-year
+    comparison value, which is 0.0 whenever the outstanding and average
+    series share no year — including the shape where the year-end count
+    reads NOTHING at all (an unregistered dual-class trio). The filled
+    weighted-average series may still know a count, and the Hundred
+    Bagger Checker already seeds from it (202.1M for RDDT, before the
+    per-filing XBRL route served that name). A labeled average beats an
+    empty box. Scaled like every other share figure.
+
+    Returns (seed, note); the note is empty when the fallback did not
+    fire, and the seed is the input unchanged.
+    """
+    if diluted > 0 or not wv:
+        return diluted, ""
+    fy = max(wv)
+    seed = wv[fy] / 1e6 * split_factor
+    return seed, (
+        f"The diluted share count is seeded from the weighted-average diluted count "
+        f"({seed:,.1f}M, FY{fy}) because no year-end share count was read. That count "
+        "is an average over the year rather than a year-end snapshot, so check it "
+        "against the market cap. The yearly table still has no share series: the true "
+        "stock-comp cost and ΔE stay unmeasured there and need setting by hand.")
+
+
 def treasury_accepted(years, origin_cw: dict) -> bool:
     """Whether the treasury-accepted sentence may print.
 
@@ -3087,6 +3115,12 @@ def load(ticker: str, n_years: int = 10):
     outstanding = shares_out[max(shares_out)] / 1e6 if shares_out else 0.0
     wavg = _dc_wv
     diluted = outstanding or wavg
+    # SHD input-seed fallback — see shd_input_seed: `wavg` above is a
+    # same-year comparison artifact and reads 0.0 for the read-nothing
+    # trio shape even when the filled series knows a count.
+    diluted, _shd_note = shd_input_seed(diluted, _wv, _split_factor)
+    if _shd_note:
+        notes.append(_shd_note)
     if _dc_kind != "none":
         if _dc_kind == "dual":
             # The COMPARISON is same-year; the count that replaces it must
@@ -6553,6 +6587,19 @@ def self_test() -> list[tuple[str, bool, str]]:
                 and "that year" in gate2_note([2024])
                 and ("their SBC cost is under" + "stated.") not in _sp,
                 "the sentence is exact and the hedge is gone"))
+
+
+    # ── B2: SHD input-seed fallback, 16 Sep 2026 ─────────────────
+    _shd_s, _shd_n = shd_input_seed(0.0, {2023: 180.0e6, 2024: 202.1e6}, 1.0)
+    out.append(("SHD fallback: an empty seed takes the latest weighted average, scaled, with the note",
+                abs(_shd_s - 202.1) < 1e-9 and "202.1M, FY2024" in _shd_n
+                and "need setting by hand" in _shd_n
+                and abs(shd_input_seed(0.0, {2024: 100.0e6}, 10.0)[0] - 1000.0) < 1e-9,
+                "the RDDT-era item: tool 2 seeded 202.1M while this cascade seeded zero"))
+    out.append(("SHD fallback: a live seed and a read-nothing wavg both pass through untouched",
+                shd_input_seed(190.9, {2024: 202.1e6}, 1.0) == (190.9, "")
+                and shd_input_seed(0.0, {}, 1.0) == (0.0, ""),
+                "GRAB stays refused: its IFRS-tagged average is invisible to this US-GAAP series"))
 
     return out
 
