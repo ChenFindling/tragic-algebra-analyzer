@@ -6243,14 +6243,14 @@ PINS: list[Pin] = [
             'shares': 3.186135,
         },
         refusals=()),
-    Pin(ticker='XPEL', pin_set='internal', pinned='2026-09-05',
+    Pin(ticker='XPEL', pin_set='internal', pinned='2026-09-16',
         latest_fy=2025, window=(2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025),
         core={
             'G': 2.753,
             'N': 51.226,
             'T': 2.999,
             'dE_3y': 102.53257755622809,
-            'dE_full': 101.59631262452791,
+            'dE_full': 101.65091290990038,
             'net_cash': 50.405812,
             'omega_sum': 4.075751299437841,
             'price': 36.55499982833862,
@@ -6344,7 +6344,7 @@ PINS: list[Pin] = [
     # outside the 3-year window. FY2021 onward reads the genuine narrow
     # withholding tag and stands (Variant B's first live mixed-shape
     # firing). The 8-Sep omega_sum was a pin of the defect.
-    Pin(ticker='PLTR', pin_set='internal', pinned='2026-09-12',
+    Pin(ticker='PLTR', pin_set='internal', pinned='2026-09-16',
         latest_fy=2025, window=(2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025),
         core={
             'G': 684.033,
@@ -6352,7 +6352,7 @@ PINS: list[Pin] = [
             'T': 74.985,
             'dE_3y': -378.88278539838456,
             'net_cash': 7177.043000000001,
-            'omega_sum': 19509.884407194302,
+            'omega_sum': 19511.1474071943,
             'price': 140.20833460489908,
             'shares': 2391.192,
         },
@@ -6380,14 +6380,14 @@ PINS: list[Pin] = [
     # shares delivered are priced at the year's average instead of the
     # cost flooring at the GAAP charge. Values are the 9-Sep live run's
     # FAIL detail, full precision; every other key held to tolerance.
-    Pin(ticker='RDDT', pin_set='internal', pinned='2026-09-09',
+    Pin(ticker='RDDT', pin_set='internal', pinned='2026-09-16',
         latest_fy=2025, window=(2022, 2023, 2024, 2025),
         core={
             'G': 343.18,
             'N': 529.721,
             'T': 0.0,
             'net_cash': 2476.8109999999997,
-            'omega_sum': 2138.926585979499,
+            'omega_sum': 2150.0685859794994,
             'price': 176.38916714986166,
             'shares': 190.892108,
         },
@@ -6449,7 +6449,7 @@ PINS: list[Pin] = [
             'N': 214.157,
             'T': 0.0,
             'dE_3y': 81.39305798890413,
-            'dE_full': 93.52507499884722,
+            'dE_full': 90.30975541014729,
             'net_cash': -3193.3269999999998,
             'omega:2019': 0.0,
             'omega:2020': 0.0,
