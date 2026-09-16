@@ -5435,6 +5435,13 @@ def self_test() -> list[tuple[str, bool, str]]:
                 and "ΔE" not in up_c_banner_dcf("CVNA", 1091.7, {"identity": ""})
                 and "$" not in up_c_banner_dcf("CVNA", 1091.7, {"identity": ""}).replace("\\$", ""),
                 "this page's evidence and arithmetic on both sides of the §5.5 G branch"))
+    from pathlib import Path as _P56
+    _s56 = _P56(__file__).read_text(encoding="utf-8")
+    out.append(("The Up-C branch defines _upc_shares before using it — the 16 Sep NameError cannot recur",
+                ("_upc_shares = pre.get(" + '"shares", 0.0) or 0.0') in _s56
+                and _s56.index("_upc_shares = pre.get(")
+                    < _s56.index("and _upc_shares > 0:"),
+                "the stop-block rebuild deleted the queue-H assignment; a live CVNA run found it, not the dry-run (16 Sep 2026)"))
     # ── the sweep (toolkit pass, 12 Sep 2026): route sentences name menu
     #    pages, never numbers. _route_ok = a frozen menu name present, no
     #    "tool N" / "page N". Standalone producers only; inline UI text is
@@ -5712,6 +5719,7 @@ if years and ticker and st.session_state.get("dcf_tk") == ticker:
     # gate, guarded on shares > 0; notes inside the stop (GRAB), footer
     # before st.stop (Job 5b).
     _upcb = pre.get("up_c_basis")
+    _upc_shares = pre.get("shares", 0.0) or 0.0
     if any(e.up_c for e in XBRL_REGISTRY.get(tk, ())) and _upc_shares > 0:
         if _upcb and _upcb.get("ok"):
             st.info(up_c_banner_dcf(tk, _upc_shares, _upcb))
