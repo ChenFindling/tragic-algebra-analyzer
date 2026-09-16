@@ -1,7 +1,7 @@
 # 🧰 Investor Toolkit
 
 **Michael Burry's Tragic Algebra and IV15 owners' earnings framework, computed from audited
-SEC EDGAR filings — grown into a toolkit of eight pages, one page per question.** A free set
+SEC EDGAR filings — grown into a toolkit of one page per question, one page per question.** A free set
 of stock valuation tools that measures the true cost of stock-based compensation — the cash
 spent on buybacks to offset employee grants, plus the market value of shares actually
 delivered — and prices what survives at a 15% required return.
