@@ -2659,16 +2659,12 @@ def load(ticker: str, n_years: int = 10):
     # one from the other is right when the gap is a tagging change and slightly
     # generous when the filer has real minority interests, so say so rather
     # than let it pass silently — this is the base of every figure on the page.
+    # For a verified Up-C rebase the helper stays silent: ProfitLoss there is
+    # the deliberate basis, and the basis note and banner already say so.
     _nsrc = tag_sources.get("N", [])
-    if len(_nsrc) > 1:
-        notes.append(
-            "Net income came from more than one tag: the years "
-            f"{_nsrc[0]} does not cover were filled from {', '.join(_nsrc[1:])}. "
-            + ("ProfitLoss includes profit belonging to minority holders of "
-               "consolidated subsidiaries, so where it filled a year the figure is "
-               "the whole group's rather than shareholders' alone. "
-               if "ProfitLoss" in _nsrc[1:] else "")
-            + "The tag panel shows which tags answered.")
+    _mn = mixed_n_note(_nsrc, bool(_upcb and _upcb.get("ok")))
+    if _mn:
+        notes.append(_mn)
 
     fys = sorted(series["N"])[-n_years:]
     # Below this there is no history to reason about. Toyota returned two years
@@ -3926,7 +3922,7 @@ def up_c_income_rebase(ticker: str, facts: dict, series: dict,
             res["notes"].append(
                 f"FY{fy}: no consolidated net-income tag filed for the year — "
                 f"priced from the two filed slices, {par[fy][-1] / 1e6:,.1f} + "
-                f"{nci[fy][-1] / 1e6:,.1f} = {s / 1e6:,.1f} ($M, parent + "
+                f"{nci[fy][-1] / 1e6:,.1f} = {s / 1e6:,.1f} (\\$M, parent + "
                 "noncontrolling). An addition of filed lines, never a ratio.")
         else:
             dropped.append(f"FY{fy} (no consolidated reading; the "
@@ -3955,10 +3951,11 @@ def up_c_income_rebase(ticker: str, facts: dict, series: dict,
         res["identity"] = (
             f"The filed identity for FY{last}: {res['parent_m']:,.1f} + "
             f"{res['nci_m']:,.1f} = {res['pl_m']:,.1f} (parent + "
-            "noncontrolling = consolidated, $M) — exact as filed. ")
+            "noncontrolling = consolidated, \\$M) — exact as filed. ")
     res["notes"].append(
         f"As-exchanged basis (Up-C): net income re-based to the filed "
-        f"consolidated figure for FY{min(rebased)}–FY{last}, verified against "
+        f"consolidated figure for every filed year, FY{min(rebased)}–FY{last} "
+        "(the table's window shows the most recent of them), verified against "
         "the registered filings figures; the basis statement above the inputs "
         "says what this means and names its limits.")
     return res
@@ -3982,13 +3979,31 @@ def up_c_basis_banner(ticker: str, total_m: float, basis: dict) -> str:
         + basis.get("identity", "")
         + "The Class A price applies to every unit through the exchange "
         "right. Two real limits are named here, not adjusted for: the **Tax "
-        f"Receivable Agreement** (`{spec.tra_tag}`, ${spec.tra_val_m:,.0f}M "
-        f"at FY{spec.tra_fy}, from ${spec.tra_prior_m:,.0f}M a year earlier) "
+        f"Receivable Agreement** (`{spec.tra_tag}`, \\${spec.tra_val_m:,.0f}M "
+        f"at FY{spec.tra_fy}, from \\${spec.tra_prior_m:,.0f}M a year earlier) "
         "transfers value to pre-IPO holders outside this arithmetic — "
         "direction: flattering. And the **tax-status difference**: the "
         "noncontrolling slice of LLC income is pre-tax at the member level, "
         "so consolidated tax expense understates the tax a fully public "
         "company would bear on the same earnings — direction: flattering.")
+
+
+def mixed_n_note(nsrc: list[str], up_c_verified: bool) -> str:
+    """The mixed-tag warning for a net-income series read from more than
+    one concept — silenced for a verified Up-C rebase, where ProfitLoss is
+    not a fill but the deliberate, verified basis and the basis note and
+    banner already say so. A note describing the chosen basis as a tagging
+    wart misdescribes what the page did (CVNA screenshot, 16 Sep 2026);
+    every other filer's wording is the 12 Sep original, moved verbatim."""
+    if len(nsrc) <= 1 or up_c_verified:
+        return ""
+    return ("Net income came from more than one tag: the years "
+            f"{nsrc[0]} does not cover were filled from {', '.join(nsrc[1:])}. "
+            + ("ProfitLoss includes profit belonging to minority holders of "
+               "consolidated subsidiaries, so where it filled a year the figure is "
+               "the whole group's rather than shareholders' alone. "
+               if "ProfitLoss" in nsrc[1:] else "")
+            + "The tag panel shows which tags answered.")
 
 
 def xbrl_route_apply(ticker: str, cik: str, series: dict,
@@ -5264,16 +5279,17 @@ def self_test() -> list[tuple[str, bool, str]]:
                 abs(_g5d3 - 0.8139) < 5e-4 and abs(_g5df - 0.9353) < 5e-4,
                 f"the 166% two-stage explanation closed: {_g5d3:.1%} / {_g5df:.1%}"))
     _g5u1 = up_c_basis_banner("CVNA", 1091.7, {"identity": "The filed identity for FY2025: "
-                             "1,407.0 + 488.0 = 1,895.0 (parent + noncontrolling = consolidated, $M) — exact as filed. "})
+                             "1,407.0 + 488.0 = 1,895.0 (parent + noncontrolling = consolidated, \\$M) — exact as filed. "})
     _g5u2 = up_c_basis_banner("RYAN", 264.1, {"identity": ""})
     out.append(("Banner: basis, count, identity, both limits with directions, the filed TRA tags and balances",
                 "as-exchanged" in _g5u1 and "1,091.7M" in _g5u1
                 and "1,407.0 + 488.0 = 1,895.0" in _g5u1
                 and _g5u1.count("flattering") == 2 and _g5u2.count("flattering") == 2
                 and "cvna:TaxReceivableAgreementLiabilityNoncurrent" in _g5u1
-                and "$2,228M" in _g5u1 and "$65M" in _g5u1
+                and "\\$2,228M" in _g5u1 and "\\$65M" in _g5u1
                 and "ryan:TaxReceivableAgreementLiabilitiesNoncurrent" in _g5u2
-                and "$459M" in _g5u2,
+                and "\\$459M" in _g5u2
+                and "$" not in (_g5u1 + _g5u2).replace("\\$", ""),
                 "what basis, what count, what limits — the house shape"))
     out.append(("The banned false sentence is unwritable: no sizing-down words, no accounted-for claim, and the banner never withholds",
                 all(w not in _g5u1 and w not in _g5u2
@@ -5284,6 +5300,14 @@ def self_test() -> list[tuple[str, bool, str]]:
                 and "withheld" in up_c_sentence("RYAN", 264.1)
                 and "unverified" in up_c_sentence("RYAN", 264.1),
                 "NCI-BRIEF §4's banned sentence, pinned"))
+    out.append(("Mixed-tag N note: silenced for a verified Up-C rebase, the 12 Sep wording verbatim otherwise",
+                mixed_n_note(["NetIncomeLoss", "ProfitLoss"], True) == ""
+                and "whole group's rather than shareholders' alone"
+                    in mixed_n_note(["NetIncomeLoss", "ProfitLoss"], False)
+                and "minority holders"
+                    not in mixed_n_note(["NetIncomeLoss", "IncomeLossFromContinuingOperations"], False)
+                and mixed_n_note(["NetIncomeLoss"], False) == "",
+                "the basis banner replaced it for the Up-C filers; every other filer unchanged (16 Sep 2026)"))
     out.append(("XBRL registry gate: an unregistered ticker returns None untouched",
                 xbrl_route_apply("PDEX", "0000788920",
                                  {"N": {2025: ("a", "b", 1.0)}}, {}, {}, 10) is None
@@ -6905,7 +6929,8 @@ if years and ticker and st.session_state.get("exp_tk") == ticker:
             f"forward net income  {fwd_N:,.0f}\n"
             f"ΔE applied          {applied_dE:.1%}"
             + (f" (capped from {use_dE:.1%})" if dE_capped else "   ")
-            + f"   (full {pooled.dE:.1%} / 3y {recent.dE:.1%})\n"
+            + f"   (full {dE_caption(pooled.dE, pooled.dE_defined, False)} / 3y "
+            + f"{dE_caption(recent.dE, recent.dE_defined, False)})\n"
             f"median OE, 5y       {median_OE:,.0f}\n"
             f"owners' earnings    {OE:,.0f}   ({OE / shares:,.2f}/share)\n"
             + " " * 20 + "seeded from " + seed_source + "\n"
