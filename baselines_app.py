@@ -7074,11 +7074,75 @@ def mf_ebit_ladder(oi: dict[int, float], rev: dict[int, float],
         return "D1", max(oi), {fy: (v, "") for fy, v in oi.items()}
     d4_years = sorted(set(rev) & set(cae))
     if d4_years and latest_filed - d4_years[-1] <= MF_LAG_CEILING:
-        cells = {fy: (rev[fy] - cae[fy],
-                      f"{rev[fy]:,.0f} − {cae[fy]:,.0f} = {rev[fy] - cae[fy]:,.0f}")
+        cells = {fy: (rev[fy] - cae[fy], mf_arith(rev[fy], cae[fy]))
                  for fy in d4_years}
         return "D4", d4_years[-1], cells
     return ("stale" if (oi or d4_years) else "none"), 0, {}
+
+
+def mf_arith(a: float, b: float) -> str:
+    """a − b printed at the coarsest precision where the DISPLAYED terms
+    reproduce the DISPLAYED result exactly. Arithmetic whose whole point
+    is that the reader can check it by hand must check by hand: rounding
+    each term independently printed "3,945 − 3,038 = 908" on HRB's first
+    capture, which is 907 — caught 18 Sep 2026, and this formatter is
+    the fix, not a wording patch."""
+    for nd in range(0, 7):
+        fa, fb, fd = f"{a:,.{nd}f}", f"{b:,.{nd}f}", f"{a - b:,.{nd}f}"
+        redo = float(fa.replace(",", "")) - float(fb.replace(",", ""))
+        if f"{redo:,.{nd}f}" == fd:
+            return f"{fa} − {fb} = {fd}"
+    return f"{a:,.6f} − {b:,.6f} = {a - b:,.6f}"
+
+
+def mf_balance_at(series: dict[int, float], fy_star: int) -> tuple[float, str]:
+    """(value, note) for a balance line at the headline year: the latest
+    value at or before it. Fresh is silent; within MF_LAG_CEILING it is
+    carried with the gap named; beyond the ceiling the line is treated
+    as no longer filed and EXCLUDED AT ZERO with the note saying so —
+    the same ceiling EBIT's lag gets, because a note is not licensed to
+    carry arbitrary staleness (the SIRI FY2011 short-term-debt catch,
+    18 Sep 2026); absent entirely, zero with the note."""
+    eligible = [fy for fy in series if fy <= fy_star]
+    if not eligible:
+        return 0.0, "no year at or before"
+    got = max(eligible)
+    gap = fy_star - got
+    if gap == 0:
+        return series[got], ""
+    if gap <= MF_LAG_CEILING:
+        return series[got], f"at FY{got}, {gap} behind"
+    return 0.0, (f"last filed FY{got}, {gap} behind — beyond the ceiling, "
+                 "treated as no longer filed, excluded at zero")
+
+
+def mf_interest_note(fy: int, val: float | None, tag: str, latest: int) -> str:
+    """The D4 interest note. Reads are PER TAG, never merged across the
+    family (recency across sign conventions printed "interest expense of
+    −101M" on PBI's first capture): the note names the tag it read and
+    prints the figure as the filing signs it; the net element carries
+    its own clause; no current line, and the note says the content
+    cannot be quantified from a filed line."""
+    if val is None:
+        last = f"FY{latest}" if latest else "never"
+        return ("interest note: no filed interest line reads at FY"
+                f"{fy} (last {last}) — the interest content cannot be "
+                "quantified from a filed line; the reconciliation line "
+                "carries the honesty")
+    net = (" — a net figure, interest income offsets it"
+           if tag == "InterestIncomeExpenseNet" else "")
+    return (f"interest note: the filed total includes {tag} of "
+            f"{val:,.1f}M at FY{fy}, as the filing signs it{net} — the "
+            "derived figure sits between EBIT and pretax income by that "
+            "amount")
+
+
+def mf_capital_artifact(capital: float, ev) -> bool:
+    """True when the capital base is real but under 1% of EV — the
+    stated trigger — so the return-on-capital figure is the artifact of
+    a nearly empty denominator and the page's caption says so plainly
+    rather than printing 16,000% with a straight face."""
+    return bool(ev) and ev > 0 and capital > 0 and capital < 0.01 * ev
 
 
 def mf_rung_disagreement(derived: dict[str, float], tol: float = 0.5) -> str:
@@ -7189,75 +7253,110 @@ MF_ACCEPT_POLICY_DROPPED = {
 }
 
 
+def _mf_flow(facts: dict, spec: tuple, recent: bool = False) -> dict[int, float]:
+    us, ifrs = spec
+    raw = _annual(facts, us, ifrs, None, False, recent, {})
+    return {fy: raw[fy][2] / 1e6 for fy in raw}
+
+
+def _mf_rev(facts: dict) -> dict[int, float]:
+    raw = _annual(facts, *CONCEPTS["REV"], None, "REV" in FILL_KEYS,
+                  "REV" in RECENCY_KEYS, {})
+    return {fy: raw[fy][2] / 1e6 for fy in raw}
+
+
+def _mf_inst(facts: dict, concepts: list[str], skips: list,
+             src: list[str] | None = None) -> dict[int, float]:
+    d = _instant(facts, concepts, "USD", src, skips, prefer_recent=True)
+    return {fy: v / 1e6 for fy, v in d.items()}
+
+
+def _mf_note_into(rec: dict, slot: str, name: str, note: str, fy_star: int):
+    if note == "no year at or before":
+        rec.setdefault(slot, []).append(f"{name}: no year at or before FY{fy_star}")
+    elif note:
+        rec.setdefault(slot, []).append(f"{name} {note}")
+
+
+def _mf_intexp_into(rec: dict, facts: dict, fy_star: int):
+    """Per-tag interest read — never merged across the family; the note
+    names the tag it read (the PBI −101M catch)."""
+    rec["intexp_at"], rec["intexp_tag"], rec["intexp_latest"] = None, "", 0
+    for tag in MF_TAGS["INTEXP"][0]:
+        ser = _mf_flow(facts, ([tag], []))
+        if ser:
+            rec["intexp_latest"] = max(rec["intexp_latest"], max(ser))
+        if rec["intexp_at"] is None and fy_star in ser:
+            rec["intexp_at"], rec["intexp_tag"] = ser[fy_star], tag
+
+
+def _mf_capital_side(rec: dict, facts: dict, fy_star: int, skips: list):
+    """The five capital-side lines at the headline year, every one
+    through mf_balance_at — one ceiling for every line, EBIT and
+    balance alike — with the notes into the record."""
+    def at(series: dict[int, float], name: str) -> float:
+        v, note = mf_balance_at(series, fy_star)
+        _mf_note_into(rec, "capital_stale", name, note, fy_star)
+        return v
+
+    ppe_src: list[str] = []
+    rec["ca"] = at(_mf_inst(facts, MF_TAGS["CA"], skips), "CA")
+    rec["cl"] = at(_mf_inst(facts, MF_TAGS["CL"], skips), "CL")
+    rec["std"] = at(_mf_inst(facts, BALANCE["std"], skips), "STD")
+    rec["ppe"] = at(_mf_inst(facts, MF_TAGS["PPE"], skips, ppe_src), "PPE")
+    rec["cash_current"] = (at(_mf_inst(facts, BALANCE["cash"], skips), "cash")
+                           + at(_mf_inst(facts, BALANCE["sti"], skips), "STI"))
+    rec["ppe_tag"] = " + ".join(ppe_src) or "—"
+
+
+def _mf_price_legs_into(rec: dict, resolved: str):
+    """Today's price, market cap, EV and the raw legs — shared by both
+    paths; the adjusted pair rides only where G − Ω exists."""
+    px = current_price(resolved)
+    rec["price"] = px
+    rec["mktcap"] = (px * rec["shares"]) if px else None
+    rec["ev"] = mf_ev(rec["mktcap"], rec["debt"], rec["excess"]) if px else None
+    if px:
+        rec["yld"], rec["roc"], rec["y_why"], rec["r_why"] = \
+            mf_legs(rec["ebit"], rec["ev"], rec["capital"])
+        if rec.get("gmw") is not None:
+            rec["yld_adj"], rec["roc_adj"], _, _ = \
+                mf_legs(rec["ebit"] + rec["gmw"], rec["ev"], rec["capital"])
+
+
+_MF_REFUSAL_WHY = {
+    "stale": ("a filed subtotal exists but stopped more than "
+              f"{MF_LAG_CEILING} years behind the filings, with no "
+              "all-in expense total to derive from"),
+    "none": ("neither an operating-income subtotal nor an all-in "
+             "expense total is in the filing"),
+}
+
+
 def mf_record(t: str) -> dict:
-    """One name's full MF record. Raises exactly as load() does."""
+    """One name's full MF record on the reader path. Raises exactly as
+    load() does."""
     years, _notes, meta = load(t)
     cmap = _ticker_map()
     facts = _facts(cmap[resolve_ticker(t, cmap)])
-
-    def flow(key: str) -> dict[int, float]:
-        us, ifrs = MF_TAGS[key]
-        raw = _annual(facts, us, ifrs, None,
-                      False, key == "INTEXP", {})
-        return {fy: raw[fy][2] / 1e6 for fy in raw}
-
-    rev_raw = _annual(facts, *CONCEPTS["REV"], None, "REV" in FILL_KEYS,
-                      "REV" in RECENCY_KEYS, {})
-    rev = {fy: rev_raw[fy][2] / 1e6 for fy in rev_raw}
-    oi, cae, intexp = flow("OI"), flow("CAE"), flow("INTEXP")
-
-    skips: list[tuple[str, int, str, int]] = []
-
-    def inst(concepts: list[str], src: list[str]) -> dict[int, float]:
-        d = _instant(facts, concepts, "USD", src, skips, prefer_recent=True)
-        return {fy: v / 1e6 for fy, v in d.items()}
-
-    ppe_src: list[str] = []
-    ca_s = inst(MF_TAGS["CA"], [])
-    cl_s = inst(MF_TAGS["CL"], [])
-    ppe_s = inst(MF_TAGS["PPE"], ppe_src)
-    std_s = inst(BALANCE["std"], [])
-    cash_s = inst(BALANCE["cash"], [])
-    sti_s = inst(BALANCE["sti"], [])
-
+    rev = _mf_rev(facts)
+    oi, cae = _mf_flow(facts, MF_TAGS["OI"]), _mf_flow(facts, MF_TAGS["CAE"])
     rung, fy_star, cells = mf_ebit_ladder(oi, rev, cae)
     rec = {"ticker": t, "resolved": meta["ticker"], "sic": meta["sic"],
            "fin_class": meta["fin_class"], "rung": rung, "fy": fy_star,
            "shares": meta["shares"], "debt": meta["debt"],
-           "cash_total": meta["cash"], "ppe_tag": " + ".join(ppe_src) or "—",
-           "skips": tuple(skips)}
+           "cash_total": meta["cash"], "ppe_tag": "—", "skips": ()}
     if rung in ("stale", "none"):
-        rec["why"] = ("a filed subtotal exists but stopped more than "
-                      f"{MF_LAG_CEILING} years behind the filings, with no "
-                      "all-in expense total to derive from"
-                      if rung == "stale" else
-                      "neither an operating-income subtotal nor an all-in "
-                      "expense total is in the filing")
+        rec["why"] = _MF_REFUSAL_WHY[rung]
         return rec
     latest_filed = max(set(rev) | set(oi) | set(cae), default=fy_star)
     rec["lag"], rec["lag_status"] = mf_lag(latest_filed, fy_star)
     rec["latest_filed"] = latest_filed
     rec["ebit"], rec["arith"] = cells[fy_star]
-    # The D4 interest note's inputs: the filed interest line at the
-    # headline year, and where that line last read at all.
-    rec["intexp_at"] = intexp.get(fy_star)
-    rec["intexp_latest"] = max(intexp, default=0)
-
-    def at(series: dict[int, float], name: str) -> float:
-        eligible = [fy for fy in series if fy <= fy_star]
-        if not eligible:
-            rec.setdefault("capital_stale", []).append(f"{name}: no year at or "
-                                                       f"before FY{fy_star}")
-            return 0.0
-        got = max(eligible)
-        if got < fy_star:
-            rec.setdefault("capital_stale", []).append(f"{name} at FY{got}, "
-                                                       f"{fy_star - got} behind")
-        return series[got]
-
-    rec["ca"], rec["cl"] = at(ca_s, "CA"), at(cl_s, "CL")
-    rec["std"], rec["ppe"] = at(std_s, "STD"), at(ppe_s, "PPE")
-    rec["cash_current"] = at(cash_s, "cash") + at(sti_s, "STI")
+    _mf_intexp_into(rec, facts, fy_star)
+    skips: list[tuple[str, int, str, int]] = []
+    _mf_capital_side(rec, facts, fy_star, skips)
+    rec["skips"] = tuple(skips)
     rec["revenue"] = rev.get(latest_filed) or rev.get(max(rev, default=0), 0.0)
     rec["floor"] = mf_class_floor(meta["sic"], rec["revenue"],
                                   rec["cash_total"], MF_OP_CASH_PCT_DEFAULT)
@@ -7266,18 +7365,107 @@ def mf_record(t: str) -> dict:
     rec["nwc"] = mf_nwc(rec["ca"], rec["cl"], rec["std"],
                         rec["cash_current"], rec["kept"])
     rec["capital"] = mf_capital(rec["nwc"], rec["ppe"])
-    px = current_price(meta["ticker"])
-    rec["price"] = px
-    rec["mktcap"] = (px * meta["shares"]) if px else None
-    rec["ev"] = mf_ev(rec["mktcap"], rec["debt"], rec["excess"]) if px else None
     gw = {y.fy: (y.G, y.omega) for y in years}
     rec["gmw"] = (gw[fy_star][0] - gw[fy_star][1]) if fy_star in gw else None
-    if px:
-        rec["yld"], rec["roc"], rec["y_why"], rec["r_why"] = \
-            mf_legs(rec["ebit"], rec["ev"], rec["capital"])
-        if rec["gmw"] is not None:
-            rec["yld_adj"], rec["roc_adj"], _, _ = \
-                mf_legs(rec["ebit"] + rec["gmw"], rec["ev"], rec["capital"])
+    _mf_price_legs_into(rec, meta["ticker"])
+    return rec
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  MF RAW-LEGS FALLBACK — PAGE-11-LOCAL BY DECISION OF RECORD
+# ══════════════════════════════════════════════════════════════════════
+# NOT part of the MF-LEGS block above, and the port session must NOT
+# take it (Chen, 18 Sep 2026): a second read path is a standing
+# divergence surface, page-11-local only, carried as such in the
+# handover. It exists because tool 1's price-coverage and minimum-years
+# gates serve Ω, which the RAW legs do not need — DBD (8 of 10 years
+# unpriced) and VSNT (3 filed years) have every line the raw legs need.
+# On exactly those two refusal classes this path computes the raw legs
+# with sources labeled: the count is the latest full-year filed diluted
+# (consolidated by construction — the income statement's own per-share
+# denominator — so the per-class summation hazard does not arise; Up-C
+# economics it cannot see, the residual named in the record), EV lines
+# read at the headline year under the same ceiling, and the ADJUSTED
+# legs refuse with Ω's real requirement stated.
+
+MF_FALLBACK_TRIGGERS = ("no share price", "of annual figures could be read")
+
+
+def _mf_fallback_diluted(facts: dict) -> tuple[float, int]:
+    """(latest full-year filed diluted count in millions, its fy), or
+    (0.0, 0) when the tag never reads."""
+    node = facts.get("facts", {}).get("us-gaap", {}).get(
+        "WeightedAverageNumberOfDilutedSharesOutstanding", {})
+    best = (0.0, 0)
+    for unit_rows in node.get("units", {}).values():
+        for row in unit_rows:
+            if row.get("form") not in ANNUAL_FORMS:
+                continue
+            try:
+                days = (dt.date.fromisoformat(str(row.get("end", "")))
+                        - dt.date.fromisoformat(str(row.get("start", "")))).days
+            except ValueError:
+                continue
+            if not 330 <= days <= 400:
+                continue
+            fy = int(str(row["end"])[:4])
+            if fy > best[1] and row.get("val"):
+                best = (float(row["val"]) / 1e6, fy)
+    return best
+
+
+def mf_record_fallback(t: str, why_load: str) -> dict:
+    """The raw-legs record for the two load-refusal classes the raw
+    legs do not need. Same block arithmetic as the reader path — the
+    paths share every pure function — sources labeled throughout."""
+    cmap = _ticker_map()
+    resolved = resolve_ticker(t, cmap)
+    facts = _facts(cmap[resolved])
+    sic, _sd = _sic(cmap[resolved])
+    fin_cls, _fr = financial_class(sic, facts)
+    rev = _mf_rev(facts)
+    oi, cae = _mf_flow(facts, MF_TAGS["OI"]), _mf_flow(facts, MF_TAGS["CAE"])
+    rung, fy_star, cells = mf_ebit_ladder(oi, rev, cae)
+    rec = {"ticker": t, "resolved": resolved, "sic": sic,
+           "fin_class": fin_cls, "rung": rung, "fy": fy_star,
+           "fallback": True, "adj_why": why_load,
+           "ppe_tag": "—", "skips": ()}
+    if rung in ("stale", "none"):
+        rec["why"] = _MF_REFUSAL_WHY[rung]
+        return rec
+    latest_filed = max(set(rev) | set(oi) | set(cae), default=fy_star)
+    rec["lag"], rec["lag_status"] = mf_lag(latest_filed, fy_star)
+    rec["latest_filed"] = latest_filed
+    rec["ebit"], rec["arith"] = cells[fy_star]
+    _mf_intexp_into(rec, facts, fy_star)
+    skips: list[tuple[str, int, str, int]] = []
+    _mf_capital_side(rec, facts, fy_star, skips)
+    shares, count_fy = _mf_fallback_diluted(facts)
+    if shares <= 0:
+        rec["rung"] = "refused"
+        rec["why"] = ("the fallback path found no full-year filed diluted "
+                      "share count")
+        return rec
+    rec["shares"], rec["count_fy"] = shares, count_fy
+
+    def evat(concepts: list[str], name: str) -> float:
+        v, note = mf_balance_at(_mf_inst(facts, concepts, skips), fy_star)
+        _mf_note_into(rec, "ev_stale", name, note, fy_star)
+        return v
+
+    rec["debt"] = evat(BALANCE["ltd"], "LTD") + rec["std"]
+    rec["cash_total"] = rec["cash_current"] + evat(BALANCE["lti"], "LTI")
+    rec["skips"] = tuple(skips)
+    rec["revenue"] = rev.get(latest_filed) or rev.get(max(rev, default=0), 0.0)
+    rec["floor"] = mf_class_floor(sic, rec["revenue"], rec["cash_total"],
+                                  MF_OP_CASH_PCT_DEFAULT)
+    rec["kept"], rec["excess"] = mf_cash_split(rec["cash_current"],
+                                               rec["cash_total"], rec["floor"])
+    rec["nwc"] = mf_nwc(rec["ca"], rec["cl"], rec["std"],
+                        rec["cash_current"], rec["kept"])
+    rec["capital"] = mf_capital(rec["nwc"], rec["ppe"])
+    rec["gmw"] = None
+    _mf_price_legs_into(rec, resolved)
     return rec
 
 
@@ -7354,7 +7542,7 @@ def mf_accept_block(recs: list[dict], dropped: list[tuple[str, str]],
                  + ", ".join(sorted(errors)))
     for r in recs:
         head = f"{r['ticker']:<6} {r['rung']}"
-        if r["rung"] in ("stale", "none"):
+        if r["rung"] in ("stale", "none", "refused"):
             L.append(head + f" REFUSED — {r['why']}")
             continue
         head += f" FY{r['fy']}"
@@ -7372,19 +7560,21 @@ def mf_accept_block(recs: list[dict], dropped: list[tuple[str, str]],
             extras.append("managed-care carve-out (SIC 6324): the method's "
                           "boundary, zero-excess cash default")
         if r["rung"] == "D4":
-            if r.get("intexp_at") is not None:
-                extras.append(f"interest note: the filed total includes interest "
-                              f"expense of {r['intexp_at']:,.0f}M at FY{r['fy']} — "
-                              "the derived figure sits between EBIT and pretax "
-                              "income by that amount")
-            else:
-                extras.append("interest note: no filed interest line reads at "
-                              f"FY{r['fy']} (last "
-                              + (f"FY{r['intexp_latest']}" if r.get("intexp_latest")
-                                 else "never")
-                              + ") — the interest content cannot be quantified "
-                                "from a filed line; the reconciliation line "
-                                "carries the honesty")
+            extras.append(mf_interest_note(r["fy"], r.get("intexp_at"),
+                                           r.get("intexp_tag", ""),
+                                           r.get("intexp_latest", 0)))
+        if r.get("fallback"):
+            extras.append("raw legs via the fallback path — count: latest "
+                          f"filed diluted, FY{r.get('count_fy', 0)}; EV lines "
+                          f"read at FY{r['fy']}"
+                          + ("; " + "; ".join(r["ev_stale"])
+                             if r.get("ev_stale") else "")
+                          + f"; adjusted legs refused: {r['adj_why']}")
+        if mf_capital_artifact(r.get("capital", 0.0), r.get("ev")):
+            extras.append(f"near-zero capital base: {r['capital']:,.0f}M "
+                          f"against an EV of {r['ev']:,.0f}M — the "
+                          "return-on-capital figure is the artifact of a "
+                          "nearly empty denominator")
         if r.get("capital_stale"):
             extras.append("capital-side lines behind: "
                           + "; ".join(r["capital_stale"]))
@@ -7887,26 +8077,123 @@ def baselines_self_test() -> list[tuple[str, bool, str]]:
     #     interest-line variant says so; a refused name states its why;
     #     a lag prints named; the carve-out line prints.
     _acc = [dict(_mfr[0], arith="3,610 − 3,197 = 413", sic="5651",
-                 lag=2, lag_status="note", intexp_at=25.0, intexp_latest=2025,
+                 lag=2, lag_status="note", intexp_at=25.0,
+                 intexp_tag="InterestExpense", intexp_latest=2025,
                  skips=(), yld_adj=None, roc_adj=None, y_why="", r_why=""),
             {"ticker": "PBX", "rung": "D4", "fy": 2025, "sic": "3579",
              "arith": "1 − 1 = 0", "lag": 0, "lag_status": "ok",
-             "intexp_at": None, "intexp_latest": 2015, "skips": (),
-             "ebit": 0.0, "yld": None, "roc": None,
+             "intexp_at": None, "intexp_tag": "", "intexp_latest": 2015,
+             "skips": (), "ebit": 0.0, "yld": None, "roc": None,
              "y_why": "no price", "r_why": "no price"},
             {"ticker": "ZZZ", "rung": "none", "skips": (),
              "why": "neither an operating-income subtotal nor an all-in "
-                    "expense total is in the filing"}]
+                    "expense total is in the filing"},
+            {"ticker": "FBK", "rung": "D1", "fy": 2025, "sic": "3578",
+             "fallback": True, "count_fy": 2025, "adj_why": "load refused: X",
+             "ev_stale": ["LTD at FY2024, 1 behind"], "arith": "",
+             "lag": 0, "lag_status": "ok", "skips": (), "ebit": 50.0,
+             "capital": 5.0, "ev": 10000.0, "yld": 0.005, "roc": 10.0,
+             "y_why": "", "r_why": ""}]
     _ab = mf_accept_block(_acc, [("GIB", "routes to the Non-US Checker")],
                           {}, "2026-09-18")
-    out.append(("MF acceptance block: D4 arithmetic, both interest notes, "
-                "refusal, lag, carve-out",
+    out.append(("MF acceptance block: D4 arithmetic, tag-named interest note, "
+                "refusal, lag, carve-out, fallback line, artifact caption",
                 "[3,610 − 3,197 = 413]" in _ab and "lag 2y (printed, named)" in _ab
-                and "includes interest expense of 25M at FY2025" in _ab
+                and "includes InterestExpense of 25.0M at FY2025" in _ab
+                and "as the filing signs it" in _ab
                 and "last FY2015" in _ab and "cannot be quantified" in _ab
                 and "ZZZ    none REFUSED — neither" in _ab
-                and "GIB    CARVED OUT — routes to the Non-US Checker" in _ab,
+                and "GIB    CARVED OUT — routes to the Non-US Checker" in _ab
+                and "raw legs via the fallback path — count: latest filed "
+                    "diluted, FY2025" in _ab
+                and "LTD at FY2024, 1 behind; adjusted legs refused: "
+                    "load refused: X" in _ab
+                and "near-zero capital base: 5M against an EV of 10,000M" in _ab,
                 "acceptance format"))
+
+    # 28. The balance-line ceiling (fix A of the first capture): fresh is
+    #     silent, within the ceiling carried with the gap named, beyond it
+    #     EXCLUDED AT ZERO — the SIRI FY2011 short-term debt never enters
+    #     live arithmetic again — and an absent line reads zero with its
+    #     own note.
+    _bser = {2011: 1076.0, 2023: 40.0}
+    out.append(("MF balance ceiling: fresh, carried, excluded at zero, absent",
+                mf_balance_at({2025: 5.0}, 2025) == (5.0, "")
+                and mf_balance_at({2023: 40.0}, 2025)
+                == (40.0, "at FY2023, 2 behind")
+                and mf_balance_at({2011: 1076.0}, 2025)[0] == 0.0
+                and "treated as no longer filed" in mf_balance_at(_bser, 2022)[1]
+                and mf_balance_at(_bser, 2022)[0] == 0.0
+                and mf_balance_at({2026: 1.0}, 2025) == (0.0, "no year at or before"),
+                "ceiling on every line"))
+
+    # 29. The reconciling arithmetic formatter (fix B): integers stay at
+    #     zero decimals; the HRB-class pair — terms that round apart from
+    #     their difference — escalates until the printed subtraction
+    #     hand-checks; and the printed string always reconciles when
+    #     parsed at its own precision.
+    _a1 = mf_arith(3610.0, 3197.0)
+    _a2 = mf_arith(3944.6, 3037.4)          # 907.2, but 3,945 − 3,037 = 908
+    _t2 = _a2.replace(",", "").split(" ")
+    out.append(("MF arithmetic: integers plain, HRB pair escalates and "
+                "hand-checks",
+                _a1 == "3,610 − 3,197 = 413" and ".6 − " in _a2
+                and abs((float(_t2[0]) - float(_t2[2])) - float(_t2[4])) < 1e-9
+                and mf_arith(3944.6, 3037.1) == "3,945 − 3,037 = 908",
+                f"{_a1} · {_a2}"))
+
+    # 30. The interest note (fix C): the tag is named with the figure as
+    #     the filing signs it, the net element carries its own clause,
+    #     and the no-current-line variant states what cannot be done.
+    _n1 = mf_interest_note(2025, -101.0, "InterestIncomeExpenseNet", 2025)
+    _n2 = mf_interest_note(2025, 25.0, "InterestExpense", 2025)
+    _n3 = mf_interest_note(2026, None, "", 2015)
+    out.append(("MF interest note: tag named, sign stated, net clause, absent",
+                "InterestIncomeExpenseNet of -101.0M" in _n1
+                and "a net figure, interest income offsets it" in _n1
+                and "InterestExpense of 25.0M" in _n2 and "net figure" not in _n2
+                and "as the filing signs it" in _n2
+                and "cannot be quantified" in _n3 and "last FY2015" in _n3,
+                "three variants"))
+
+    # 31. The fallback's pure parts: the diluted-count read keeps only
+    #     full-year annual-form facts and takes the latest, and the two
+    #     trigger phrases match the live refusal sentences verbatim as
+    #     captured (DBD and VSNT, 18 Sep 2026).
+    _fsyn = {"facts": {"us-gaap": {
+        "WeightedAverageNumberOfDilutedSharesOutstanding": {"units": {"shares": [
+            {"form": "10-K", "start": "2024-01-01", "end": "2024-12-31",
+             "val": 80_000_000},
+            {"form": "10-K", "start": "2025-01-01", "end": "2025-12-31",
+             "val": 71_000_000},
+            {"form": "10-Q", "start": "2026-01-01", "end": "2026-12-31",
+             "val": 99_000_000},
+            {"form": "10-K", "start": "2025-10-01", "end": "2025-12-31",
+             "val": 70_000_000},
+        ]}}}}}
+    _dbd_msg = ("DBD cannot be valued from these filings — 8 of the 10 years "
+                "in this window have no share price")
+    _vsnt_msg = "Only 3 year(s) of annual figures could be read for VSNT"
+    out.append(("MF fallback: diluted read full-year-latest, both triggers "
+                "match the live sentences",
+                _mf_fallback_diluted(_fsyn) == (71.0, 2025)
+                and _mf_fallback_diluted({"facts": {"us-gaap": {}}}) == (0.0, 0)
+                and any(t in _dbd_msg for t in MF_FALLBACK_TRIGGERS)
+                and any(t in _vsnt_msg for t in MF_FALLBACK_TRIGGERS)
+                and not any(t in "financial gate refusal" for t in
+                            MF_FALLBACK_TRIGGERS),
+                "fallback parts"))
+
+    # 32. The near-zero-capital caption trigger, 1% of EV as stated:
+    #     under it fires, at 2% it does not, a refused-capital zero does
+    #     not (that cell already refuses), and no EV means no caption.
+    out.append(("MF artifact caption: fires under 1% of EV and only there",
+                mf_capital_artifact(50.0, 10000.0)
+                and not mf_capital_artifact(200.0, 10000.0)
+                and not mf_capital_artifact(0.0, 10000.0)
+                and not mf_capital_artifact(50.0, None)
+                and not mf_capital_artifact(50.0, -5.0),
+                "1% trigger"))
     return out
 
 
@@ -8131,7 +8418,20 @@ with st.expander("MF capture — reference table + screener acceptance (for the 
                     _merrs[_mt] = "no current price could be fetched — re-run"
                 _mrecs[_mt] = _mr
             except ValueError as _me:           # load()'s own refusal — a result
-                _mdrop[_mt] = "load refused: " + str(_me).split(". ")[0]
+                _mwhy = str(_me).split(". ")[0]
+                if any(_tr in str(_me) for _tr in MF_FALLBACK_TRIGGERS):
+                    try:
+                        _mr = mf_record_fallback(_mt, _mwhy)
+                        if _mr["rung"] in ("stale", "none", "refused"):
+                            _mdrop[_mt] = "EBIT refused: " + _mr["why"]
+                        elif _mr.get("price") is None:
+                            _merrs[_mt] = ("no current price could be fetched "
+                                           "— re-run")
+                        _mrecs[_mt] = _mr
+                    except Exception:
+                        _mdrop[_mt] = "load refused: " + _mwhy
+                else:
+                    _mdrop[_mt] = "load refused: " + _mwhy
             except Exception as _me:            # network / throttle / parse
                 _merrs[_mt] = f"{type(_me).__name__}: {_me}"
         _mprog.progress(1.0, text="Done.")
@@ -8162,8 +8462,9 @@ with st.expander("MF capture — reference table + screener acceptance (for the 
         } for t in dict.fromkeys(_mall)]), width='stretch', hide_index=True,
             height=min(38 * len(_mall) + 40, 1200))
         _mref = [_mrecs[t] for t in BASE_RATE_NAMES
-                 if t in _mrecs and _mrecs[t]["rung"] not in ("stale", "none")
-                 and _mrecs[t].get("price")]
+                 if t in _mrecs
+                 and _mrecs[t]["rung"] not in ("stale", "none", "refused")
+                 and _mrecs[t].get("price") and not _mrecs[t].get("fallback")]
         _mrefdrop = [(t, _mdrop[t]) for t in BASE_RATE_NAMES if t in _mdrop]
         _macc = [_mrecs[t] for t in ([x for x in MF_CENSUS_NAMES
                                       if x not in MF_ACCEPT_POLICY_DROPPED]
