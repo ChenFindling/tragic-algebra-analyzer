@@ -7391,27 +7391,45 @@ def mf_record(t: str) -> dict:
 MF_FALLBACK_TRIGGERS = ("no share price", "of annual figures could be read")
 
 
-def _mf_fallback_diluted(facts: dict) -> tuple[float, int]:
-    """(latest full-year filed diluted count in millions, its fy), or
-    (0.0, 0) when the tag never reads."""
+def _mf_fallback_diluted(facts: dict) -> tuple[float, str, str]:
+    """(count in millions, period label, rung) for the fallback's count.
+
+    Rung 1 — the latest FULL-YEAR annual-form fact, labeled "FY2025".
+    Rung 2 (approved 18 Sep 2026, the VSNT class: a first-year filer
+    with quarterly counts and no full-year fact yet — shape-based, not
+    name-based) — when NO full-year fact exists under the tag in any
+    form, the latest QUARTER-period fact (80-100 days; 10-Q forms
+    admitted for this rung only), labeled by its own period end:
+    "quarter ended 2026-06-30". Full-year always outranks. A half-year
+    span is neither and never counts. (0.0, "", "") when nothing
+    usable reads."""
     node = facts.get("facts", {}).get("us-gaap", {}).get(
         "WeightedAverageNumberOfDilutedSharesOutstanding", {})
-    best = (0.0, 0)
+    annual: tuple[float, int] = (0.0, 0)
+    quarterly: tuple[float, str] = (0.0, "")
     for unit_rows in node.get("units", {}).values():
         for row in unit_rows:
-            if row.get("form") not in ANNUAL_FORMS:
+            if not row.get("val"):
                 continue
+            end = str(row.get("end", ""))
             try:
-                days = (dt.date.fromisoformat(str(row.get("end", "")))
+                days = (dt.date.fromisoformat(end)
                         - dt.date.fromisoformat(str(row.get("start", "")))).days
             except ValueError:
                 continue
-            if not 330 <= days <= 400:
-                continue
-            fy = int(str(row["end"])[:4])
-            if fy > best[1] and row.get("val"):
-                best = (float(row["val"]) / 1e6, fy)
-    return best
+            if 330 <= days <= 400 and row.get("form") in ANNUAL_FORMS:
+                fy = int(end[:4])
+                if fy > annual[1]:
+                    annual = (float(row["val"]) / 1e6, fy)
+            elif (80 <= days <= 100
+                  and row.get("form") in ANNUAL_FORMS + ("10-Q", "10-Q/A")
+                  and end > quarterly[1]):
+                quarterly = (float(row["val"]) / 1e6, end)
+    if annual[1]:
+        return annual[0], f"FY{annual[1]}", "annual"
+    if quarterly[1]:
+        return quarterly[0], f"quarter ended {quarterly[1]}", "quarterly"
+    return 0.0, "", ""
 
 
 def mf_record_fallback(t: str, why_load: str) -> dict:
@@ -7440,13 +7458,14 @@ def mf_record_fallback(t: str, why_load: str) -> dict:
     _mf_intexp_into(rec, facts, fy_star)
     skips: list[tuple[str, int, str, int]] = []
     _mf_capital_side(rec, facts, fy_star, skips)
-    shares, count_fy = _mf_fallback_diluted(facts)
+    shares, count_period, count_rung = _mf_fallback_diluted(facts)
     if shares <= 0:
         rec["rung"] = "refused"
-        rec["why"] = ("the fallback path found no full-year filed diluted "
-                      "share count")
+        rec["why"] = ("the fallback path found no full-year or "
+                      "quarter-period filed diluted share count")
         return rec
-    rec["shares"], rec["count_fy"] = shares, count_fy
+    rec["shares"] = shares
+    rec["count_period"], rec["count_rung"] = count_period, count_rung
 
     def evat(concepts: list[str], name: str) -> float:
         v, note = mf_balance_at(_mf_inst(facts, concepts, skips), fy_star)
@@ -7564,8 +7583,14 @@ def mf_accept_block(recs: list[dict], dropped: list[tuple[str, str]],
                                            r.get("intexp_tag", ""),
                                            r.get("intexp_latest", 0)))
         if r.get("fallback"):
-            extras.append("raw legs via the fallback path — count: latest "
-                          f"filed diluted, FY{r.get('count_fy', 0)}; EV lines "
+            if r.get("count_rung") == "quarterly":
+                _clab = (f"latest filed quarterly diluted, "
+                         f"{r.get('count_period', '')} — no full-year "
+                         "count filed")
+            else:
+                _clab = f"latest filed diluted, {r.get('count_period', '')}"
+            extras.append("raw legs via the fallback path — count: "
+                          f"{_clab}; EV lines "
                           f"read at FY{r['fy']}"
                           + ("; " + "; ".join(r["ev_stale"])
                              if r.get("ev_stale") else "")
@@ -8089,7 +8114,8 @@ def baselines_self_test() -> list[tuple[str, bool, str]]:
              "why": "neither an operating-income subtotal nor an all-in "
                     "expense total is in the filing"},
             {"ticker": "FBK", "rung": "D1", "fy": 2025, "sic": "3578",
-             "fallback": True, "count_fy": 2025, "adj_why": "load refused: X",
+             "fallback": True, "count_period": "quarter ended 2025-06-30",
+             "count_rung": "quarterly", "adj_why": "load refused: X",
              "ev_stale": ["LTD at FY2024, 1 behind"], "arith": "",
              "lag": 0, "lag_status": "ok", "skips": (), "ebit": 50.0,
              "capital": 5.0, "ev": 10000.0, "yld": 0.005, "roc": 10.0,
@@ -8105,7 +8131,8 @@ def baselines_self_test() -> list[tuple[str, bool, str]]:
                 and "ZZZ    none REFUSED — neither" in _ab
                 and "GIB    CARVED OUT — routes to the Non-US Checker" in _ab
                 and "raw legs via the fallback path — count: latest filed "
-                    "diluted, FY2025" in _ab
+                    "quarterly diluted, quarter ended 2025-06-30 — no "
+                    "full-year count filed" in _ab
                 and "LTD at FY2024, 1 behind; adjusted legs refused: "
                     "load refused: X" in _ab
                 and "near-zero capital base: 5M against an EV of 10,000M" in _ab,
@@ -8174,15 +8201,30 @@ def baselines_self_test() -> list[tuple[str, bool, str]]:
     _dbd_msg = ("DBD cannot be valued from these filings — 8 of the 10 years "
                 "in this window have no share price")
     _vsnt_msg = "Only 3 year(s) of annual figures could be read for VSNT"
-    out.append(("MF fallback: diluted read full-year-latest, both triggers "
-                "match the live sentences",
-                _mf_fallback_diluted(_fsyn) == (71.0, 2025)
-                and _mf_fallback_diluted({"facts": {"us-gaap": {}}}) == (0.0, 0)
+    # Rung-2 synthetic, the VSNT shape: two 10-Q quarters and a half-year
+    # span, no full-year fact anywhere — the latest QUARTER by period end
+    # wins, the half-year is neither fish nor fowl and never counts.
+    _fq = {"facts": {"us-gaap": {
+        "WeightedAverageNumberOfDilutedSharesOutstanding": {"units": {"shares": [
+            {"form": "10-Q", "start": "2026-01-01", "end": "2026-03-31",
+             "val": 143_409_000},
+            {"form": "10-Q", "start": "2026-01-01", "end": "2026-06-30",
+             "val": 142_534_000},
+            {"form": "10-Q", "start": "2026-04-01", "end": "2026-06-30",
+             "val": 141_300_000},
+        ]}}}}}
+    out.append(("MF fallback: full-year outranks, quarterly rung picks the "
+                "latest quarter, triggers match the live sentences",
+                _mf_fallback_diluted(_fsyn) == (71.0, "FY2025", "annual")
+                and _mf_fallback_diluted(_fq)
+                == (141.3, "quarter ended 2026-06-30", "quarterly")
+                and _mf_fallback_diluted({"facts": {"us-gaap": {}}})
+                == (0.0, "", "")
                 and any(t in _dbd_msg for t in MF_FALLBACK_TRIGGERS)
                 and any(t in _vsnt_msg for t in MF_FALLBACK_TRIGGERS)
                 and not any(t in "financial gate refusal" for t in
                             MF_FALLBACK_TRIGGERS),
-                "fallback parts"))
+                "fallback parts + rung order"))
 
     # 32. The near-zero-capital caption trigger, 1% of EV as stated:
     #     under it fires, at 2% it does not, a refused-capital zero does
