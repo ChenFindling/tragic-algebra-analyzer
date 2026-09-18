@@ -6805,6 +6805,193 @@ def base_rate_capture_block(recs: list[dict], dropped: list[tuple[str, str]],
     return "\n".join(L)
 
 
+# ══════════════════════════════════════════════════════════════════════
+#  MF CENSUS — for pages/11_Magic_Formula.py (18 Sep 2026)
+# ══════════════════════════════════════════════════════════════════════
+#
+# One-off presence census for the Magic Formula page's design session.
+# The page's acceptance bar (Chen, 18 Sep 2026) is the official
+# screener's own output: every name magicformulainvesting.com publishes
+# must produce the two legs wherever EDGAR carries the data. So before a
+# single band is registered, this section answers — from the filings,
+# never from an aggregator — which of the thirty resolve against the SEC
+# list at all, which file foreign forms, what the financial gate says
+# about each (the CI boundary evidence), and which of the tags the two
+# legs and the derived-EBIT ladder need are present, with how many
+# annual years and how fresh. Presence and latest year ONLY: no values,
+# no prices, no load(), so a refusal-shaped name cannot abort the sweep.
+# It changes nothing: no pin is read or written, and the clean line is
+# indifferent to this section existing. The printed block is EVIDENCE
+# for the design session — pinned nowhere, read by no page.
+#
+# Semantics, stated on the block itself: a tag group's count is the
+# number of DISTINCT period-end years carrying an annual-form fact for
+# any tag in the group, flow groups additionally requiring the reader's
+# own 330-400 day full-year duration. That is an UPPER BOUND on what
+# _annual and _instant keep (their dedup, unit and fill rules run on
+# top), which is exactly what a presence census should be: a tag this
+# census cannot see, the reader certainly cannot.
+
+MF_CENSUS_AS_OF_SOURCE = (
+    "magicformulainvesting.com screener output, top 30 at a $1,000M "
+    "minimum market cap, retrieved 18 Sep 2026 (screenshot of record "
+    "in the session)")
+
+# The thirty names, in the screener's own alphabetical-by-company order.
+MF_CENSUS_NAMES = [
+    "ANF", "ADBE", "AFMJF", "MO", "BBWI", "BCRX", "BKE", "GIB", "CRCT",
+    "CROX", "DECK", "DBD", "HRB", "HRMY", "HPQ", "INVA", "MGTX", "OMC",
+    "OTEX", "MD", "PRDO", "PBI", "SIRI", "STRA", "CI", "TNET", "UPWK",
+    "VSNT", "YELP", "GTM",
+]
+
+# Tag groups the Magic Formula page will need, censused as groups so the
+# block reports "is the data there" per LINE the design cares about.
+# REV is the reader's own three-tag family, spelled verbatim so the
+# census can never claim revenue coverage the reader does not have. The
+# COGS family is censused for the D2b rung; the excluding-D&A variant is
+# its own row because it is a DIFFERENT figure (an EBITDA-flavoured
+# cost) — censused so the design can SEE it, never used as a synonym.
+MF_CENSUS_FLOW_TAGS = (
+    ("REV", ("RevenueFromContractWithCustomerExcludingAssessedTax",
+             "Revenues",
+             "RevenueFromContractWithCustomerIncludingAssessedTax")),
+    ("OI", ("OperatingIncomeLoss",)),
+    ("GP", ("GrossProfit",)),
+    ("COGS", ("CostOfRevenue", "CostOfGoodsAndServicesSold",
+              "CostOfGoodsSold", "CostOfServices")),
+    ("COGS-xDA", ("CostOfGoodsAndServicesSoldExcludingDepreciationDepletion"
+                  "AndAmortization",)),
+    ("OPEXP", ("OperatingExpenses",)),
+    ("CAE", ("CostsAndExpenses",)),
+    ("INTEXP", ("InterestExpense", "InterestExpenseNonoperating",
+                "InterestIncomeExpenseNet")),
+)
+
+MF_CENSUS_INSTANT_TAGS = (
+    ("CA", ("AssetsCurrent",)),
+    ("CL", ("LiabilitiesCurrent",)),
+    ("PPE", ("PropertyPlantAndEquipmentNet",)),
+    ("PPE+FL", ("PropertyPlantAndEquipmentAndFinanceLeaseRightOfUseAsset"
+                "AfterAccumulatedDepreciationAndAmortization",)),
+)
+
+
+def mf_census_tag_read(facts: dict, tags: tuple, flow: bool) -> tuple[int, int, str]:
+    """(distinct end-years, latest such year, which tags answered) for a group.
+
+    A year counts when ANY tag in the group carries an annual-form fact
+    ending in it — flow facts additionally need the reader's 330-400 day
+    full-year duration, so a quarter tagged inside a 10-K never counts a
+    year the way the issuance facts once fooled `_annual`'s callers.
+    Restatements dedupe through the end-year set itself. No values are
+    read; presence is the question.
+    """
+    years: set[int] = set()
+    hit: list[str] = []
+    for tag in tags:
+        node = facts.get("facts", {}).get("us-gaap", {}).get(tag)
+        if not node:
+            continue
+        found = False
+        for unit_rows in node.get("units", {}).values():
+            for row in unit_rows:
+                if row.get("form") not in ANNUAL_FORMS:
+                    continue
+                end = str(row.get("end", ""))
+                if flow:
+                    try:
+                        days = (dt.date.fromisoformat(end)
+                                - dt.date.fromisoformat(str(row.get("start", "")))).days
+                    except ValueError:
+                        continue
+                    if not 330 <= days <= 400:
+                        continue
+                if len(end) >= 4 and end[:4].isdigit():
+                    years.add(int(end[:4]))
+                    found = True
+        if found:
+            hit.append(tag)
+    return len(years), (max(years) if years else 0), "+".join(hit)
+
+
+def mf_census_read(t: str) -> dict:
+    """One name's census row. A resolution failure is a RESULT — the row
+    says so and the sweep continues; an honest carve-out arriving as
+    evidence is half of what this census exists to produce."""
+    cmap = _ticker_map()
+    resolved = resolve_ticker(t, cmap)
+    if resolved is None:
+        return {"ticker": t, "resolved": None}
+    cik = cmap[resolved]
+    facts = _facts(cik)
+    sic, sic_desc = _sic(cik)
+    fin_cls, fin_reason = financial_class(sic, facts)
+    ns = facts.get("facts", {})
+    forms: set[str] = set()
+    for space in ("us-gaap", "ifrs-full"):
+        for node in ns.get(space, {}).values():
+            for unit_rows in node.get("units", {}).values():
+                for row in unit_rows:
+                    if row.get("form") in ANNUAL_FORMS:
+                        forms.add(row["form"])
+    out = {"ticker": t, "resolved": resolved, "cik": cik, "sic": sic,
+           "sic_desc": sic_desc, "fin_class": fin_cls,
+           "fin_reason": fin_reason, "forms": tuple(sorted(forms)),
+           "us_gaap": bool(ns.get("us-gaap")), "ifrs": bool(ns.get("ifrs-full"))}
+    for key, tags in MF_CENSUS_FLOW_TAGS:
+        out[key] = mf_census_tag_read(facts, tags, flow=True)
+    for key, tags in MF_CENSUS_INSTANT_TAGS:
+        out[key] = mf_census_tag_read(facts, tags, flow=False)
+    return out
+
+
+def _mf_cell(key: str, tags: tuple, rec: tuple) -> str:
+    """One tag group's cell: 'OI 18y→2025', with the answering tags in
+    brackets only where the group has more than one and the bracket
+    therefore says something the key alone does not."""
+    n, latest, hit = rec
+    if not n:
+        return f"{key} —"
+    cell = f"{key} {n}y→{latest}"
+    if len(tags) > 1 and hit:
+        cell += f" [{hit}]"
+    return cell
+
+
+def mf_census_block(rows: list[dict], errors: dict[str, str], today: str) -> str:
+    """The paste-ready census block — evidence, pinned nowhere."""
+    L = ["# ── MF CENSUS — screener-30 read census for pages/11_Magic_Formula.py ──",
+         f"# Captured {today} by the Baselines app's MF census.",
+         f"# List source: {MF_CENSUS_AS_OF_SOURCE}.",
+         "# Per group: distinct period-end years carrying an annual-form fact",
+         "# for any tag in the group (flow groups additionally require the",
+         "# reader's 330-400 day full-year duration), the latest such year,",
+         "# and for multi-tag groups which tags answered. An upper bound on",
+         "# what the reader's own filters keep, never their output."]
+    if errors:
+        L.append("# INCOMPLETE — fetch failures, re-run before reading: "
+                 + ", ".join(sorted(errors)))
+    groups = list(MF_CENSUS_FLOW_TAGS) + list(MF_CENSUS_INSTANT_TAGS)
+    for r in rows:
+        if r["resolved"] is None:
+            L.append(f"{r['ticker']:<6} NOT RESOLVED — not in the SEC company list "
+                     "(delisted, foreign-listed without SEC reporting, or private)")
+            continue
+        res = "" if r["resolved"] == r["ticker"] else f" (as {r['resolved']})"
+        L.append(f"{r['ticker']:<6} CIK{r['cik']}{res}  SIC {r['sic'] or '—'} "
+                 f"({r['sic_desc'] or 'no description'})")
+        L.append(f"       class: {r['fin_class']} — {r['fin_reason']}")
+        L.append(f"       forms: {', '.join(r['forms']) or 'none annual'}   "
+                 f"namespaces: us-gaap {'yes' if r['us_gaap'] else 'NO'}, "
+                 f"ifrs-full {'yes' if r['ifrs'] else 'no'}")
+        cells = [_mf_cell(k, tags, r[k]) for k, tags in groups]
+        L.append("       " + " · ".join(cells[:5]))
+        L.append("       " + " · ".join(cells[5:8]))
+        L.append("       " + " · ".join(cells[8:]))
+    return "\n".join(L)
+
+
 # ── Self-tests for the comparison and vintage logic ───────────────────
 #
 # All synthetic, no network. Per §2, behaviour is tested on real figures,
@@ -7091,6 +7278,75 @@ def baselines_self_test() -> list[tuple[str, bool, str]]:
                 and best_stretch_cagr(_brs, 5,
                                       excluded=frozenset({2015, 2016})) is None,
                 "sign, exclusion, and the empty case"))
+
+    # 15. MF census inventory (Magic Formula page, 18 Sep 2026): thirty
+    #     unique names and the tag groups of record, in order — a census
+    #     that quietly lost a name or a tag group would grade the wrong
+    #     ladder for the wrong list and nothing downstream could tell.
+    _mfk = ([k for k, _ in MF_CENSUS_FLOW_TAGS]
+            + [k for k, _ in MF_CENSUS_INSTANT_TAGS])
+    out.append(("MF census: 30 unique names and the tag groups of record",
+                len(MF_CENSUS_NAMES) == 30 == len(set(MF_CENSUS_NAMES))
+                and _mfk == ["REV", "OI", "GP", "COGS", "COGS-xDA", "OPEXP",
+                             "CAE", "INTEXP", "CA", "CL", "PPE", "PPE+FL"]
+                and dict(MF_CENSUS_FLOW_TAGS)["OI"] == ("OperatingIncomeLoss",)
+                and dict(MF_CENSUS_INSTANT_TAGS)["PPE"]
+                == ("PropertyPlantAndEquipmentNet",),
+                f"{len(MF_CENSUS_NAMES)} names, groups {'+'.join(_mfk)}"))
+
+    # 16. MF census tag read, on a synthetic facts dict whose answer is
+    #     known by construction: the flow filter keeps the two full-year
+    #     10-K facts, drops the quarter tagged inside a 10-K and the
+    #     full-year span filed on a 10-Q, and dedupes a restated end-year;
+    #     the instant read takes annual-form end-years with no duration
+    #     test; an absent tag reads (0, 0) rather than raising.
+    _syn = {"facts": {"us-gaap": {
+        "OperatingIncomeLoss": {"units": {"USD": [
+            {"form": "10-K", "start": "2024-01-01", "end": "2024-12-31"},
+            {"form": "10-K", "start": "2024-01-01", "end": "2024-12-31"},
+            {"form": "10-K", "start": "2024-10-01", "end": "2024-12-31"},
+            {"form": "10-Q", "start": "2023-01-01", "end": "2023-12-31"},
+            {"form": "10-K", "start": "2022-01-01", "end": "2022-12-31"},
+        ]}},
+        "AssetsCurrent": {"units": {"USD": [
+            {"form": "10-K", "end": "2024-12-31"},
+            {"form": "10-Q", "end": "2025-06-30"},
+        ]}},
+    }}}
+    _fl = mf_census_tag_read(_syn, ("OperatingIncomeLoss",), flow=True)
+    _in = mf_census_tag_read(_syn, ("AssetsCurrent",), flow=False)
+    out.append(("MF census: flow keeps full-year annual-form facts only; "
+                "instant takes annual end-years",
+                _fl[:2] == (2, 2024) and _fl[2] == "OperatingIncomeLoss"
+                and _in[:2] == (1, 2024)
+                and mf_census_tag_read(_syn, ("GrossProfit",), flow=True)[:2]
+                == (0, 0),
+                f"flow {_fl[0]}y to {_fl[1]}, instant {_in[0]}y to {_in[1]}"))
+
+    # 17. MF census block: carries the list source of record, prints an
+    #     unresolved name as a result rather than an error, and formats a
+    #     resolved row's cells from the record — including the dash for a
+    #     group that read nothing, which is the cell the design reads most.
+    _mfrows = [{"ticker": "ZZZQ", "resolved": None},
+               {"ticker": "SYN", "resolved": "SYN", "cik": "0000000001",
+                "sic": "5651", "sic_desc": "Retail",
+                "fin_class": "ordinary",
+                "fin_reason": "SIC 5651 is outside 6000-6799; not a financial.",
+                "forms": ("10-K",), "us_gaap": True, "ifrs": False,
+                **{k: ((2, 2024, tags[0]) if k in ("REV", "OI") else (0, 0, ""))
+                   for k, tags in (list(MF_CENSUS_FLOW_TAGS)
+                                   + list(MF_CENSUS_INSTANT_TAGS))}}]
+    _blk = mf_census_block(_mfrows, {}, "2026-09-18")
+    # The source assertion is by LITERAL fragments, not by the constant the
+    # block was built from — a constant compared against its own output is a
+    # check that cannot fail (the own-source lesson from the concession
+    # checks, re-learned here on this check's first negative control).
+    out.append(("MF census block: source line, unresolved-as-result, cell format",
+                "magicformulainvesting.com" in _blk
+                and "retrieved 18 Sep 2026" in _blk and "NOT RESOLVED" in _blk
+                and "ZZZQ" in _blk and "OI 2y→2024" in _blk and "GP —" in _blk
+                and "class: ordinary" in _blk,
+                "block format"))
     return out
 
 
@@ -7230,6 +7486,57 @@ with st.expander("Base-rate capture — for the Expectations page"):
                  "page or any other reads it.")
         st.code(base_rate_capture_block(_recs, _dropped, _errs, _today),
                 language="python")
+
+st.divider()
+with st.expander("MF census — the screener-30 read census (for the Magic Formula page)"):
+    st.caption(
+        "One-off presence census for the Magic Formula page's design session: the "
+        "official screener's current thirty names, each resolved against the SEC "
+        "company list and checked for the tags the page's two legs and derived-EBIT "
+        "ladder need — presence and latest annual year only, no figures, no prices, "
+        "no load(), so a refusal-shaped name cannot abort the sweep. Names that do "
+        "not resolve print as results, not errors: an honest carve-out arrives as "
+        "evidence. This section fetches only when its own button is pressed, reads "
+        "no pin, writes no pin and moves no figure — the clean line above is "
+        "indifferent to it."
+    )
+    if st.button("Run census"):
+        _crows: list[dict] = []
+        _cerrs: dict[str, str] = {}
+        _cprog = st.progress(0.0, text="")
+        for _ci, _ct in enumerate(MF_CENSUS_NAMES):
+            _cprog.progress(_ci / len(MF_CENSUS_NAMES),
+                            text=f"Checking {_ct} ({_ci + 1} of {len(MF_CENSUS_NAMES)})…")
+            try:
+                _crows.append(mf_census_read(_ct))
+            except Exception as _e:             # network / throttle / parse
+                _cerrs[_ct] = f"{type(_e).__name__}: {_e}"
+        _cprog.progress(1.0, text="Done.")
+        st.session_state["mf_census"] = (_crows, _cerrs, dt.date.today().isoformat())
+    if "mf_census" in st.session_state:
+        _crows, _cerrs, _ctoday = st.session_state["mf_census"]
+        if _cerrs:
+            st.error("**Fetch failures — re-run before reading; the block below is "
+                     "incomplete and says so in its header:** "
+                     + "; ".join(f"{t}: {m}" for t, m in sorted(_cerrs.items())))
+
+        def _mf_years(rec) -> str:
+            return f"{rec[0]}y→{rec[1]}" if rec and rec[0] else "—"
+
+        st.dataframe(pd.DataFrame([{
+            "Ticker": r["ticker"],
+            "Resolved": r["resolved"] or "NOT RESOLVED",
+            "SIC": r.get("sic") or "—",
+            "Class": r.get("fin_class", "—"),
+            "Forms": ", ".join(r.get("forms", ())) or "—",
+            "OI": _mf_years(r.get("OI")), "OPEXP": _mf_years(r.get("OPEXP")),
+            "CAE": _mf_years(r.get("CAE")), "CA": _mf_years(r.get("CA")),
+            "CL": _mf_years(r.get("CL")), "PPE": _mf_years(r.get("PPE")),
+        } for r in _crows]), width='stretch', hide_index=True,
+            height=min(38 * len(_crows) + 40, 1200))
+        st.write("**MF CENSUS block** — paste to the session as text; nothing on "
+                 "this page or any other reads it.")
+        st.code(mf_census_block(_crows, _cerrs, _ctoday), language="text")
 
 st.divider()
 with st.expander("Verify the logic"):
