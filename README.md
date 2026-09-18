@@ -46,6 +46,7 @@ read or failed to find.
 | **Non-US Checker** | The same algebra for IFRS and non-dollar filers, in the filing currency |
 | **DCF Evaluator** | The standard two-stage DCF, with its stock-comp blind spot priced beside it |
 | **Expectations** | What today's price implies — the growth path and the year-15 exit it takes to deliver the required return |
+| **EPV** | What zero growth is worth — normalized earnings power capitalized, and the growth payment inside today's price |
 | **Return Calculator** | Plain compound-return arithmetic, deliberately last in the menu |
 
 ---
@@ -345,6 +346,53 @@ negative rate. An implied rate beyond 60% a year is stated as beyond any base ra
 record rather than printed as if it meant something. And the output paragraph carries no
 adjective — the arithmetic, the windows and the counts, with the judgement left where it
 belongs; a self-test scans every output sentence and holds the page to it.
+
+## ⚓ EPV
+
+Bruce Greenwald's Earnings Power Value, the no-growth anchor. Normalized operating
+earnings — the **mean** operating margin over the readable window, applied to current
+revenue — taxed at the median filed effective rate and capitalized at the required return
+(default 15%, the kit's standard; the box floors at 8%, Greenwald's own cost-of-capital
+neighbourhood, because capitalization at low rates explodes), plus net cash, per share.
+The mean is the method: the cycle average is what normalization exists to compute, and
+clipping trough years is what it exists not to do — so the median, the latest year and
+the full range print beside it on every run, unconditionally. His two judgement
+adjustments — depreciation in excess of maintenance capex, and SG&A spent on growth —
+are boxes with stated defaults of zero, never silent estimates, because filings do not
+encode either split. EPV at r is a price, not a property of the company: the price at
+which a buyer earns r a year on the business exactly as it stands, growing never.
+
+Beside the standard leg, the kit's signature: the same EPV on SBC-corrected earnings,
+the margin recomputed with the true stock-comp cost Ω in place of the GAAP charge, both
+legs on the **same** pool of years. That construction is the page's spine — because the
+pools are identical and the arithmetic is linear, the gap between the legs is exactly the
+capitalized (Ω − G) margin effect and nothing else: the no-growth price of stock
+compensation, pinned by a live self-test rather than asserted. A pool needs at least
+four readable years — a cycle of two years is not a normalization — and excluded years
+(listings, share-funded deals, no-price years under Gate 2) leave it the way they leave
+every other pool in the kit.
+
+It refuses what it cannot stand behind. Banks, insurers, REITs and client-asset brokers
+stop before the inputs and route to the Financials Checker — an operating-margin
+normalization is the wrong frame for a balance-sheet business. IFRS filers route to the
+Non-US Checker. A window too thin to normalize routes to the Tragic Algebra Analyzer,
+which prices on net income and does not need it; a normalized margin at or below zero
+routes to the Inflection Checker, because a no-growth value built on a negative margin
+is a guess wearing arithmetic. Umbrella-partnership C-corps are priced on the same
+as-exchanged basis as everywhere else in the kit, behind the same verification, and stop
+when it cannot be read. Where capitalized earnings power does not cover net debt, the
+per-share figure floors at \$0.00 with the arithmetic shown unfloored beside it; and
+with no live price the growth-payment split is refused rather than computed against a
+default.
+
+The point of the anchor is the triad: EPV here, the price there, and the difference —
+stated in dollars per share and as a share of the price — is the growth payment, the
+part of the price that is a bet on the future. The Expectations page states the growth
+path that payment implies, which closes the loop: one page prices zero growth, the other
+prices the growth the market is charging for. One honest limit, stated on the page:
+Greenwald's reproduction-cost leg is not built, so the asset-value-vs-EPV comparison
+that separates a franchise from an ordinary business is out of scope — EPV here is the
+no-growth anchor only, and nothing on the page calls it more than that.
 
 ## 📈 Return Calculator
 
