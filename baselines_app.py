@@ -6992,6 +6992,412 @@ def mf_census_block(rows: list[dict], errors: dict[str, str], today: str) -> str
     return "\n".join(L)
 
 
+# ══════════════════════════════════════════════════════════════════════
+#  MF LEGS — Greenblatt's two legs, the shared block (18 Sep 2026)
+# ══════════════════════════════════════════════════════════════════════
+# >>> MF-LEGS BLOCK START
+# Decision of record (Chen, 18 Sep 2026): this block builds as ONE
+# contiguous, hash-auditable unit with its own tests, and the Magic
+# Formula page — and any later port — takes it WHOLE, byte-identical,
+# proved by hash at each build. Nothing in it touches Streamlit or the
+# network: series in, records out. The design settled in session:
+# ladder trimmed to D1 + D4 on the screener-30 census's evidence (the
+# deferred rungs D2/D2b/D3 live in the handover with their designs
+# intact; the first filer that refuses on a missing shape is the
+# evidence case that builds its rung); lag ceiling 3; PPE two-tag with
+# the swap named; managed-care carve-out at exactly SIC 6324 with a
+# zero-excess cash default.
+
+MF_TAGS = {
+    # EBIT, rung D1 — the filed operating-income subtotal (page 4's
+    # proven line; page 10 copies it too).
+    "OI": (["OperatingIncomeLoss"], ["ProfitLossFromOperatingActivities"]),
+    # EBIT, rung D4 — the all-in filed expense total. Known hazard,
+    # carried by note not refusal: some filers run this straight to
+    # pretax with interest inside (ADP's shape); the interest note
+    # quantifies where a filed interest line exists.
+    "CAE": (["CostsAndExpenses"], []),
+    # Note-only: quantifies the D4 interest content where it reads.
+    "INTEXP": (["InterestExpense", "InterestExpenseNonoperating",
+                "InterestIncomeExpenseNet"], []),
+    # The three instant lines Greenblatt's capital base needs. PPE is a
+    # TWO-TAG ladder on the census's clearest catch: OMC's narrow tag
+    # stale at 2020 and PBI's at 2021 while both tag the combined
+    # PP&E-plus-finance-lease element current — read with the balance
+    # groups' prefer_recent + skip-note machinery so any swap is named,
+    # with the definitional caveat (the combined line includes
+    # finance-lease ROU assets — slightly wider than the book's net
+    # fixed assets, and the filer's own presented line).
+    "CA": ["AssetsCurrent"],
+    "CL": ["LiabilitiesCurrent"],
+    "PPE": ["PropertyPlantAndEquipmentNet",
+            "PropertyPlantAndEquipmentAndFinanceLeaseRightOfUseAsset"
+            "AfterAccumulatedDepreciationAndAmortization"],
+}
+
+# Years EBIT's last readable year may trail the filed latest. Within it,
+# the legs print with the lag named; beyond it, the leg refuses — a note
+# must not be licensed to carry arbitrary staleness (Chen's guard,
+# 18 Sep 2026, the page-4 staleness family's reasoning).
+MF_LAG_CEILING = 3
+
+# The working-cash convention, shared verbatim with the 100-Bagger
+# Checker's ROIC waterfall: no published figure exists for the split,
+# so it is a stated convention — a percentage of revenue, adjustable.
+MF_OP_CASH_PCT_DEFAULT = 0.02
+
+# The method's-boundary carve-out, exactly. Greenblatt's screen
+# classifies managed care as health care and publishes CI; the kit's
+# gate reads SIC 6324 as an insurer. On this page the exclusion is the
+# method's, so 6324 passes with a banner — and with a zero-excess cash
+# default (floor = the whole cash pool), because the pool likely backs
+# policy liabilities; the box carries the user's judgement of the true
+# excess. Extended only on evidence.
+MF_MANAGED_CARE_SIC = ("6324",)
+
+
+def mf_ebit_ladder(oi: dict[int, float], rev: dict[int, float],
+                   cae: dict[int, float]) -> tuple[str, int, dict[int, tuple[float, str]]]:
+    """(rung, headline fy, {fy: (EBIT $M, arithmetic string)}).
+
+    One derivation per filer, the tag deciding, never the statement's
+    wording (HRB: the words say "total operating expenses", the tag is
+    CostsAndExpenses, the rung is D4). D1 when the filed subtotal
+    reaches within MF_LAG_CEILING of the filed latest; else D4 where
+    revenue and the all-in total overlap; else a refusal — "stale"
+    when a subtotal exists but died beyond the ceiling with nothing to
+    derive from, "none" when no line exists at all. D4 cells carry the
+    subtraction printed as arithmetic; a refusal returns an empty map.
+    """
+    latest_filed = max(set(rev) | set(oi) | set(cae), default=0)
+    if oi and latest_filed - max(oi) <= MF_LAG_CEILING:
+        return "D1", max(oi), {fy: (v, "") for fy, v in oi.items()}
+    d4_years = sorted(set(rev) & set(cae))
+    if d4_years and latest_filed - d4_years[-1] <= MF_LAG_CEILING:
+        cells = {fy: (rev[fy] - cae[fy],
+                      f"{rev[fy]:,.0f} − {cae[fy]:,.0f} = {rev[fy] - cae[fy]:,.0f}")
+                 for fy in d4_years}
+        return "D4", d4_years[-1], cells
+    return ("stale" if (oi or d4_years) else "none"), 0, {}
+
+
+def mf_rung_disagreement(derived: dict[str, float], tol: float = 0.5) -> str:
+    """Named DERIVED candidates for one year that disagree beyond tol
+    ($M) — the page prints all and refuses to pick. With the ladder at
+    D1 + D4 there is at most one derived candidate, so this guard is
+    dormant by construction; the function and its check pin the
+    principle for the rungs the handover defers. The filed subtotal is
+    never a candidate here: D1 outranks derivation by definition, and
+    OI differing from Rev − CostsAndExpenses is normal, not a defect."""
+    if len(derived) < 2:
+        return ""
+    vals = sorted(derived.items())
+    if max(v for _, v in vals) - min(v for _, v in vals) <= tol:
+        return ""
+    return " vs ".join(f"{k} {v:,.0f}" for k, v in vals)
+
+
+def mf_lag(latest_filed: int, ebit_fy: int) -> tuple[int, str]:
+    """(years behind the filings, 'ok' | 'note' | 'refuse')."""
+    lag = max(0, latest_filed - ebit_fy)
+    return lag, ("ok" if lag == 0 else "note" if lag <= MF_LAG_CEILING else "refuse")
+
+
+def mf_class_floor(sic: str, revenue: float, cash_total: float,
+                   op_cash_pct: float) -> float:
+    """The working-cash floor. Managed-care carve-outs default to the
+    whole pool (excess cash zero — conservative on both legs); everyone
+    else keeps the shared percentage-of-revenue convention."""
+    if sic in MF_MANAGED_CARE_SIC:
+        return max(0.0, cash_total)
+    return max(0.0, revenue * op_cash_pct)
+
+
+def mf_cash_split(cash_current: float, cash_total: float,
+                  floor: float) -> tuple[float, float]:
+    """(cash kept in working capital, excess cash netted in EV).
+
+    One waterfall so no cash dollar counts twice or vanishes: cash up
+    to the floor stays working — capped at the current cash actually
+    there — and everything above the floor is excess. Long-term
+    investments were never in current assets, so they can only ever be
+    excess."""
+    f = max(0.0, floor)
+    kept = min(max(0.0, cash_current), f)
+    excess = max(0.0, cash_total - f)
+    return kept, excess
+
+
+def mf_nwc(ca: float, cl: float, std: float, cash_current: float,
+           kept: float) -> float:
+    """Greenblatt's own appendix definition: excess cash out of current
+    assets (only the working slice stays), interest-bearing short-term
+    debt out of current liabilities (it is already counted in EV)."""
+    return (ca - max(0.0, cash_current) + kept) - (cl - std)
+
+
+def mf_capital(nwc: float, ppe: float) -> float:
+    """max(NWC, 0) + net fixed assets — a negative-working-capital
+    business gets zero, never a credit (the AZO shape)."""
+    return max(0.0, nwc) + ppe
+
+
+def mf_ev(mktcap: float, debt: float, excess: float) -> float:
+    return mktcap + debt - excess
+
+
+def mf_legs(ebit: float, ev: float, capital: float
+            ) -> tuple[float | None, float | None, str, str]:
+    """(yield, roc, yield refusal reason, roc refusal reason). A
+    negative EBIT prints — cyclicality is shown, not hidden — but a
+    non-positive denominator is not a number and each leg refuses
+    alone: EV at or below zero means the market prices the business
+    below its cash pool (a finding, stated); capital at zero means the
+    floor and the fixed-asset line left nothing to divide by."""
+    y_why = "" if ev > 0 else "EV is zero or negative — the market prices the " \
+                              "business at or below its cash pool"
+    r_why = "" if capital > 0 else "capital is zero — floored working capital " \
+                                   "plus net fixed assets leaves no base"
+    return (ebit / ev if ev > 0 else None,
+            ebit / capital if capital > 0 else None, y_why, r_why)
+
+# <<< MF-LEGS BLOCK END
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  MF CAPTURE — reference table + screener acceptance (18 Sep 2026)
+# ══════════════════════════════════════════════════════════════════════
+#
+# Tail-local machinery AROUND the block above: fetching, per-name
+# assembly, and the two paste-ready outputs. The reference population
+# is BASE_RATE_NAMES — one list of record, no drift with page 9's
+# table. The acceptance population is the screener thirty plus the two
+# §1 known answers the master set lacks. EV convention of record: the
+# market cap is TODAY's (current price × the reader's count, Up-C
+# as-exchanged basis included) with the latest filed debt and cash
+# pool; capital is filed AT the headline EBIT year, each balance line
+# taking its latest value at or before that year, with any line running
+# behind named in the record.
+
+MF_ACCEPT_EXTRA = ("AZO", "MRVL")   # §1 known answers not on either list
+
+MF_ACCEPT_POLICY_DROPPED = {
+    "AFMJF": "not in the SEC company list (MF census of record, 18 Sep 2026) "
+             "— the one screener name with no EDGAR data",
+    "GIB": "files 40-F with IFRS-only facts (MF census of record, 18 Sep "
+           "2026) — the kit routes it to the Non-US Checker",
+}
+
+
+def mf_record(t: str) -> dict:
+    """One name's full MF record. Raises exactly as load() does."""
+    years, _notes, meta = load(t)
+    cmap = _ticker_map()
+    facts = _facts(cmap[resolve_ticker(t, cmap)])
+
+    def flow(key: str) -> dict[int, float]:
+        us, ifrs = MF_TAGS[key]
+        raw = _annual(facts, us, ifrs, None,
+                      False, key == "INTEXP", {})
+        return {fy: raw[fy][2] / 1e6 for fy in raw}
+
+    rev_raw = _annual(facts, *CONCEPTS["REV"], None, "REV" in FILL_KEYS,
+                      "REV" in RECENCY_KEYS, {})
+    rev = {fy: rev_raw[fy][2] / 1e6 for fy in rev_raw}
+    oi, cae, intexp = flow("OI"), flow("CAE"), flow("INTEXP")
+
+    skips: list[tuple[str, int, str, int]] = []
+
+    def inst(concepts: list[str], src: list[str]) -> dict[int, float]:
+        d = _instant(facts, concepts, "USD", src, skips, prefer_recent=True)
+        return {fy: v / 1e6 for fy, v in d.items()}
+
+    ppe_src: list[str] = []
+    ca_s = inst(MF_TAGS["CA"], [])
+    cl_s = inst(MF_TAGS["CL"], [])
+    ppe_s = inst(MF_TAGS["PPE"], ppe_src)
+    std_s = inst(BALANCE["std"], [])
+    cash_s = inst(BALANCE["cash"], [])
+    sti_s = inst(BALANCE["sti"], [])
+
+    rung, fy_star, cells = mf_ebit_ladder(oi, rev, cae)
+    rec = {"ticker": t, "resolved": meta["ticker"], "sic": meta["sic"],
+           "fin_class": meta["fin_class"], "rung": rung, "fy": fy_star,
+           "shares": meta["shares"], "debt": meta["debt"],
+           "cash_total": meta["cash"], "ppe_tag": " + ".join(ppe_src) or "—",
+           "skips": tuple(skips)}
+    if rung in ("stale", "none"):
+        rec["why"] = ("a filed subtotal exists but stopped more than "
+                      f"{MF_LAG_CEILING} years behind the filings, with no "
+                      "all-in expense total to derive from"
+                      if rung == "stale" else
+                      "neither an operating-income subtotal nor an all-in "
+                      "expense total is in the filing")
+        return rec
+    latest_filed = max(set(rev) | set(oi) | set(cae), default=fy_star)
+    rec["lag"], rec["lag_status"] = mf_lag(latest_filed, fy_star)
+    rec["latest_filed"] = latest_filed
+    rec["ebit"], rec["arith"] = cells[fy_star]
+    # The D4 interest note's inputs: the filed interest line at the
+    # headline year, and where that line last read at all.
+    rec["intexp_at"] = intexp.get(fy_star)
+    rec["intexp_latest"] = max(intexp, default=0)
+
+    def at(series: dict[int, float], name: str) -> float:
+        eligible = [fy for fy in series if fy <= fy_star]
+        if not eligible:
+            rec.setdefault("capital_stale", []).append(f"{name}: no year at or "
+                                                       f"before FY{fy_star}")
+            return 0.0
+        got = max(eligible)
+        if got < fy_star:
+            rec.setdefault("capital_stale", []).append(f"{name} at FY{got}, "
+                                                       f"{fy_star - got} behind")
+        return series[got]
+
+    rec["ca"], rec["cl"] = at(ca_s, "CA"), at(cl_s, "CL")
+    rec["std"], rec["ppe"] = at(std_s, "STD"), at(ppe_s, "PPE")
+    rec["cash_current"] = at(cash_s, "cash") + at(sti_s, "STI")
+    rec["revenue"] = rev.get(latest_filed) or rev.get(max(rev, default=0), 0.0)
+    rec["floor"] = mf_class_floor(meta["sic"], rec["revenue"],
+                                  rec["cash_total"], MF_OP_CASH_PCT_DEFAULT)
+    rec["kept"], rec["excess"] = mf_cash_split(rec["cash_current"],
+                                               rec["cash_total"], rec["floor"])
+    rec["nwc"] = mf_nwc(rec["ca"], rec["cl"], rec["std"],
+                        rec["cash_current"], rec["kept"])
+    rec["capital"] = mf_capital(rec["nwc"], rec["ppe"])
+    px = current_price(meta["ticker"])
+    rec["price"] = px
+    rec["mktcap"] = (px * meta["shares"]) if px else None
+    rec["ev"] = mf_ev(rec["mktcap"], rec["debt"], rec["excess"]) if px else None
+    gw = {y.fy: (y.G, y.omega) for y in years}
+    rec["gmw"] = (gw[fy_star][0] - gw[fy_star][1]) if fy_star in gw else None
+    if px:
+        rec["yld"], rec["roc"], rec["y_why"], rec["r_why"] = \
+            mf_legs(rec["ebit"], rec["ev"], rec["capital"])
+        if rec["gmw"] is not None:
+            rec["yld_adj"], rec["roc_adj"], _, _ = \
+                mf_legs(rec["ebit"] + rec["gmw"], rec["ev"], rec["capital"])
+    return rec
+
+
+def _mf_leg_txt(rec: dict, raw: str, adj: str, why: str) -> str:
+    if rec.get(raw) is None:
+        return f"refused ({rec.get(why, 'no price')})"
+    s = f"{rec[raw]:.2%}"
+    if rec.get(adj) is not None:
+        s += f" / adj {rec[adj]:.2%}"
+    return s
+
+
+def mf_reference_block(recs: list[dict], dropped: list[tuple[str, str]],
+                       errors: dict[str, str], today: str) -> str:
+    """The paste-ready MF_REFERENCE block: raw components at full
+    precision per name (the page recomputes every displayed cell from
+    them — cells from records), the tag lists used at capture (the page
+    asserts its own lists equal these, so capture-vs-page drift fails
+    loudly), the dropped list, and two spot fragments the page's
+    self-tests recompute. The yield column carries today's prices and
+    ages daily; return on capital ages only with new 10-Ks — the as-of
+    date rides with the block and the page says which column ages how."""
+    L = ["# ── MF_REFERENCE — pinned data for pages/11_Magic_Formula.py ─────────",
+         f"# Captured {today} by the Baselines app's MF capture. Yield uses",
+         "# this date's prices; ROC moves only with new 10-Ks.",
+         f'MF_REFERENCE_AS_OF = "{today}"',
+         f"MF_TAGS_USED = {MF_TAGS!r}",
+         f"MF_LAG_CEILING_USED = {MF_LAG_CEILING}",
+         f"MF_OP_CASH_PCT_USED = {MF_OP_CASH_PCT_DEFAULT!r}"]
+    if errors:
+        L.append("# INCOMPLETE — fetch failures, re-run before pasting: "
+                 + ", ".join(sorted(errors)))
+    L.append("MF_REFERENCE_ROWS = [")
+    for r in recs:
+        L.append(f"    MFRefRow(ticker={r['ticker']!r}, fy={r['fy']}, "
+                 f"rung={r['rung']!r}, lag={r.get('lag', 0)},")
+        L.append(f"             ebit={r['ebit']!r}, gmw={r['gmw']!r}, "
+                 f"price={r['price']!r}, shares={r['shares']!r},")
+        L.append(f"             mktcap={r['mktcap']!r}, debt={r['debt']!r}, "
+                 f"cash_total={r['cash_total']!r},")
+        L.append(f"             floor={r['floor']!r}, excess={r['excess']!r}, "
+                 f"ca={r['ca']!r}, cl={r['cl']!r}, std={r['std']!r},")
+        L.append(f"             cash_current={r['cash_current']!r}, "
+                 f"kept={r['kept']!r}, nwc={r['nwc']!r}, ppe={r['ppe']!r},")
+        L.append(f"             ppe_tag={r['ppe_tag']!r}, "
+                 f"stale={tuple(r.get('capital_stale', ()))!r}),")
+    L.append("]")
+    L.append("MF_REFERENCE_DROPPED = [")
+    for t, why in dropped:
+        L.append(f"    ({t!r},")
+        L.append(f"     {why!r}),")
+    L.append("]")
+    spot_y = next((r for r in recs if r.get("yld") is not None), None)
+    spot_r = next((r for r in recs if r.get("roc") is not None), None)
+    L.append("MF_SPOT_YIELD = " + (f"({spot_y['ticker']!r}, {spot_y['ebit']!r}, "
+                                    f"{spot_y['ev']!r}, {spot_y['yld']!r})"
+                                    if spot_y else "None"))
+    L.append("MF_SPOT_ROC = " + (f"({spot_r['ticker']!r}, {spot_r['ebit']!r}, "
+                                  f"{spot_r['capital']!r}, {spot_r['roc']!r})"
+                                  if spot_r else "None"))
+    return "\n".join(L)
+
+
+def mf_accept_block(recs: list[dict], dropped: list[tuple[str, str]],
+                    errors: dict[str, str], today: str) -> str:
+    """The dated screener acceptance block — evidence for the record,
+    pinned nowhere: every screener name produces the two legs wherever
+    EDGAR carries the data, or a named carve-out says why not."""
+    L = ["# ── MF ACCEPTANCE — screener-30 (+ §1 extras) legs of record ─────────",
+         f"# Captured {today}. List source: {MF_CENSUS_AS_OF_SOURCE}.",
+         "# Evidence for the session record, pinned nowhere."]
+    if errors:
+        L.append("# INCOMPLETE — fetch failures, re-run before reading: "
+                 + ", ".join(sorted(errors)))
+    for r in recs:
+        head = f"{r['ticker']:<6} {r['rung']}"
+        if r["rung"] in ("stale", "none"):
+            L.append(head + f" REFUSED — {r['why']}")
+            continue
+        head += f" FY{r['fy']}"
+        if r.get("lag"):
+            head += (f"  lag {r['lag']}y "
+                     + ("(printed, named)" if r["lag_status"] == "note"
+                        else "(REFUSED)"))
+        if r["rung"] == "D4":
+            head += f"  [{r['arith']}]"
+        L.append(head)
+        L.append(f"       yield { _mf_leg_txt(r, 'yld', 'yld_adj', 'y_why')}"
+                 f" · ROC {_mf_leg_txt(r, 'roc', 'roc_adj', 'r_why')}")
+        extras = []
+        if r["sic"] in MF_MANAGED_CARE_SIC:
+            extras.append("managed-care carve-out (SIC 6324): the method's "
+                          "boundary, zero-excess cash default")
+        if r["rung"] == "D4":
+            if r.get("intexp_at") is not None:
+                extras.append(f"interest note: the filed total includes interest "
+                              f"expense of {r['intexp_at']:,.0f}M at FY{r['fy']} — "
+                              "the derived figure sits between EBIT and pretax "
+                              "income by that amount")
+            else:
+                extras.append("interest note: no filed interest line reads at "
+                              f"FY{r['fy']} (last "
+                              + (f"FY{r['intexp_latest']}" if r.get("intexp_latest")
+                                 else "never")
+                              + ") — the interest content cannot be quantified "
+                                "from a filed line; the reconciliation line "
+                                "carries the honesty")
+        if r.get("capital_stale"):
+            extras.append("capital-side lines behind: "
+                          + "; ".join(r["capital_stale"]))
+        if r.get("skips"):
+            extras.append("tag swaps: "
+                          + "; ".join(f"{w} for {l}" for l, _ly, w, _wy in r["skips"]))
+        for e in extras:
+            L.append(f"       · {e}")
+    for t, why in dropped:
+        L.append(f"{t:<6} CARVED OUT — {why}")
+    return "\n".join(L)
+
+
 # ── Self-tests for the comparison and vintage logic ───────────────────
 #
 # All synthetic, no network. Per §2, behaviour is tested on real figures,
@@ -7347,6 +7753,160 @@ def baselines_self_test() -> list[tuple[str, bool, str]]:
                 and "ZZZQ" in _blk and "OI 2y→2024" in _blk and "GP —" in _blk
                 and "class: ordinary" in _blk,
                 "block format"))
+
+    # 18. MF block inventory: the settled constants of record — ceiling 3,
+    #     the shared 2% convention, the carve-out at exactly 6324, the
+    #     two-tag PPE ladder narrow-first, and both block markers present
+    #     so the port session's whole-block copy has its edges.
+    _mfsrc = open(__file__, encoding="utf-8").read() if "__file__" in globals() else ""
+    out.append(("MF legs: constants of record and block markers",
+                MF_LAG_CEILING == 3 and MF_OP_CASH_PCT_DEFAULT == 0.02
+                and MF_MANAGED_CARE_SIC == ("6324",)
+                and MF_TAGS["PPE"][0] == "PropertyPlantAndEquipmentNet"
+                and len(MF_TAGS["PPE"]) == 2
+                and MF_TAGS["OI"] == (["OperatingIncomeLoss"],
+                                      ["ProfitLossFromOperatingActivities"])
+                and (not _mfsrc
+                     or (_mfsrc.count(">>> MF-LEGS " + "BLOCK START") == 1
+                         and _mfsrc.count("<<< MF-LEGS " + "BLOCK END") == 1)),
+                "constants + markers"))
+
+    # 19. The EBIT ladder on the census's own shapes: fresh OI → D1;
+    #     TNET's (OI two behind) → D1 with the right headline year;
+    #     HRB's (OI dead 12 years, CAE current) → D4 with the printed
+    #     subtraction; PBI's (no OI ever) → D4; a stale subtotal with
+    #     nothing to derive from → 'stale'; nothing at all → 'none'.
+    _rev = {2023: 3500.0, 2024: 3600.0, 2025: 3610.0}
+    out.append(("MF ladder: D1 fresh, D1 lagged, D4 twice, stale, none",
+                mf_ebit_ladder({2025: 400.0}, _rev, {})[0:2] == ("D1", 2025)
+                and mf_ebit_ladder({2023: 380.0}, _rev, {2025: 3197.0})[0:2]
+                == ("D1", 2023)
+                and mf_ebit_ladder({2013: 900.0}, _rev, {2025: 3197.0})[0:2]
+                == ("D4", 2025)
+                and mf_ebit_ladder({2013: 900.0}, _rev, {2025: 3197.0})[2][2025]
+                == (413.0, "3,610 − 3,197 = 413")
+                and mf_ebit_ladder({}, _rev, {2025: 3197.0})[0] == "D4"
+                and mf_ebit_ladder({2013: 900.0}, _rev, {})[0] == "stale"
+                and mf_ebit_ladder({}, _rev, {})[0] == "none",
+                "six shapes"))
+
+    # 20. The lag rule and its ceiling: 0 ok, inside the ceiling a note,
+    #     beyond it a refusal — a note is not licensed to carry
+    #     arbitrary staleness.
+    out.append(("MF lag: ok at 0, note to 3, refuse at 4",
+                mf_lag(2025, 2025) == (0, "ok") and mf_lag(2025, 2023) == (2, "note")
+                and mf_lag(2025, 2022) == (3, "note")
+                and mf_lag(2025, 2021) == (4, "refuse"),
+                "ceiling 3"))
+
+    # 21. The cash waterfall: kept capped by current cash and by the
+    #     floor, excess is everything above the floor, and the
+    #     managed-care class floor zeroes excess while the ordinary
+    #     floor is the shared 2% convention.
+    out.append(("MF waterfall: kept/excess split and the class floors",
+                mf_cash_split(100.0, 300.0, 50.0) == (50.0, 250.0)
+                and mf_cash_split(30.0, 300.0, 50.0) == (30.0, 250.0)
+                and mf_cash_split(100.0, 300.0, 0.0) == (0.0, 300.0)
+                and mf_cash_split(100.0, 300.0, 400.0) == (100.0, 0.0)
+                and mf_class_floor("6324", 5000.0, 300.0, 0.02) == 300.0
+                and mf_class_floor("5651", 5000.0, 300.0, 0.02) == 100.0,
+                "waterfall + floors"))
+
+    # 22. NWC and capital, hand-checked to the cent, including the
+    #     AZO shape: negative working capital floors at zero and the
+    #     base collapses to net fixed assets alone.
+    _kept, _exc = mf_cash_split(100.0, 300.0, 50.0)
+    _nwc = mf_nwc(800.0, 600.0, 40.0, 100.0, _kept)     # (800-100+50)-(600-40)=190
+    out.append(("MF capital: Greenblatt hand-check and the AZO floor",
+                _nwc == 190.0 and mf_capital(_nwc, 500.0) == 690.0
+                and mf_capital(-250.0, 500.0) == 500.0,
+                f"nwc {_nwc}, capital {mf_capital(_nwc, 500.0)}"))
+
+    # 23. The legs and their per-leg guards: exact division; EV at or
+    #     below zero refuses the yield alone with the finding stated;
+    #     zero capital refuses ROC alone; a negative EBIT prints.
+    _y, _r, _yw, _rw = mf_legs(413.0, 5900.0, 690.0)
+    _y2, _r2, _yw2, _rw2 = mf_legs(413.0, -10.0, 690.0)
+    _y3, _r3, _yw3, _rw3 = mf_legs(-50.0, 5900.0, 0.0)
+    out.append(("MF legs: exact, and each denominator guard refuses alone",
+                abs(_y - 413.0 / 5900.0) < 1e-15 and abs(_r - 413.0 / 690.0) < 1e-15
+                and not _yw and not _rw
+                and _y2 is None and "cash pool" in _yw2 and _r2 is not None
+                and _y3 is not None and _y3 < 0 and _r3 is None
+                and "capital is zero" in _rw3,
+                "legs + guards"))
+
+    # 24. The linearity pins, the page's signature: the adjusted leg
+    #     minus the raw leg is exactly (G − Ω)/EV on yield and
+    #     (G − Ω)/capital on ROC — capital and EV identical between
+    #     legs by construction, so nothing else can be in the gap.
+    _g, _w = 120.0, 175.0
+    _ya, _ra, _, _ = mf_legs(413.0 + (_g - _w), 5900.0, 690.0)
+    out.append(("MF linearity: yield gap (G−Ω)/EV, capital identity (G−Ω)/capital",
+                abs((_ya - _y) - (_g - _w) / 5900.0) < 1e-12
+                and abs((_ra - _r) - (_g - _w) / 690.0) < 1e-12,
+                "both gaps pin"))
+
+    # 25. The disagreement guard: dormant below two derived candidates
+    #     and inside tolerance, firing with both values named beyond it
+    #     — the principle pinned for the rungs the handover defers.
+    out.append(("MF disagreement guard: dormant, then both values named",
+                mf_rung_disagreement({}) == ""
+                and mf_rung_disagreement({"D4": 413.0}) == ""
+                and mf_rung_disagreement({"D3": 413.2, "D4": 413.0}) == ""
+                and mf_rung_disagreement({"D3": 500.0, "D4": 413.0})
+                == "D3 500 vs D4 413",
+                "guard"))
+
+    # 26. The reference block: tag lists and settings of record printed
+    #     verbatim (the page's drift check reads them), a row's raw
+    #     components present, the spot fragments recomputable, and the
+    #     literal as-of line — fragments asserted literally, never
+    #     against the constants they were built from (check 17's own
+    #     lesson, applied at birth).
+    _mfr = [{"ticker": "SYN", "fy": 2025, "rung": "D4", "lag": 0,
+             "ebit": 413.0, "gmw": -55.0, "price": 10.0, "shares": 100.0,
+             "mktcap": 1000.0, "debt": 200.0, "cash_total": 300.0,
+             "floor": 72.2, "excess": 227.8, "ca": 800.0, "cl": 600.0,
+             "std": 40.0, "cash_current": 100.0, "kept": 72.2, "nwc": 212.2,
+             "ppe": 500.0, "ppe_tag": "PropertyPlantAndEquipmentNet",
+             "ev": 972.2, "capital": 712.2, "yld": 413.0 / 972.2,
+             "roc": 413.0 / 712.2}]
+    _rb = mf_reference_block(_mfr, [("KNSL", "why")], {}, "2026-09-18")
+    out.append(("MF reference block: tags of record, row, spots, as-of",
+                "MF_TAGS_USED = {'OI'" in _rb and "MF_LAG_CEILING_USED = 3" in _rb
+                and "MFRefRow(ticker='SYN', fy=2025, rung='D4'" in _rb
+                and "MF_SPOT_YIELD = ('SYN', 413.0, 972.2," in _rb
+                and "MF_SPOT_ROC = ('SYN', 413.0, 712.2," in _rb
+                and 'MF_REFERENCE_AS_OF = "2026-09-18"' in _rb
+                and "('KNSL'," in _rb,
+                "reference format"))
+
+    # 27. The acceptance block: a D4 line carries the printed
+    #     subtraction and the quantified interest note; the no-current-
+    #     interest-line variant says so; a refused name states its why;
+    #     a lag prints named; the carve-out line prints.
+    _acc = [dict(_mfr[0], arith="3,610 − 3,197 = 413", sic="5651",
+                 lag=2, lag_status="note", intexp_at=25.0, intexp_latest=2025,
+                 skips=(), yld_adj=None, roc_adj=None, y_why="", r_why=""),
+            {"ticker": "PBX", "rung": "D4", "fy": 2025, "sic": "3579",
+             "arith": "1 − 1 = 0", "lag": 0, "lag_status": "ok",
+             "intexp_at": None, "intexp_latest": 2015, "skips": (),
+             "ebit": 0.0, "yld": None, "roc": None,
+             "y_why": "no price", "r_why": "no price"},
+            {"ticker": "ZZZ", "rung": "none", "skips": (),
+             "why": "neither an operating-income subtotal nor an all-in "
+                    "expense total is in the filing"}]
+    _ab = mf_accept_block(_acc, [("GIB", "routes to the Non-US Checker")],
+                          {}, "2026-09-18")
+    out.append(("MF acceptance block: D4 arithmetic, both interest notes, "
+                "refusal, lag, carve-out",
+                "[3,610 − 3,197 = 413]" in _ab and "lag 2y (printed, named)" in _ab
+                and "includes interest expense of 25M at FY2025" in _ab
+                and "last FY2015" in _ab and "cannot be quantified" in _ab
+                and "ZZZ    none REFUSED — neither" in _ab
+                and "GIB    CARVED OUT — routes to the Non-US Checker" in _ab,
+                "acceptance format"))
     return out
 
 
@@ -7537,6 +8097,89 @@ with st.expander("MF census — the screener-30 read census (for the Magic Formu
         st.write("**MF CENSUS block** — paste to the session as text; nothing on "
                  "this page or any other reads it.")
         st.code(mf_census_block(_crows, _cerrs, _ctoday), language="text")
+
+st.divider()
+with st.expander("MF capture — reference table + screener acceptance (for the Magic Formula page)"):
+    st.caption(
+        "One-off capture for the Magic Formula page: the pinned reference table "
+        "over the base-rate names (one population of record, shared with the "
+        "Expectations page's table), and the dated screener acceptance sweep — "
+        "the screener's thirty plus the two §1 known answers the master set "
+        "lacks — every name's two legs or its named carve-out. Full loads with "
+        "prices, so this is the slow one. It fetches only when its own button is "
+        "pressed, reads no pin, writes no pin and moves no figure — the clean "
+        "line above is indifferent to it. AFMJF and GIB are carved out on the "
+        "MF census of record."
+    )
+    if st.button("Run MF capture"):
+        _mnames = list(dict.fromkeys(
+            list(BASE_RATE_NAMES)
+            + [x for x in MF_CENSUS_NAMES if x not in MF_ACCEPT_POLICY_DROPPED]
+            + list(MF_ACCEPT_EXTRA)))
+        _mrecs: dict[str, dict] = {}
+        _mdrop: dict[str, str] = {}
+        _merrs: dict[str, str] = {}
+        _mprog = st.progress(0.0, text="")
+        for _mi, _mt in enumerate(_mnames):
+            _mprog.progress(_mi / len(_mnames),
+                            text=f"Reading {_mt} ({_mi + 1} of {len(_mnames)})…")
+            try:
+                _mr = mf_record(_mt)
+                if _mr["rung"] in ("stale", "none"):
+                    _mdrop[_mt] = ("EBIT refused: " + _mr["why"])
+                elif _mr.get("price") is None:
+                    _merrs[_mt] = "no current price could be fetched — re-run"
+                _mrecs[_mt] = _mr
+            except ValueError as _me:           # load()'s own refusal — a result
+                _mdrop[_mt] = "load refused: " + str(_me).split(". ")[0]
+            except Exception as _me:            # network / throttle / parse
+                _merrs[_mt] = f"{type(_me).__name__}: {_me}"
+        _mprog.progress(1.0, text="Done.")
+        st.session_state["mf_capture"] = (_mrecs, _mdrop, _merrs,
+                                          dt.date.today().isoformat())
+    if "mf_capture" in st.session_state:
+        _mrecs, _mdrop, _merrs, _mtoday = st.session_state["mf_capture"]
+        if _merrs:
+            st.error("**Fetch failures — re-run before pasting; both blocks "
+                     "below are incomplete and say so in their headers:** "
+                     + "; ".join(f"{t}: {m}" for t, m in sorted(_merrs.items())))
+
+        def _mf_pct(v) -> str:
+            return f"{v:.2%}" if v is not None else "—"
+
+        _mall = [t for t in (list(BASE_RATE_NAMES)
+                             + [x for x in MF_CENSUS_NAMES
+                                if x not in MF_ACCEPT_POLICY_DROPPED]
+                             + list(MF_ACCEPT_EXTRA)) if t in _mrecs]
+        st.dataframe(pd.DataFrame([{
+            "Ticker": t, "Rung": _mrecs[t]["rung"],
+            "FY": _mrecs[t].get("fy") or "—",
+            "Lag": _mrecs[t].get("lag", "—"),
+            "Yield": _mf_pct(_mrecs[t].get("yld")),
+            "Yield adj": _mf_pct(_mrecs[t].get("yld_adj")),
+            "ROC": _mf_pct(_mrecs[t].get("roc")),
+            "ROC adj": _mf_pct(_mrecs[t].get("roc_adj")),
+        } for t in dict.fromkeys(_mall)]), width='stretch', hide_index=True,
+            height=min(38 * len(_mall) + 40, 1200))
+        _mref = [_mrecs[t] for t in BASE_RATE_NAMES
+                 if t in _mrecs and _mrecs[t]["rung"] not in ("stale", "none")
+                 and _mrecs[t].get("price")]
+        _mrefdrop = [(t, _mdrop[t]) for t in BASE_RATE_NAMES if t in _mdrop]
+        _macc = [_mrecs[t] for t in ([x for x in MF_CENSUS_NAMES
+                                      if x not in MF_ACCEPT_POLICY_DROPPED]
+                                     + list(MF_ACCEPT_EXTRA)) if t in _mrecs]
+        _maccdrop = ([(t, w) for t, w in sorted(MF_ACCEPT_POLICY_DROPPED.items())]
+                     + [(t, _mdrop[t])
+                        for t in list(MF_CENSUS_NAMES) + list(MF_ACCEPT_EXTRA)
+                        if t in _mdrop and t not in _mrecs])
+        st.write("**MF_REFERENCE block** — paste to the session; the page is "
+                 "built around it as pinned data.")
+        st.code(mf_reference_block(_mref, _mrefdrop, _merrs, _mtoday),
+                language="python")
+        st.write("**MF ACCEPTANCE block** — paste to the session as text; "
+                 "evidence for the record, pinned nowhere.")
+        st.code(mf_accept_block(_macc, _maccdrop, _merrs, _mtoday),
+                language="text")
 
 st.divider()
 with st.expander("Verify the logic"):
