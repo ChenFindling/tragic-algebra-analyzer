@@ -7288,9 +7288,14 @@ st.info(ranking_refusal())
 with st.expander("How to read this page", expanded=False):
     st.markdown(mf_howto_text())
 
-_tk = st.text_input("Ticker", placeholder="e.g. AZO").strip().upper()
+with st.form("mf_form"):
+    _tk = st.text_input("Stock ticker",
+                        placeholder="AZO · MSFT · HRB — press Enter").strip().upper()
+    _mf_go = st.form_submit_button("Compute the legs", type="primary")
 
-if _tk:
+if _mf_go and not _tk:
+    st.warning("Enter a ticker first.")
+if _mf_go and _tk:
     try:
         _rec = mf_page_record(_tk)
         _load_err = ""
