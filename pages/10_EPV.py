@@ -6217,12 +6217,19 @@ class DoiRoute:
     completeness AND vintage pin — its signed sum must equal the page's
     pretax cell (continuing operations) within DOI_EPS or the year
     refuses. `refused` are years refused by decision, with reasons.
-    `notes` are the session's banked caveats, printed verbatim."""
+    `notes` are the session's banked caveats, printed verbatim. `pins`
+    (19 Sep 2026, live acceptance) are per-year VERIFIED bracket targets
+    in raw dollars with the reason naming the sources: a year whose page
+    pretax cell is poisoned by a documented bad fact brackets against
+    the pin instead, and the printed line reports whether the page cell
+    diverges (the documented defect) or agrees (the pin is retirable).
+    A pin never repairs the pretax cell itself, only the bracket target."""
     formula: str
     terms: tuple[DoiTerm, ...]
     bracket: tuple[DoiTerm, ...]
     refused: dict[int, str] = field(default_factory=dict)
     notes: tuple[str, ...] = ()
+    pins: dict[int, tuple[float, str]] = field(default_factory=dict)
 
 
 DOI_REGISTRY: dict[str, DoiRoute] = {
@@ -6281,7 +6288,20 @@ DOI_REGISTRY: dict[str, DoiRoute] = {
             "element outside this reader's interest group, which is why the line "
             "read as unfiled since FY2015. It was filed all along, under a door "
             "the reader never knocked on.",
-        )),
+        ),
+        pins={2021: (668_736_000.0,
+            "FY2021 bracket target pinned at 668.736 — the fiscal year ended "
+            "April 30, 2021. Sources: the FY2022 and FY2023 10-Ks' agreeing "
+            "annual facts, and the FY2021 10-K's own printed statement (pasted "
+            "19 Sep 2026), which closes Rev − Total operating expenses + Other "
+            "income − Interest expense to 668.736 exactly. The page's fy-2021 "
+            "pretax cell carries a mis-dated fact, a FILER defect repeated "
+            "across three filings: each of the FY2024, FY2025 and FY2026 10-Ks "
+            "tagged its oldest June-year comparative with the April-2021 period "
+            "dates (659,069 = FY2022's pretax, 711,212 = FY2023's, 762,322 = "
+            "FY2024's — the slide, one year per filing), and newest-wins serves "
+            "the latest. A future vintage that agrees with the pin retires it; "
+            "any other movement re-fires the bracket visibly.")}),
     # PBI (evidence 19 Sep 2026: FY2025 10-K face, four fact panels, two
     # companyconcept series, plus the FY2019 and FY2022 10-K faces pasted
     # whole — all six splice years verified against their own printed
@@ -6316,10 +6336,29 @@ DOI_REGISTRY: dict[str, DoiRoute] = {
             "they are net costs — direction stated, never sized. A fuller "
             "add-back is a documented v2, priced at per-year verification of "
             "each further line.",
-            "FY2023 on is post-GEC-recast scope while FY2017–FY2022 include GEC. "
-            "The reader's newest-wins merge mixes scopes across years for any "
-            "discontinued-operations filer; this pool does so knowingly.",
-        )),
+            "The GEC-recast seam sits at FY2022, not FY2023 (live acceptance, "
+            "19 Sep 2026): newest-wins serves FY2022 from the FY2023 10-K's "
+            "recast comparative (bracket closes at 188.652), while FY2021 kept "
+            "its pre-recast vintage (bracket −7.415). FY2017–FY2021 include "
+            "GEC; FY2022 on is post-recast; the pool mixes the two knowingly. "
+            "One residue, directioned never sized: PBI's bracket is degenerate "
+            "(revenue minus costs), so it never pins the interest add-back's "
+            "vintage — each year's interest rides its own newest fact beside "
+            "the bracketed pair, face-verified for the spliced years but "
+            "unpinned against future refilings.",
+        ),
+        pins={2018: (188_121_000.0,
+            "FY2018 bracket target pinned at 188.121. Sources: the FY2019 and "
+            "FY2020 10-Ks' agreeing annual facts, and the FY2019 10-K's own "
+            "printed statement (stage 2, pasted 19 Sep 2026). The page's "
+            "fy-2018 pretax cell reads 212.361, the pre-recast vintage — "
+            "correct at its own time, stale at the terms': the divestiture "
+            "recast lives entirely in the SECOND pretax element, and the "
+            "reader's two-tag fill serves tag order over vintage, so the first "
+            "tag's 2019-filed fact wins the cell. A READER seam, not a filer "
+            "defect; whether multi-tag fills should prefer recency across tags "
+            "is a fleet question documented in the handover. A future vintage "
+            "that agrees with the pin retires it.")}),
     # BBW (evidence 19 Sep 2026: FY2026 10-K face, three fact panels, three
     # companyconcept series, plus the FY2018 10-K face for the Dec-2017
     # year — the bracket closed on that unseen face at exactly 13,813).
@@ -6412,7 +6451,8 @@ def doi_derive(route: DoiRoute, fy: int, rev_raw: float | None,
     if missing:
         why = f"{', '.join(missing)} did not answer for FY{fy}"
         return None, why, f"FY{fy} refused — {why}"
-    if pretax_raw is None:
+    pin = route.pins.get(fy)
+    if pretax_raw is None and pin is None:
         why = f"pretax income did not answer for FY{fy}, so the bracket cannot close"
         return None, why, f"FY{fy} refused — {why}"
     bpairs = []
@@ -6423,15 +6463,31 @@ def doi_derive(route: DoiRoute, fy: int, rev_raw: float | None,
             return None, why, f"FY{fy} refused — {why}"
         bpairs.append((t.sign, v))
     bsum = sum(s * v for s, v in bpairs)
-    if abs(bsum - pretax_raw) > DOI_EPS:
+    target = pin[0] if pin is not None else pretax_raw
+    if abs(bsum - target) > DOI_EPS:
+        against = ("the pinned target" if pin is not None else "pretax")
         why = (f"bracket did not close for FY{fy}: "
-               f"{_doi_arith(bpairs)} = {bsum / 1e6:,.3f} against pretax "
-               f"{pretax_raw / 1e6:,.3f} — a completeness or vintage mismatch, "
+               f"{_doi_arith(bpairs)} = {bsum / 1e6:,.3f} against {against} "
+               f"{target / 1e6:,.3f} — a completeness or vintage mismatch, "
                "refused rather than papered over")
         return None, why, f"FY{fy} refused — {why}"
     oi = sum(s * v for s, v in pairs)
-    line = (f"FY{fy}: OI = {_doi_arith(pairs)} = {oi / 1e6:,.3f} · bracket "
-            f"{_doi_arith(bpairs)} = {bsum / 1e6:,.3f} = pretax ✓")
+    if pin is None:
+        line = (f"FY{fy}: OI = {_doi_arith(pairs)} = {oi / 1e6:,.3f} · bracket "
+                f"{_doi_arith(bpairs)} = {bsum / 1e6:,.3f} = pretax ✓")
+    else:
+        if pretax_raw is None:
+            cell = "page pretax cell unread; the bracket closed against the pin"
+        elif abs(pretax_raw - pin[0]) <= DOI_EPS:
+            cell = ("page pretax cell agrees with the pin — the pin is "
+                    "retirable")
+        else:
+            cell = (f"page pretax cell {pretax_raw / 1e6:,.3f} diverges from "
+                    "the pinned target — the documented defect; the refusal "
+                    "returns if the pin is ever removed")
+        line = (f"FY{fy}: OI = {_doi_arith(pairs)} = {oi / 1e6:,.3f} · bracket "
+                f"{_doi_arith(bpairs)} = {bsum / 1e6:,.3f} = pinned pretax ✓ "
+                f"({cell})")
     return oi, "", line
 
 
@@ -6494,6 +6550,8 @@ def doi_apply(tk: str, rows: list[EpvYear],
         if oi is not None:
             r.oi = oi / 1e6
         lines.append(line)
+    for _pfy in sorted(route.pins):
+        lines.append(f"Pinned bracket target, FY{_pfy}: {route.pins[_pfy][1]}")
     return route, lines
 
 
@@ -6828,6 +6886,79 @@ def epv_self_test() -> list[tuple[str, bool, str]]:
                                                                 _docket_shape)
                 and "registered" in doi_floor_suffix("ADP", _docket_shape),
                 ""))
+
+    # ── DOI pins (19 Sep 2026, live acceptance): verified bracket ────
+    # targets for two poisoned comparator cells the bracket caught live.
+    # HRB FY2021: filer defect (mis-dated oldest-comparative fact, the
+    # slide). PBI FY2018: reader seam (two-tag fill serves tag order over
+    # vintage). Both pins triply verified; fixtures are the banked raw
+    # figures and the poisoned cell values as the live page read them.
+    _h21_x = {"CostsAndExpenses": {2021: ("", "", 2_644_360_000.0)},
+              "OtherNonoperatingIncomeExpense": {2021: ("", "", 5_979_000.0)},
+              "InterestExpenseDebt": {2021: ("", "", 106_870_000.0)}}
+    _p18_x = {"CostsAndExpenses": {2018: ("", "", 3_023_401_000.0)},
+              "InterestExpense": {2018: ("", "", 115_381_000.0)}}
+
+    out.append(("DOI pins: HRB carries the FY2021 pin at 668.736M with the "
+                "sources and the slide pattern named in its reason",
+                DOI_REGISTRY["HRB"].pins.get(2021, (None,))[0] == 668_736_000.0
+                and "printed statement" in DOI_REGISTRY["HRB"].pins[2021][1]
+                and "762,322" in DOI_REGISTRY["HRB"].pins[2021][1]
+                and "FILER" in DOI_REGISTRY["HRB"].pins[2021][1], ""))
+
+    _oi, _why, _ln = doi_derive(DOI_REGISTRY["HRB"], 2021, 3_413_987_000.0,
+                                762_322_000.0, _h21_x)
+    out.append(("DOI pins: HRB FY2021 known-answer — derives 769.627M with the "
+                "bracket closing at 668.736 against the pin, poisoned cell "
+                "present",
+                _oi == 769_627_000.0 and _why == "", f"{_oi} {_why or _ln}"))
+    out.append(("DOI pins: divergence visibility — the printed line names the "
+                "pinned close and the diverging page cell",
+                "pinned pretax ✓" in _ln and "762.322 diverges" in _ln,
+                _ln[-90:]))
+    _oi2, _why2, _ln2 = doi_derive(DOI_REGISTRY["HRB"], 2021, 3_413_987_000.0,
+                                   668_736_000.0, _h21_x)
+    out.append(("DOI pins: agreement visibility — a cell that agrees with the "
+                "pin prints the retirable notice",
+                _oi2 == 769_627_000.0 and "agrees with the pin" in _ln2
+                and "retirable" in _ln2, _ln2[-70:]))
+
+    _mut_pin = DoiRoute(formula=DOI_REGISTRY["HRB"].formula,
+                        terms=DOI_REGISTRY["HRB"].terms,
+                        bracket=DOI_REGISTRY["HRB"].bracket,
+                        pins={2021: (668_736_000.0 + 5_000_000.0, "mutated")})
+    _pin_mutated = (_mut_pin.pins[2021][0]
+                    != DOI_REGISTRY["HRB"].pins[2021][0])
+    _oi3, _why3, _ = doi_derive(_mut_pin, 2021, 3_413_987_000.0,
+                                762_322_000.0, _h21_x)
+    out.append(("DOI pins: negative control — a mutated pin (asserted applied) "
+                "fails the bracket and the year refuses naming the pinned "
+                "target",
+                _pin_mutated and _oi3 is None
+                and "bracket did not close" in _why3
+                and "pinned target" in _why3, _why3[:90]))
+
+    _oi4, _why4, _ln4 = doi_derive(DOI_REGISTRY["HRB"], 2026, 3_945_392_000.0,
+                                   853_888_000.0, _hrb_x)
+    out.append(("DOI pins: non-pinned years unchanged — FY2026 still brackets "
+                "against the page's own cell, no pin language in its line",
+                2026 not in DOI_REGISTRY["HRB"].pins
+                and _oi4 == 907_686_000.0 and "pinned" not in _ln4, _ln4[-60:]))
+
+    out.append(("DOI pins: PBI carries the FY2018 pin at 188.121M naming the "
+                "pre-recast cell and the fill-priority reader seam",
+                DOI_REGISTRY["PBI"].pins.get(2018, (None,))[0] == 188_121_000.0
+                and "212.361" in DOI_REGISTRY["PBI"].pins[2018][1]
+                and "tag order" in DOI_REGISTRY["PBI"].pins[2018][1]
+                and "READER" in DOI_REGISTRY["PBI"].pins[2018][1], ""))
+    _oi5, _why5, _ln5 = doi_derive(DOI_REGISTRY["PBI"], 2018, 3_211_522_000.0,
+                                   212_361_000.0, _p18_x)
+    out.append(("DOI pins: PBI FY2018 known-answer — derives 303.502M with the "
+                "degenerate bracket closing at 188.121 against the pin, the "
+                "stale cell named as diverging",
+                _oi5 == 303_502_000.0 and _why5 == ""
+                and "212.361 diverges" in _ln5, f"{_oi5} {_why5 or _ln5[-70:]}"))
+
 
 
     return out
