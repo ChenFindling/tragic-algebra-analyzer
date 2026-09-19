@@ -6766,6 +6766,70 @@ def mf_count_label(rung: str, period: str) -> str:
     return f"latest filed diluted, {period}"
 
 
+def mf_howto_text() -> str:
+    """The page's workflow, stated instead of implied (added 18 Sep 2026
+    after the first live run's honest question: where is the verdict?)."""
+    return (
+        "**Why there is no verdict.** Greenblatt's book publishes no thresholds a "
+        "single company can meet: his method ranks EVERY company in the market on "
+        "each leg, adds the two positions, and buys the best few dozen. Membership "
+        "in that basket is a property of a ticker's place in a universe of "
+        "thousands, not a property of the ticker, so no single filing can answer "
+        "\"does it qualify\" — and any verdict printed here would be either "
+        "invented cutoffs or a fake universe wearing his method's name. The two "
+        "positions above are stated separately, never one score.\n\n"
+        "**How to read the two legs.** The yield answers HOW CHEAP: pre-tax "
+        "operating earnings against the price of the whole enterprise. Return on "
+        "capital answers HOW GOOD: the same earnings against what the business "
+        "actually needs to run. A high yield with an ordinary return is cheap and "
+        "ordinary; a thin yield with a huge return is excellent and expensively "
+        "priced. Two coordinates are the honest answer.\n\n"
+        "**If you want an actual basket**, the division of labour is: "
+        "Greenblatt's own screener at magicformulainvesting.com supplies the "
+        "ranking — free registration, the real universe, his rules. This page "
+        "then verifies each name the screener hands you against the filings: the "
+        "SBC-corrected legs (some names flip sign), the derived-EBIT arithmetic "
+        "where no subtotal is filed, the near-zero-capital caption where the "
+        "return figure is an artifact, and the aging balance lines. The screener "
+        "ranks; this page tells you whether each name's numbers survive contact "
+        "with the filings.")
+
+
+def mf_ev_zero_mismatch(cash_total: float, cash_current: float) -> bool:
+    """True when the EV-side cash pool read zero while the working-capital
+    side found material cash — the CI-shaped tag-coverage gap (18 Sep
+    2026): the filer tags its pool on elements outside the reader's
+    groups, EV silently misses it, and debt likely reads short the same
+    way."""
+    return cash_total == 0.0 and cash_current > 0.0
+
+
+def mf_ev_mismatch_sentence(cash_current: float) -> str:
+    return (f"**EV-side lines read zero that the working-capital side "
+            f"contradicts.** The reader's cash-pool group read {money(0.0)}M "
+            f"while current cash and investments read {money(cash_current)}M — "
+            "this filer tags those lines on elements the reader's groups do not "
+            "cover, and the debt group is likely short the same way. Enterprise "
+            "value above is EV AS READ: with the untagged debt and cash in, the "
+            "yield would move. Treat the yield leg as unverified for this filer "
+            "until the tag coverage is widened.")
+
+
+def mf_fallback_banner(rec: dict) -> str:
+    """The fallback warning, one builder so the self-test can pin it:
+    refusal sentence (period restored), count label, EV year, EV-side
+    staleness notes the capture carried, and the adjusted-legs refusal."""
+    why = str(rec.get("adj_why", "")).rstrip(".") + "."
+    txt = ("**Raw legs via the fallback path.** " + why + " Count: "
+           + mf_count_label(rec.get("count_rung", ""),
+                            rec.get("count_period", ""))
+           + f". EV lines read at FY{rec['fy']}")
+    if rec.get("ev_stale"):
+        txt += "; " + "; ".join(rec["ev_stale"])
+    return (txt + ". The adjusted legs refuse — Ω needs the priced window "
+            "the reader could not build.")
+
+
 # ══════════════════════════════════════════════════════════════════════
 #  PAGE RECORD — the app capture's machinery plus the series the year
 #  table needs; reads are cached, so the extra pulls cost nothing.
@@ -7108,6 +7172,42 @@ def mf_self_test() -> list[tuple[str, bool, str]]:
     out.append(("MF: every stop renders the footer first — source-level adjacency",
                 _stops > 0 and _stops == _covered,
                 f"{_covered} of {_stops} stops covered"))
+
+    # ── the post-run deploy of 18 Sep 2026: workflow, mismatch, banner ─
+    # Doctrine sentences (the founding refusal, this how-to) describe the
+    # refused operation and so must be allowed to name it — the banned scan
+    # governs OUTPUT sentences about the ticker; doctrine is pinned by
+    # content, the ranking_refusal precedent.
+    out.append(("MF: the how-to text states no-verdict-and-why, the two-"
+                "coordinate reading, the screener workflow, and never one "
+                "score",
+                "no verdict" in mf_howto_text().lower()
+                and "magicformulainvesting.com" in mf_howto_text()
+                and "never one score" in mf_howto_text()
+                and "HOW CHEAP" in mf_howto_text()
+                and "HOW GOOD" in mf_howto_text()
+                and "survive contact with the filings" in mf_howto_text(),
+                "how-to"))
+    out.append(("MF: the EV-zero mismatch fires only on the CI shape — pool "
+                "zero, working cash material — and the sentence calls the "
+                "yield unverified",
+                mf_ev_zero_mismatch(0.0, 8732.0)
+                and not mf_ev_zero_mismatch(405.0, 398.0)
+                and not mf_ev_zero_mismatch(0.0, 0.0)
+                and "unverified" in mf_ev_mismatch_sentence(8732.0)
+                and "8,732" in mf_ev_mismatch_sentence(8732.0),
+                "CI shape"))
+    _fb = mf_fallback_banner({"adj_why": "DBD cannot be valued from these "
+                              "filings — 8 of the 10 years in this window "
+                              "have no share price", "fy": 2025,
+                              "count_rung": "annual", "count_period": "FY2025",
+                              "ev_stale": ["LTI at FY2024, 1 behind"]})
+    out.append(("MF: the fallback banner carries the period before Count, the "
+                "EV-side staleness notes, and the count label",
+                "no share price. Count: latest filed diluted, FY2025." in _fb
+                and "LTI at FY2024, 1 behind" in _fb
+                and "Ω needs the priced window" in _fb,
+                _fb[:90]))
     return out
 
 
@@ -7185,6 +7285,8 @@ st.title("🪄 Magic Formula")
 st.caption("Joel Greenblatt's two legs — earnings yield and return on capital — "
            "his definitions, from the filings, for one ticker at a time")
 st.info(ranking_refusal())
+with st.expander("How to read this page", expanded=False):
+    st.markdown(mf_howto_text())
 
 _tk = st.text_input("Ticker", placeholder="e.g. AZO").strip().upper()
 
@@ -7282,13 +7384,7 @@ if _tk:
                                      _rec.get("pretax_s", {}).get(_rec["fy"]),
                                      _rec["fy"]))
     if _rec.get("fallback"):
-        st.warning("**Raw legs via the fallback path.** "
-                   + str(_rec.get("adj_why", "")) + " Count: "
-                   + mf_count_label(_rec.get("count_rung", ""),
-                                    _rec.get("count_period", ""))
-                   + f". EV lines read at FY{_rec['fy']}. The adjusted legs "
-                   "refuse — Ω needs the priced window the reader could not "
-                   "build.")
+        st.warning(mf_fallback_banner(_rec))
 
     _lab = "EBIT (derived)" if _rec["rung"] == "D4" else "EBIT"
     _c1, _c2 = st.columns(2)
@@ -7318,6 +7414,11 @@ if _tk:
     if _rec.get("capital_stale"):
         st.caption("Capital-side lines behind: "
                    + "; ".join(_rec["capital_stale"]) + ".")
+    if _rec.get("ev_stale") and not _rec.get("fallback"):
+        st.caption("EV-side lines behind: "
+                   + "; ".join(_rec["ev_stale"]) + ".")
+    if mf_ev_zero_mismatch(_rec["cash_total"], _rec["cash_current"]):
+        st.warning(mf_ev_mismatch_sentence(_rec["cash_current"]))
 
     _gw = {}
     if not _rec.get("fallback"):
