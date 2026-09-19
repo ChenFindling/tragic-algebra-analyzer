@@ -223,6 +223,14 @@ as the Tragic Algebra Analyzer. ΔE here is measured on after-tax operating inco
 profitable years since the turn, so a tax benefit or a gain below the operating line cannot
 flatter it.
 
+Where no operating-income subtotal is filed, the H&R Block shape, the operating column is
+derived: revenue minus the filed all-in expense total, the subtraction printed year by year
+in an expander, a banner naming the situation, a note naming any filed interest line the
+total swallows (as the filing signs it), and a reconciliation line bracketing the derived
+figure against filed pretax income. Every surface that shows the figure says it is derived.
+Where neither a subtotal nor an all-in expense total exists, the cells refuse and the
+caption names the real cause.
+
 The page refuses often, out loud, with the years and figures: companies profitable
 throughout or with a loss year on a profitable record are sent to the Tragic Algebra
 Analyzer; a trend that reversed, is one year old, or is flat is not priced; a company still
