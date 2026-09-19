@@ -3226,6 +3226,465 @@ def test_summary(results: list[tuple[str, bool, str]]) -> tuple[str, str]:
 
 
 # ══════════════════════════════════════════════════════════════════════
+#  THE DERIVED-EBIT PORT (19 Sep 2026) — the MF-LEGS block, taken whole
+# ══════════════════════════════════════════════════════════════════════
+#
+# Decision of record (Chen, 19 Sep 2026, the port session): the block
+# between the two markers below is the Magic Formula session's shared
+# derived-EBIT machinery, spliced BYTE-VERBATIM from page 11 — this page
+# is its second page carrier (third counting the Baselines app), and the
+# marker-bounded region must stay hash-identical across all of them. A
+# fix lands in every carrier or in none. Nothing between the markers may
+# be edited here; this comment sits OUTSIDE them on purpose.
+#
+# What this page uses from it: the D1 + D4 ladder (one derivation per
+# filer, the tag deciding), the reconciling arithmetic formatter, the
+# per-tag interest note and the lag ceiling. The rest of the block
+# (waterfall, EV, capital, legs) rides whole because the block is one
+# auditable unit — unused here, proven here by the same re-proof checks
+# page 11 runs, so the hash can never be "identical except".
+#
+# What must NEVER arrive from page 11: the raw-legs fallback that lives
+# BELOW the block there, behind its own banner, page-11-local by
+# decision of record (Chen, 18 Sep 2026). A self-test in this file scans
+# this file's own source and fails loudly if it ever appears.
+
+# >>> MF-LEGS BLOCK START
+# Decision of record (Chen, 18 Sep 2026): this block builds as ONE
+# contiguous, hash-auditable unit with its own tests, and the Magic
+# Formula page — and any later port — takes it WHOLE, byte-identical,
+# proved by hash at each build. Nothing in it touches Streamlit or the
+# network: series in, records out. The design settled in session:
+# ladder trimmed to D1 + D4 on the screener-30 census's evidence (the
+# deferred rungs D2/D2b/D3 live in the handover with their designs
+# intact; the first filer that refuses on a missing shape is the
+# evidence case that builds its rung); lag ceiling 3; PPE two-tag with
+# the swap named; managed-care carve-out at exactly SIC 6324 with a
+# zero-excess cash default.
+
+MF_TAGS = {
+    # EBIT, rung D1 — the filed operating-income subtotal (page 4's
+    # proven line; page 10 copies it too).
+    "OI": (["OperatingIncomeLoss"], ["ProfitLossFromOperatingActivities"]),
+    # EBIT, rung D4 — the all-in filed expense total. Known hazard,
+    # carried by note not refusal: some filers run this straight to
+    # pretax with interest inside (ADP's shape); the interest note
+    # quantifies where a filed interest line exists.
+    "CAE": (["CostsAndExpenses"], []),
+    # Note-only: quantifies the D4 interest content where it reads.
+    "INTEXP": (["InterestExpense", "InterestExpenseNonoperating",
+                "InterestIncomeExpenseNet"], []),
+    # The three instant lines Greenblatt's capital base needs. PPE is a
+    # TWO-TAG ladder on the census's clearest catch: OMC's narrow tag
+    # stale at 2020 and PBI's at 2021 while both tag the combined
+    # PP&E-plus-finance-lease element current — read with the balance
+    # groups' prefer_recent + skip-note machinery so any swap is named,
+    # with the definitional caveat (the combined line includes
+    # finance-lease ROU assets — slightly wider than the book's net
+    # fixed assets, and the filer's own presented line).
+    "CA": ["AssetsCurrent"],
+    "CL": ["LiabilitiesCurrent"],
+    "PPE": ["PropertyPlantAndEquipmentNet",
+            "PropertyPlantAndEquipmentAndFinanceLeaseRightOfUseAsset"
+            "AfterAccumulatedDepreciationAndAmortization"],
+}
+
+# Years EBIT's last readable year may trail the filed latest. Within it,
+# the legs print with the lag named; beyond it, the leg refuses — a note
+# must not be licensed to carry arbitrary staleness (Chen's guard,
+# 18 Sep 2026, the page-4 staleness family's reasoning).
+MF_LAG_CEILING = 3
+
+# The working-cash convention, shared verbatim with the 100-Bagger
+# Checker's ROIC waterfall: no published figure exists for the split,
+# so it is a stated convention — a percentage of revenue, adjustable.
+MF_OP_CASH_PCT_DEFAULT = 0.02
+
+# The method's-boundary carve-out, exactly. Greenblatt's screen
+# classifies managed care as health care and publishes CI; the kit's
+# gate reads SIC 6324 as an insurer. On this page the exclusion is the
+# method's, so 6324 passes with a banner — and with a zero-excess cash
+# default (floor = the whole cash pool), because the pool likely backs
+# policy liabilities; the box carries the user's judgement of the true
+# excess. Extended only on evidence.
+MF_MANAGED_CARE_SIC = ("6324",)
+
+
+def mf_ebit_ladder(oi: dict[int, float], rev: dict[int, float],
+                   cae: dict[int, float]) -> tuple[str, int, dict[int, tuple[float, str]]]:
+    """(rung, headline fy, {fy: (EBIT $M, arithmetic string)}).
+
+    One derivation per filer, the tag deciding, never the statement's
+    wording (HRB: the words say "total operating expenses", the tag is
+    CostsAndExpenses, the rung is D4). D1 when the filed subtotal
+    reaches within MF_LAG_CEILING of the filed latest; else D4 where
+    revenue and the all-in total overlap; else a refusal — "stale"
+    when a subtotal exists but died beyond the ceiling with nothing to
+    derive from, "none" when no line exists at all. D4 cells carry the
+    subtraction printed as arithmetic; a refusal returns an empty map.
+    """
+    latest_filed = max(set(rev) | set(oi) | set(cae), default=0)
+    if oi and latest_filed - max(oi) <= MF_LAG_CEILING:
+        return "D1", max(oi), {fy: (v, "") for fy, v in oi.items()}
+    d4_years = sorted(set(rev) & set(cae))
+    if d4_years and latest_filed - d4_years[-1] <= MF_LAG_CEILING:
+        cells = {fy: (rev[fy] - cae[fy], mf_arith(rev[fy], cae[fy]))
+                 for fy in d4_years}
+        return "D4", d4_years[-1], cells
+    return ("stale" if (oi or d4_years) else "none"), 0, {}
+
+
+def mf_arith(a: float, b: float) -> str:
+    """a − b printed at the coarsest precision where the DISPLAYED terms
+    reproduce the DISPLAYED result exactly. Arithmetic whose whole point
+    is that the reader can check it by hand must check by hand: rounding
+    each term independently printed "3,945 − 3,038 = 908" on HRB's first
+    capture, which is 907 — caught 18 Sep 2026, and this formatter is
+    the fix, not a wording patch."""
+    for nd in range(0, 7):
+        fa, fb, fd = f"{a:,.{nd}f}", f"{b:,.{nd}f}", f"{a - b:,.{nd}f}"
+        redo = float(fa.replace(",", "")) - float(fb.replace(",", ""))
+        if f"{redo:,.{nd}f}" == fd:
+            return f"{fa} − {fb} = {fd}"
+    return f"{a:,.6f} − {b:,.6f} = {a - b:,.6f}"
+
+
+def mf_balance_at(series: dict[int, float], fy_star: int) -> tuple[float, str]:
+    """(value, note) for a balance line at the headline year: the latest
+    value at or before it. Fresh is silent; within MF_LAG_CEILING it is
+    carried with the gap named; beyond the ceiling the line is treated
+    as no longer filed and EXCLUDED AT ZERO with the note saying so —
+    the same ceiling EBIT's lag gets, because a note is not licensed to
+    carry arbitrary staleness (the SIRI FY2011 short-term-debt catch,
+    18 Sep 2026); absent entirely, zero with the note."""
+    eligible = [fy for fy in series if fy <= fy_star]
+    if not eligible:
+        return 0.0, "no year at or before"
+    got = max(eligible)
+    gap = fy_star - got
+    if gap == 0:
+        return series[got], ""
+    if gap <= MF_LAG_CEILING:
+        return series[got], f"at FY{got}, {gap} behind"
+    return 0.0, (f"last filed FY{got}, {gap} behind — beyond the ceiling, "
+                 "treated as no longer filed, excluded at zero")
+
+
+def mf_interest_note(fy: int, val: float | None, tag: str, latest: int) -> str:
+    """The D4 interest note. Reads are PER TAG, never merged across the
+    family (recency across sign conventions printed "interest expense of
+    −101M" on PBI's first capture): the note names the tag it read and
+    prints the figure as the filing signs it; the net element carries
+    its own clause; no current line, and the note says the content
+    cannot be quantified from a filed line."""
+    if val is None:
+        last = f"FY{latest}" if latest else "never"
+        return ("interest note: no filed interest line reads at FY"
+                f"{fy} (last {last}) — the interest content cannot be "
+                "quantified from a filed line; the reconciliation line "
+                "carries the honesty")
+    net = (" — a net figure, interest income offsets it"
+           if tag == "InterestIncomeExpenseNet" else "")
+    return (f"interest note: the filed total includes {tag} of "
+            f"{val:,.1f}M at FY{fy}, as the filing signs it{net} — the "
+            "derived figure sits between EBIT and pretax income by that "
+            "amount")
+
+
+def mf_capital_artifact(capital: float, ev) -> bool:
+    """True when the capital base is real but under 1% of EV — the
+    stated trigger — so the return-on-capital figure is the artifact of
+    a nearly empty denominator and the page's caption says so plainly
+    rather than printing 16,000% with a straight face."""
+    return bool(ev) and ev > 0 and capital > 0 and capital < 0.01 * ev
+
+
+def mf_rung_disagreement(derived: dict[str, float], tol: float = 0.5) -> str:
+    """Named DERIVED candidates for one year that disagree beyond tol
+    ($M) — the page prints all and refuses to pick. With the ladder at
+    D1 + D4 there is at most one derived candidate, so this guard is
+    dormant by construction; the function and its check pin the
+    principle for the rungs the handover defers. The filed subtotal is
+    never a candidate here: D1 outranks derivation by definition, and
+    OI differing from Rev − CostsAndExpenses is normal, not a defect."""
+    if len(derived) < 2:
+        return ""
+    vals = sorted(derived.items())
+    if max(v for _, v in vals) - min(v for _, v in vals) <= tol:
+        return ""
+    return " vs ".join(f"{k} {v:,.0f}" for k, v in vals)
+
+
+def mf_lag(latest_filed: int, ebit_fy: int) -> tuple[int, str]:
+    """(years behind the filings, 'ok' | 'note' | 'refuse')."""
+    lag = max(0, latest_filed - ebit_fy)
+    return lag, ("ok" if lag == 0 else "note" if lag <= MF_LAG_CEILING else "refuse")
+
+
+def mf_class_floor(sic: str, revenue: float, cash_total: float,
+                   op_cash_pct: float) -> float:
+    """The working-cash floor. Managed-care carve-outs default to the
+    whole pool (excess cash zero — conservative on both legs); everyone
+    else keeps the shared percentage-of-revenue convention."""
+    if sic in MF_MANAGED_CARE_SIC:
+        return max(0.0, cash_total)
+    return max(0.0, revenue * op_cash_pct)
+
+
+def mf_cash_split(cash_current: float, cash_total: float,
+                  floor: float) -> tuple[float, float]:
+    """(cash kept in working capital, excess cash netted in EV).
+
+    One waterfall so no cash dollar counts twice or vanishes: cash up
+    to the floor stays working — capped at the current cash actually
+    there — and everything above the floor is excess. Long-term
+    investments were never in current assets, so they can only ever be
+    excess."""
+    f = max(0.0, floor)
+    kept = min(max(0.0, cash_current), f)
+    excess = max(0.0, cash_total - f)
+    return kept, excess
+
+
+def mf_nwc(ca: float, cl: float, std: float, cash_current: float,
+           kept: float) -> float:
+    """Greenblatt's own appendix definition: excess cash out of current
+    assets (only the working slice stays), interest-bearing short-term
+    debt out of current liabilities (it is already counted in EV)."""
+    return (ca - max(0.0, cash_current) + kept) - (cl - std)
+
+
+def mf_capital(nwc: float, ppe: float) -> float:
+    """max(NWC, 0) + net fixed assets — a negative-working-capital
+    business gets zero, never a credit (the AZO shape)."""
+    return max(0.0, nwc) + ppe
+
+
+def mf_ev(mktcap: float, debt: float, excess: float) -> float:
+    return mktcap + debt - excess
+
+
+def mf_legs(ebit: float, ev: float, capital: float
+            ) -> tuple[float | None, float | None, str, str]:
+    """(yield, roc, yield refusal reason, roc refusal reason). A
+    negative EBIT prints — cyclicality is shown, not hidden — but a
+    non-positive denominator is not a number and each leg refuses
+    alone: EV at or below zero means the market prices the business
+    below its cash pool (a finding, stated); capital at zero means the
+    floor and the fixed-asset line left nothing to divide by."""
+    y_why = "" if ev > 0 else "EV is zero or negative — the market prices the " \
+                              "business at or below its cash pool"
+    r_why = "" if capital > 0 else "capital is zero — floored working capital " \
+                                   "plus net fixed assets leaves no base"
+    return (ebit / ev if ev > 0 else None,
+            ebit / capital if capital > 0 else None, y_why, r_why)
+
+# <<< MF-LEGS BLOCK END
+
+
+# ── Page 11's ladder-input readers and reconciliation pieces, spliced
+#    verbatim (each runs on this file's own machinery) ─────────────────
+
+def _mf_flow(facts: dict, spec: tuple, recent: bool = False) -> dict[int, float]:
+    us, ifrs = spec
+    raw = _annual(facts, us, ifrs, None, False, recent, {})
+    return {fy: raw[fy][2] / 1e6 for fy in raw}
+
+
+def _mf_rev(facts: dict) -> dict[int, float]:
+    raw = _annual(facts, *CONCEPTS["REV"], None, "REV" in FILL_KEYS,
+                  "REV" in RECENCY_KEYS, {})
+    return {fy: raw[fy][2] / 1e6 for fy in raw}
+
+
+def _mf_intexp_into(rec: dict, facts: dict, fy_star: int):
+    """Per-tag interest read — never merged across the family; the note
+    names the tag it read (the PBI −101M catch)."""
+    rec["intexp_at"], rec["intexp_tag"], rec["intexp_latest"] = None, "", 0
+    for tag in MF_TAGS["INTEXP"][0]:
+        ser = _mf_flow(facts, ([tag], []))
+        if ser:
+            rec["intexp_latest"] = max(rec["intexp_latest"], max(ser))
+        if rec["intexp_at"] is None and fy_star in ser:
+            rec["intexp_at"], rec["intexp_tag"] = ser[fy_star], tag
+
+
+def money(x) -> str:
+    return f"\\${x:,.2f}" if abs(x) < 100 else f"\\${x:,.0f}"
+
+
+# Pretax income, page-local, for the D4 reconciliation line only — the
+# same two sibling elements the EPV page reads. Not in MF_TAGS because
+# MF_TAGS is the shared hash-audited block and this line feeds one
+# sentence on this page alone.
+MF_PRETAX_TAGS = (["IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
+                   "IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments"],
+                  [])
+
+
+def mf_recon_sentence(ebit: float, pretax, fy: int) -> str:
+    """The D4 reconciliation line: derived EBIT beside filed pretax, the
+    residual named — the line that makes a nonsense derivation visible."""
+    if pretax is None:
+        return (f"Reconciliation: no filed pretax income reads at FY{fy}, so the "
+                "derived figure cannot be bracketed against it — the tag panel shows "
+                "what was looked for.")
+    resid = ebit - pretax
+    return (f"Reconciliation: derived EBIT {money(ebit)}M vs filed pretax income "
+            f"{money(pretax)}M at FY{fy} — non-operating items net to "
+            f"{money(resid)}M. A derivation that drifts far from pretax without a "
+            "reason visible in the filing is the cell to distrust.")
+
+
+# ── This page's own seam onto the block ──────────────────────────────
+#
+# The readers directly above (_mf_rev, _mf_flow, _mf_intexp_into and the
+# pretax read inside inf_derived) are page 11's, spliced verbatim, and
+# they run on THIS file's _annual — which is byte-identical to page 11's
+# (md5-matched at port time). Identical block, identical reads, identical
+# machinery: the derived figures on this page and on the Magic Formula
+# page cannot disagree for the same ticker on the same day, and the port
+# acceptance runs both pages in one sitting to prove it live.
+#
+# The seam itself is four small functions. The trend table, the margins,
+# the incremental margins, the crossings, the below-the-line flag and the
+# seed export all consume TrendYear.oi — so patching the trend dict's oi
+# cells BEFORE build_trend() is the whole integration: one write, every
+# downstream figure consistent, and the reader region above untouched.
+
+
+def inf_derived(ticker: str) -> dict:
+    """The derived-EBIT record for one name, mf_record's read shape.
+
+    Runs for every ticker; on a D1 filer the record is inert (nothing is
+    patched, nothing extra renders) and the page is behaviourally
+    identical to its pre-port self — the guard is the rung. Uses the
+    cached facts fetch, so this costs no second network call after
+    load() has run.
+    """
+    cmap = _ticker_map()
+    resolved = resolve_ticker(ticker, cmap)
+    facts = _facts(cmap[resolved])
+    rev = _mf_rev(facts)
+    oi, cae = _mf_flow(facts, MF_TAGS["OI"]), _mf_flow(facts, MF_TAGS["CAE"])
+    rung, fy_star, cells = mf_ebit_ladder(oi, rev, cae)
+    drv = {"rung": rung, "fy": fy_star, "cells": cells,
+           "oi_s": oi, "rev_s": rev, "cae_s": cae}
+    _mf_intexp_into(drv, facts, fy_star)
+    drv["pretax_s"] = {fy: v[2] / 1e6 for fy, v in
+                       _annual(facts, *MF_PRETAX_TAGS, None, True, False, {}).items()}
+    return drv
+
+
+def inf_apply_derived(trend: dict, drv: dict) -> dict:
+    """Patch the trend dict's oi cells from the D4 derivation — and ONLY
+    then. D1 passes through untouched (the filed subtotal outranks
+    derivation by definition); stale and none pass through untouched (a
+    refusal patches nothing); years the derivation covers outside the
+    window are ignored, because the window is the page's. One derivation
+    per filer is the block's doctrine, so on D4 every window cell the
+    derivation reaches is the derived one — a franken-series mixing
+    filed and derived cells per year would be worse than either
+    (Chen, 19 Sep 2026)."""
+    if drv.get("rung") != "D4":
+        return trend
+    for fy in trend:
+        if fy in drv["cells"]:
+            trend[fy]["oi"] = drv["cells"][fy][0]
+    return trend
+
+
+def inf_oi_state(drv: dict) -> str:
+    """The banner's OI-state line: WHY this filer is on the derived
+    route, named — absent subtotal and stale-beyond-the-ceiling subtotal
+    are different situations and the sentence says which."""
+    oi_s = drv.get("oi_s") or {}
+    if not oi_s:
+        return "This filer presents no operating-income subtotal in its filings."
+    return (f"The filed operating-income subtotal stopped at FY{max(oi_s)}, more than "
+            f"{MF_LAG_CEILING} years behind the filings, and is treated as no longer "
+            "filed.")
+
+
+def inf_derived_banner(drv: dict) -> str:
+    """The derived banner, built here so a self-test can hold it still
+    (the DBD render lesson: a banner assembled inline in the UI is a
+    banner nothing can test). Names the situation, the derivation, the
+    interest content in its filer's variant, and where the derived
+    figure sits relative to EBIT and pretax."""
+    note = mf_interest_note(drv["fy"], drv["intexp_at"], drv["intexp_tag"],
+                            drv["intexp_latest"])
+    where = ("" if "between EBIT and pretax" in note else
+             " Wherever interest sits inside the filed total, the derived figure "
+             "sits between EBIT and pretax income.")
+    return ("**EBIT (derived).** " + inf_oi_state(drv) + " Every operating-income "
+            "figure on this page is derived as revenue minus the filed all-in "
+            "expense total (CostsAndExpenses), with the subtraction printed year "
+            "by year in the derivation expander under the table. The " + note +
+            "." + where)
+
+
+def inf_oi_caption(rung: str, missing: list[int], oi_last: int) -> str:
+    """The operating-income sentence in the trend-table caption, by rung.
+
+    D1 keeps the pre-port sentence to the byte, so a readable filer's
+    page is unchanged. D4 names the derivation and any years it could
+    not reach. stale and none name the REAL cause in page 11's own
+    refusal wording — this page's sibling of page 10's queued 0-years
+    wording ride, shipped here from day one because this page is gaining
+    exactly the filers that expose the wrong-cause sentence."""
+    fys = f"FY{', FY'.join(str(f) for f in missing)}" if missing else ""
+    if rung == "D4":
+        s = "Operating income is derived (see the banner above)"
+        if missing:
+            s += (f"; it could not be derived for {fys} — revenue or the expense "
+                  "total did not read at those years")
+        return s + ". "
+    if not missing:
+        return ""
+    if rung == "none":
+        return ("Operating income is refused for every year: neither an "
+                "operating-income subtotal nor an all-in expense total is in the "
+                "filing — the tag panel shows what was looked for. ")
+    if rung == "stale":
+        return (f"A filed operating-income subtotal exists but stopped at "
+                f"FY{oi_last}, more than {MF_LAG_CEILING} years behind the "
+                "filings, with no all-in expense total to derive from — "
+                f"refused for {fys}. ")
+    return f"Operating income could not be read for {fys}. "
+
+
+def inf_derived_tag_rows(drv: dict) -> list[dict]:
+    """Tag-panel rows for the derivation's own lines, appended whenever
+    the ladder did anything other than land D1 — on the derived route
+    the panel must show BOTH lines (the dead or absent subtotal and the
+    live expense total), and on a refusal it must show why nothing could
+    be derived. On D1 this returns nothing and the panel is unchanged."""
+    if drv.get("rung") == "D1":
+        return []
+    cae, pretax = drv.get("cae_s") or {}, drv.get("pretax_s") or {}
+    d4 = drv.get("rung") == "D4"
+    itag, iat = drv.get("intexp_tag", ""), drv.get("intexp_at")
+    return [
+        {"Line": "— EBIT derivation: all-in expense total", "Years read": len(cae),
+         "Latest year": _latest_fy(cae), "XBRL tag": "CostsAndExpenses",
+         "Status": ("used — every derived cell is revenue minus this line" if d4
+                    else "not in the filing" if not cae else
+                    "read, but too far behind the filings to derive from")},
+        {"Line": "— EBIT derivation: interest line", "Years read": 0 if iat is None else 1,
+         "Latest year": (f"FY{drv.get('intexp_latest')}" if drv.get("intexp_latest") else "—"),
+         "XBRL tag": itag or "—",
+         "Status": ("quantifies the interest content inside the total" if iat is not None
+                    else "no filed interest line reads at the headline year")},
+        {"Line": "— EBIT derivation: pretax (reconciliation only)", "Years read": len(pretax),
+         "Latest year": _latest_fy(pretax),
+         "XBRL tag": MF_PRETAX_TAGS[0][0],
+         "Status": ("brackets the derived figure — see the derivation expander" if d4
+                    else "read — unused, no derivation ran")},
+    ]
+
+
+# ══════════════════════════════════════════════════════════════════════
 #  INFLECTION — the trend evidence (this app's design, not Burry's)
 # ══════════════════════════════════════════════════════════════════════
 #
@@ -6122,6 +6581,145 @@ def self_test() -> list[tuple[str, bool, str]]:
                 and shd_input_seed(0.0, {}, 1.0) == (0.0, ""),
                 "GRAB stays refused: its IFRS-tagged average is invisible to this US-GAAP series"))
 
+    # ══ THE DERIVED-EBIT PORT (19 Sep 2026): the block re-proved on ══
+    # ══ this carrier (1-10, page 11's own synthetics), then the seam ══
+    _rev = {2023: 3500.0, 2024: 3600.0, 2025: 3610.0}
+    out.append(("Port: ladder — D1 fresh, D1 lagged, D4 with printed arithmetic, "
+                "stale, none",
+                mf_ebit_ladder({2025: 400.0}, _rev, {})[0:2] == ("D1", 2025)
+                and mf_ebit_ladder({2023: 380.0}, _rev, {2025: 3197.0})[0:2]
+                == ("D1", 2023)
+                and mf_ebit_ladder({2013: 900.0}, _rev, {2025: 3197.0})[2][2025]
+                == (413.0, "3,610 − 3,197 = 413")
+                and mf_ebit_ladder({2013: 900.0}, _rev, {})[0] == "stale"
+                and mf_ebit_ladder({}, _rev, {})[0] == "none",
+                "five shapes"))
+    _a2 = mf_arith(3944.6, 3037.4)
+    _t2 = _a2.replace(",", "").split(" ")
+    out.append(("Port: arithmetic formatter — integers plain, the HRB pair escalates "
+                "and hand-checks at its own precision",
+                mf_arith(3610.0, 3197.0) == "3,610 − 3,197 = 413" and ".6 − " in _a2
+                and abs((float(_t2[0]) - float(_t2[2])) - float(_t2[4])) < 1e-9,
+                _a2))
+    out.append(("Port: balance ceiling — fresh silent, carried named, beyond the "
+                "ceiling excluded at zero, absent noted",
+                mf_balance_at({2025: 5.0}, 2025) == (5.0, "")
+                and mf_balance_at({2023: 40.0}, 2025) == (40.0, "at FY2023, 2 behind")
+                and mf_balance_at({2011: 1076.0}, 2025)[0] == 0.0
+                and "treated as no longer filed" in mf_balance_at({2011: 1.0}, 2025)[1]
+                and mf_balance_at({2026: 1.0}, 2025) == (0.0, "no year at or before"),
+                "one ceiling, every line"))
+    out.append(("Port: lag rule — ok at 0, note to the ceiling, refuse past it",
+                mf_lag(2025, 2025) == (0, "ok") and mf_lag(2025, 2022) == (3, "note")
+                and mf_lag(2025, 2021) == (4, "refuse"),
+                "ceiling 3"))
+    out.append(("Port: waterfall and class floors — kept capped, excess above the "
+                "floor, 6324 zeroes excess, ordinary is the shared 2%",
+                mf_cash_split(100.0, 300.0, 50.0) == (50.0, 250.0)
+                and mf_cash_split(100.0, 300.0, 400.0) == (100.0, 0.0)
+                and mf_class_floor("6324", 5000.0, 300.0, 0.02) == 300.0
+                and mf_class_floor("5651", 5000.0, 300.0, 0.02) == 100.0,
+                "waterfall + floors"))
+    _kept, _ = mf_cash_split(100.0, 300.0, 50.0)
+    _nwc = mf_nwc(800.0, 600.0, 40.0, 100.0, _kept)
+    out.append(("Port: Greenblatt capital hand-check and the AZO floor — negative "
+                "working capital collapses the base to net fixed assets",
+                _nwc == 190.0 and mf_capital(_nwc, 500.0) == 690.0
+                and mf_capital(-250.0, 500.0) == 500.0,
+                f"nwc {_nwc}"))
+    _y, _r, _yw, _rw = mf_legs(413.0, 5900.0, 690.0)
+    _y2, _r2, _yw2, _ = mf_legs(413.0, -10.0, 690.0)
+    _y3, _r3, _, _rw3 = mf_legs(-50.0, 5900.0, 0.0)
+    out.append(("Port: legs exact, each denominator guard refuses alone, negative "
+                "EBIT prints",
+                abs(_y - 413.0 / 5900.0) < 1e-15 and abs(_r - 413.0 / 690.0) < 1e-15
+                and _y2 is None and "cash pool" in _yw2 and _r2 is not None
+                and _y3 is not None and _y3 < 0 and _r3 is None
+                and "capital is zero" in _rw3,
+                "legs + guards"))
+    _g, _w = 120.0, 175.0
+    _ya, _ra, _, _ = mf_legs(413.0 + (_g - _w), 5900.0, 690.0)
+    out.append(("Port: the signature pins — yield gap exactly (G−Ω)/EV, capital "
+                "identity exactly (G−Ω)/capital",
+                abs((_ya - _y) - (_g - _w) / 5900.0) < 1e-12
+                and abs((_ra - _r) - (_g - _w) / 690.0) < 1e-12,
+                "both gaps"))
+    out.append(("Port: disagreement guard dormant below two derived candidates, "
+                "names both beyond tolerance",
+                mf_rung_disagreement({"D4": 413.0}) == ""
+                and mf_rung_disagreement({"D3": 500.0, "D4": 413.0})
+                == "D3 500 vs D4 413",
+                "guard"))
+    out.append(("Port: interest note — tag named as the filing signs it, the net "
+                "element carries its clause, absent states the limit",
+                "InterestIncomeExpenseNet of -101.0M"
+                in mf_interest_note(2025, -101.0, "InterestIncomeExpenseNet", 2025)
+                and "a net figure" in mf_interest_note(2025, -101.0,
+                                                       "InterestIncomeExpenseNet", 2025)
+                and "cannot be quantified" in mf_interest_note(2026, None, "", 2015)
+                and "last FY2015" in mf_interest_note(2026, None, "", 2015),
+                "three variants"))
+    # ── the seam and the guards this carrier adds (11-16) ──
+    _msrc = _P(__file__).read_text(encoding="utf-8")
+    _mk_a, _mk_b = ">>> MF-LEGS" + " BLOCK START", "<<< MF-LEGS" + " BLOCK END"
+    out.append(("Port: both block markers present exactly once — the hash-audited "
+                "region exists and is unique in this file",
+                _msrc.count(_mk_a) == 1 and _msrc.count(_mk_b) == 1
+                and _msrc.index(_mk_a) < _msrc.index(_mk_b),
+                "one region"))
+    _fb = ("MF_FALL" + "BACK_TRIGGERS", "_mf_fall" + "back_diluted",
+           "MF RAW" + "-LEGS FALLBACK")
+    out.append(("Port: the raw-legs fallback never arrived — page-11-local by "
+                "decision of record, zero trace in this file's source",
+                all(_msrc.count(p) == 0 for p in _fb),
+                "do-not-port held"))
+    _pt = {2024: {"rev": 100.0, "oi": None}, 2025: {"rev": 110.0, "oi": None}}
+    _pd = {"rung": "D4", "cells": {2025: (22.0, "a"), 2024: (20.0, "b"), 2015: (1.0, "c")}}
+    _pp = inf_apply_derived(_pt, _pd)
+    _p1 = {2025: {"rev": 1.0, "oi": 5.0}}
+    out.append(("Port: the trend patch — D4 fills window cells only, out-of-window "
+                "years ignored, D1 and refusals pass through untouched",
+                _pp[2024]["oi"] == 20.0 and _pp[2025]["oi"] == 22.0
+                and 2015 not in _pp and len(_pp) == 2
+                and inf_apply_derived(_p1, {"rung": "D1", "cells": {2025: (9.0, "")}})[2025]["oi"] == 5.0
+                and inf_apply_derived(_p1, {"rung": "stale", "cells": {}})[2025]["oi"] == 5.0,
+                "one write, rung-guarded"))
+    _bq = inf_derived_banner({"rung": "D4", "fy": 2025, "oi_s": {},
+                              "intexp_at": -101.5, "intexp_tag": "InterestIncomeExpenseNet",
+                              "intexp_latest": 2025})
+    _bu = inf_derived_banner({"rung": "D4", "fy": 2026, "oi_s": {2014: 5.0},
+                              "intexp_at": None, "intexp_tag": "", "intexp_latest": 2015})
+    out.append(("Port: the derived banner — OI state named per situation, the "
+                "derivation and CostsAndExpenses stated, the between-EBIT-and-pretax "
+                "clause present in both interest variants",
+                "presents no operating-income subtotal" in _bq
+                and "CostsAndExpenses" in _bq and "between EBIT and pretax" in _bq
+                and "InterestIncomeExpenseNet" in _bq
+                and "stopped at FY2014" in _bu and "no longer filed" in _bu
+                and "cannot be quantified" in _bu and "between EBIT and pretax" in _bu,
+                "both variants"))
+    _rc = mf_recon_sentence(907.7, 853.9, 2026)
+    out.append(("Port: the reconciliation line — residual named against filed pretax, "
+                "the absent-pretax variant states the limit, the pretax tag pair is "
+                "the two-element list",
+                "derived EBIT" in _rc and "53.80" in _rc and "FY2026" in _rc
+                and "cannot be bracketed" in mf_recon_sentence(907.7, None, 2026)
+                and len(MF_PRETAX_TAGS[0]) == 2 and MF_PRETAX_TAGS[1] == [],
+                "bracketed"))
+    _c_d1 = inf_oi_caption("D1", [2024], 0)
+    out.append(("Port: the caption by rung — D1 keeps the pre-port sentence to the "
+                "byte, D4 names the derivation and unreached years, stale and none "
+                "name the real cause",
+                _c_d1 == "Operating income could not be read for FY2024. "
+                and inf_oi_caption("D1", [], 0) == ""
+                and "derived (see the banner above)" in inf_oi_caption("D4", [], 2026)
+                and "could not be derived for FY2017" in inf_oi_caption("D4", [2017], 2026)
+                and "neither an operating-income subtotal nor an all-in expense total"
+                in inf_oi_caption("none", [2024], 0)
+                and "stopped at FY2014" in inf_oi_caption("stale", [2024, 2025], 2014)
+                and inf_oi_caption("stale", [], 2014) == "",
+                "four rungs"))
+
     return out
 
 
@@ -6162,7 +6760,9 @@ def _page_footer() -> None:
         with st.expander("What the numbers mean", expanded=False):
             st.markdown(
                 "**Operating margin** — GAAP operating income over revenue. The line this page "
-                "projects: one tag in every 10-K, above interest, tax and one-offs.\n\n"
+                "projects: one tag in nearly every 10-K, above interest, tax and one-offs. "
+                "Where no subtotal is filed, the figure is derived as revenue minus the filed "
+                "all-in expense total and labeled as such on every surface.\n\n"
                 "**Incremental margin** — the share of each new revenue dollar that reached operating "
                 "income. When it runs above the current margin, leverage is appearing.\n\n"
                 "**Stage 0** — Burry's extra stage for inflecting hypergrowth: the margin projected "
@@ -6236,7 +6836,13 @@ if submitted:
         try:
             with st.spinner(f"Reading {ticker} annual filings…"):
                 yrs, notes, pre = load(ticker, 10)
-            st.session_state.update(inf_years=yrs, inf_notes=notes, inf_pre=pre, inf_tk=ticker)
+                # The derived-EBIT seam (19 Sep 2026): same cached facts,
+                # page 11's reads, the block's ladder. D1 patches nothing.
+                drv = inf_derived(ticker)
+                pre["trend"] = inf_apply_derived(pre.get("trend", {}), drv)
+                pre["tags"] = list(pre.get("tags", [])) + inf_derived_tag_rows(drv)
+            st.session_state.update(inf_years=yrs, inf_notes=notes, inf_pre=pre, inf_tk=ticker,
+                                    inf_drv=drv)
         except ValueError as e:
             st.error(f"Could not load {ticker}: {e}")
         except Exception as e:
@@ -6248,6 +6854,7 @@ if submitted:
 years = st.session_state.get("inf_years", [])
 if years and ticker and st.session_state.get("inf_tk") == ticker:
     notes, pre, tk = st.session_state["inf_notes"], st.session_state["inf_pre"], st.session_state["inf_tk"]
+    drv = st.session_state.get("inf_drv", {})
     rows = build_trend(years, pre.get("trend", {}), pre.get("shares_by_fy", {}))
     alerts: list[tuple[str, str]] = [("info", n) for n in page_notes(notes)]
 
@@ -6271,18 +6878,21 @@ if years and ticker and st.session_state.get("inf_tk") == ticker:
     # ══ trend evidence — always printed, before any refusal ══════════
     st.markdown("---")
     st.subheader(f"Trend evidence · {tk}")
+    if drv.get("rung") == "D4":
+        st.info(inf_derived_banner(drv))
     st.caption("Every column is a filed number or a named identity on two filed numbers. "
                "A blank cell is a refused cell, not zero. Years marked * are excluded from the "
                "stock-comp columns as capital events; their revenue and margins are still read.")
 
     _incr_cells = [None] + [incremental_margin(rows[i - 1], rows[i]) for i in range(1, len(rows))]
     _mfmt = money_fmt([v for r in rows for v in (r.rev, r.oi, r.gp, r.N, r.fcf, r.omega)])
+    _oi_hdr = "Operating income (derived)" if drv.get("rung") == "D4" else "Operating income"
     st.dataframe(pd.DataFrame([{
         "FY": f"{r.fy}*" if r.excluded else str(r.fy),
         "Revenue": cell(r.rev, _mfmt),
         "Rev growth": cell(growth_pct(r.rev, rows[i - 1].rev) if i else None, "{:+.1%}"),
         "Gross margin": cell(r.gm, "{:.1%}"),
-        "Operating income": cell(r.oi, _mfmt),
+        _oi_hdr: cell(r.oi, _mfmt),
         "Op margin": cell(r.opm, "{:+.1%}"),
         "Costs growth": cell(growth_pct(r.costs, rows[i - 1].costs) if i else None, "{:+.1%}"),
         "Incremental margin": cell(_incr_cells[i], "{:+.1%}"),
@@ -6299,13 +6909,24 @@ if years and ticker and st.session_state.get("inf_tk") == ticker:
     _cap = (("Gross margin is " + (" / ".join(sorted(_gp_src)) if _gp_src else "not readable")
              + (f"; refused for FY{', FY'.join(str(f) for f in _missing_gp)}" if _missing_gp and _gp_src else "")
              + ". ") if (_gp_src or _missing_gp) else "")
-    if _missing_oi:
-        _cap += f"Operating income could not be read for FY{', FY'.join(str(f) for f in _missing_oi)}. "
+    _cap += inf_oi_caption(drv.get("rung", "D1"), _missing_oi,
+                           max(drv.get("oi_s") or [0]))
     _cap += ("Costs growth is total costs (revenue less operating income) year over year — when it runs "
              "below revenue growth, that is operating leverage. Incremental margin is the share of each "
              "new revenue dollar that reached operating income; refused where revenue fell or moved "
              "under 5%. FCF is cash from operations less capex.")
     st.caption(_cap)
+
+    if drv.get("rung") == "D4":
+        with st.expander("The derivation, year by year", expanded=False):
+            st.caption("Revenue minus the filed all-in expense total, each subtraction "
+                       "printed at a precision where it checks by hand.")
+            _wfys = {r.fy for r in rows}
+            for _dfy in sorted(set(drv["cells"]) & _wfys):
+                st.markdown(f"**FY{_dfy}**: {drv['cells'][_dfy][1]}")
+            st.caption(mf_recon_sentence(drv["cells"][drv["fy"]][0],
+                                         drv.get("pretax_s", {}).get(drv["fy"]),
+                                         drv["fy"]))
 
     # ── summaries ──
     _opm_pts = [(r.fy, r.opm) for r in rows if r.opm is not None]
