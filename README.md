@@ -6,7 +6,7 @@ of stock valuation tools that measures the true cost of stock-based compensation
 spent on buybacks to offset employee grants, plus the market value of shares actually
 delivered — and prices what survives at a 15% required return.
 
-The app lives at **[investor-toolkit.streamlit.app](https://investor-toolkit.streamlit.app/Tragic_Algebra_Analyzer)**.
+The app lives at **[investor-toolkit.streamlit.app](https://investor-toolkit.streamlit.app/)**.
 It began as a single Tragic Algebra page and this repository keeps that name —
 `tragic-algebra-analyzer` — because links to the code are pinned in public posts; the app
 outgrew the name, and the address now says what it is.
@@ -47,6 +47,7 @@ read or failed to find.
 | **DCF Evaluator** | The standard two-stage DCF, with its stock-comp blind spot priced beside it |
 | **Expectations** | What today's price implies — the growth path and the year-15 exit it takes to deliver the required return |
 | **EPV** | What zero growth is worth — normalized earnings power capitalized, and the growth payment inside today's price |
+| **Magic Formula** | Greenblatt's two legs for one ticker — earnings yield and return on capital, honestly, without the ranking |
 | **Return Calculator** | Plain compound-return arithmetic, deliberately last in the menu |
 
 ---
@@ -393,6 +394,55 @@ prices the growth the market is charging for. One honest limit, stated on the pa
 Greenwald's reproduction-cost leg is not built, so the asset-value-vs-EPV comparison
 that separates a franchise from an ordinary business is out of scope — EPV here is the
 no-growth anchor only, and nothing on the page calls it more than that.
+
+## 🪄 Magic Formula
+
+Joel Greenblatt's two legs from *The Little Book That Beats the Market*: earnings yield —
+EBIT over enterprise value (market cap plus total debt minus excess cash) — and return on
+capital — the same EBIT over working capital plus net fixed assets. His definitions, his
+exclusions, one ticker at a time, from the filings.
+
+The refusal the page is built on: the Magic Formula is a market-wide **ranking**.
+Greenblatt's screen orders thousands of companies by the two legs combined, and a ranking
+needs a universe this kit does not fetch. So the page computes the legs and shows where
+the ticker sits against a small pinned table of the names this kit reads — the table
+carries its capture date, the yield column ages with it (return on capital moves only
+with new 10-Ks), and the page says so. It states position per leg — a higher yield than
+so many of the table's names, a higher return on capital than so many — and never
+combines the two into one score, because that combined score *is* the ranking operation,
+and running it on a few dozen names would be a fake universe wearing the method's name.
+
+Beside each leg, the kit's signature: the same leg on SBC-corrected EBIT (the GAAP charge
+added back, the true stock-comp cost Ω taken out). Capital and enterprise value are
+identical between the legs, so the yield gap is exactly (G − Ω)/EV and the capital gap
+exactly (G − Ω)/capital — pinned by a live self-test, not asserted. A formula screened
+on pre-SBC earnings is exactly where the hidden cost hides.
+
+The awkward parts are handled in the open. Where no operating-income subtotal is filed —
+older filer histories mostly — EBIT is derived as revenue minus the filed all-in expense
+total, with the subtraction printed as arithmetic on the page, a note naming any filed
+interest line the total swallows (as the filing signs it), and a reconciliation line
+bracketing the derived figure against filed pretax income. Excess cash follows a stated
+convention shared with the 100-Bagger Checker's ROIC waterfall: cash up to a working
+floor (default 2% of revenue, a box you can change) stays in working capital, the rest
+nets out of enterprise value — no published figure exists for that split, so the page
+names it as a convention rather than pretending it is Greenblatt's. Where the capital
+base is nearly empty — asset-light royalty and services shapes — the return-on-capital
+figure prints with a caption calling it the artifact of a nearly empty denominator,
+because at that extreme the ratio stops carrying information. Balance-sheet lines a
+filer stopped presenting are excluded at zero and named, never silently carried forward
+a decade.
+
+His exclusions are the gate's reasons. Banks, insurers, REITs and client-asset brokers
+stop and route to the Financials Checker — Greenblatt excludes financials himself, the
+rare case where the author's rule and this kit's gate agree exactly. Utilities stop and
+route to the Tragic Algebra Analyzer, with the detection named as SIC-range honest.
+One boundary is decided in the open: managed care, which the kit's other pages treat as
+insurance but Greenblatt's own screen publishes as health care — this page follows the
+method's boundary, computes the legs behind a banner stating the decision, and defaults
+excess cash to zero for the class since the pool likely backs policy liabilities. The
+year table shows each year as filed, no averaging — cyclicality is shown, not smoothed;
+normalization is EPV's job, and its page does it properly.
 
 ## 📈 Return Calculator
 
