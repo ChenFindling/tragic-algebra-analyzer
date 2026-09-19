@@ -6163,6 +6163,341 @@ def out_of_scope_sentence() -> str:
 
 
 
+# ══════════════════════════════════════════════════════════════════════
+#  DERIVED-OI REGISTRY (DOI, 19 Sep 2026) — page-local
+# ══════════════════════════════════════════════════════════════════════
+#
+# Four filers present no operating subtotal, so OperatingIncomeLoss is
+# never tagged and every window year refused the pool: ADP, HRB, PBI and
+# BBW (the EPV census, 18 Sep 2026). For each, a per-year derivation from
+# the filer's OWN tagged lines was established against pasted statement
+# faces and fact panels (DOI session, 19 Sep 2026), with an arithmetic
+# completeness bracket that must close against pretax income — the same
+# figure per year, from the same filing vintages — before the year is
+# admitted. A year whose bracket does not close REFUSES with the reason
+# printed. No ratio apportionment exists anywhere on this route: every
+# figure is a filed line or a signed sum of filed lines.
+#
+# PLACEMENT (Chen, 19 Sep 2026): page-local by the house placement rule —
+# consumption decides, not category. XBRL_REGISTRY is shared because the
+# shared reader consumes it on every carrier; this registry has exactly
+# one consumer by the Job-2 doctrine itself (only the compounding frame
+# needs verification-pinned derivation, which is why the Inflection
+# Checker and the Magic Formula page are untouched by construction).
+# Precedent: the DCF Evaluator's banner, the Magic Formula fallback.
+# Every future docket entry is therefore a single-file deploy.
+#
+# The queue-G instance route was the brief's assumed pattern and ZERO of
+# the four names needed it: every derivation input is a standard
+# companyconcept tag. The registry carries derivation terms and bracket
+# tuples only; nothing here keys into the shared fold and no docket name
+# enters the instance-fetch walk.
+
+DOI_EPS = 2.0   # dollars. API facts are exact integers; the bracket is a
+                # float-safety epsilon, not a materiality band — a vintage
+                # mismatch must fail loudly, never squeak under a threshold.
+
+
+@dataclass(frozen=True)
+class DoiTerm:
+    """One signed line of a derivation or bracket. `source` is either the
+    literal key "REV" (the page's own revenue cell, same vintage the table
+    shows) or a us-gaap tag read page-locally through _annual. The bounds
+    exist for PBI's two-element interest splice and are inclusive."""
+    label: str
+    source: str
+    sign: int
+    fy_lo: int = 0
+    fy_hi: int = 9999
+
+
+@dataclass(frozen=True)
+class DoiRoute:
+    """One filer's derivation. `terms` build OI; `bracket` is the per-year
+    completeness AND vintage pin — its signed sum must equal the page's
+    pretax cell (continuing operations) within DOI_EPS or the year
+    refuses. `refused` are years refused by decision, with reasons.
+    `notes` are the session's banked caveats, printed verbatim."""
+    formula: str
+    terms: tuple[DoiTerm, ...]
+    bracket: tuple[DoiTerm, ...]
+    refused: dict[int, str] = field(default_factory=dict)
+    notes: tuple[str, ...] = ()
+
+
+DOI_REGISTRY: dict[str, DoiRoute] = {
+    # ADP (evidence pasted 19 Sep 2026: FY2026 10-K face + notes, three
+    # companyconcept series, FY2008-FY2026 annual coverage on all three
+    # added tags). Interest expense is a named line INSIDE Total expenses;
+    # the outside line is NonoperatingIncomeExpense (Note 4 decomposes it:
+    # interest on corporate funds, AFS gains, non-service pension, ADP
+    # Ventures — everything the net-cash add already prices).
+    "ADP": DoiRoute(
+        formula="Revenues − CostsAndExpenses + InterestExpense",
+        terms=(DoiTerm("Total revenues", "REV", +1),
+               DoiTerm("Total expenses", "CostsAndExpenses", -1),
+               DoiTerm("Interest expense (add-back)", "InterestExpense", +1)),
+        bracket=(DoiTerm("Total revenues", "REV", +1),
+                 DoiTerm("Total expenses", "CostsAndExpenses", -1),
+                 DoiTerm("Other (income)/expense, net",
+                         "NonoperatingIncomeExpense", +1)),
+        notes=(
+            "ADP's interest expense partly funds the client-float strategy "
+            "(commercial paper and reverse repos) while the float income sits in "
+            "revenue, so the full add-back may flatter the operating margin by the "
+            "client-funding cost. Direction stated, never sized: no per-year split "
+            "is filed, and estimating one would be the apportionment this route "
+            "forbids. ADP's own adjusted-EBIT non-GAAP makes the identical move.",
+            "FY2018 nonoperating is a net-EXPENSE year (−172.1M, the pension era). "
+            "The bracket takes it signed; the sign flip is the filing, not a data "
+            "fault.",
+            "FY2017–FY2018 carry ASC 606 / pension-reclass restatements in "
+            "CostsAndExpenses and the nonoperating line. The bracket is the vintage "
+            "pin: a year whose tag vintages diverge fails to close and refuses.",
+        )),
+    # HRB (evidence 19 Sep 2026: FY2026 10-K face, three fact panels, two
+    # companyconcept series, FY2017-FY2026 annual coverage). Interest sits
+    # OUTSIDE the operating total: Rev − CostsAndExpenses IS the filer's
+    # operating income — no add-back. The outside tags serve the bracket
+    # only, never the derived figure.
+    "HRB": DoiRoute(
+        formula="Revenues − CostsAndExpenses (the filer's own operating "
+                "total; no add-back)",
+        terms=(DoiTerm("Total revenues", "REV", +1),
+               DoiTerm("Total operating expenses", "CostsAndExpenses", -1)),
+        bracket=(DoiTerm("Total revenues", "REV", +1),
+                 DoiTerm("Total operating expenses", "CostsAndExpenses", -1),
+                 DoiTerm("Other income (expense), net",
+                         "OtherNonoperatingIncomeExpense", +1),
+                 DoiTerm("Interest expense on borrowings",
+                         "InterestExpenseDebt", -1)),
+        notes=(
+            "HRB moved its fiscal year-end from April 30 to June 30 in 2021; a "
+            "two-month transition stub (May–June 2021) belongs to no fiscal year "
+            "and never enters.",
+            "The bracket targets income from continuing operations before taxes; "
+            "discontinued operations sit below it on HRB's face.",
+            "HRB tags its only interest line under InterestExpenseDebt — an "
+            "element outside this reader's interest group, which is why the line "
+            "read as unfiled since FY2015. It was filed all along, under a door "
+            "the reader never knocked on.",
+        )),
+    # PBI (evidence 19 Sep 2026: FY2025 10-K face, four fact panels, two
+    # companyconcept series, plus the FY2019 and FY2022 10-K faces pasted
+    # whole — all six splice years verified against their own printed
+    # statements, brackets closing exactly, values matching to the dollar).
+    "PBI": DoiRoute(
+        formula="Revenues − CostsAndExpenses + net non-financing interest "
+                "(InterestExpense FY2017–2022; −InterestIncomeExpenseNet "
+                "FY2023 on)",
+        terms=(DoiTerm("Total revenue", "REV", +1),
+               DoiTerm("Total costs and expenses", "CostsAndExpenses", -1),
+               DoiTerm("Interest expense, net (add-back)",
+                       "InterestExpense", +1, fy_hi=2022),
+               DoiTerm("Interest expense, net (add-back)",
+                       "InterestIncomeExpenseNet", -1, fy_lo=2023)),
+        bracket=(DoiTerm("Total revenue", "REV", +1),
+                 DoiTerm("Total costs and expenses", "CostsAndExpenses", -1)),
+        refused={2016: "FY2016 is not reconcilable: that era tagged two interest "
+                       "lines and InterestIncomeExpenseNet aggregated both (a 55M "
+                       "wedge against InterestExpense), and no verified face "
+                       "resolves the year. Refused rather than guessed."},
+        notes=(
+            "Interest is a two-element splice: InterestExpense carries "
+            "FY2017–FY2022 (its annual facts stop at CY2023) and the negated "
+            "InterestIncomeExpenseNet carries FY2023 on (its annual facts went "
+            "dark FY2017–FY2022). Every spliced year was verified against its own "
+            "printed statement face — the FY2019 and FY2022 10-Ks, pasted whole.",
+            "Financing interest expense stays INSIDE costs in both eras by the "
+            "filer's own presentation: it is a cost of the financing revenue "
+            "above it. Only the net non-financing interest line adds back.",
+            "Other components of net pension cost and Other expense stay inside "
+            "costs (the narrow scope): leaving them in understates OI in years "
+            "they are net costs — direction stated, never sized. A fuller "
+            "add-back is a documented v2, priced at per-year verification of "
+            "each further line.",
+            "FY2023 on is post-GEC-recast scope while FY2017–FY2022 include GEC. "
+            "The reader's newest-wins merge mixes scopes across years for any "
+            "discontinued-operations filer; this pool does so knowingly.",
+        )),
+    # BBW (evidence 19 Sep 2026: FY2026 10-K face, three fact panels, three
+    # companyconcept series, plus the FY2018 10-K face for the Dec-2017
+    # year — the bracket closed on that unseen face at exactly 13,813).
+    # Shape (ii'): both derivation lines are filed subtotals and the
+    # bracket's completeness is itself filed arithmetic, per year.
+    "BBW": DoiRoute(
+        formula="GrossProfit − SellingGeneralAndAdministrativeExpense",
+        terms=(DoiTerm("Consolidated gross profit", "GrossProfit", +1),
+               DoiTerm("Selling, general and administrative expense",
+                       "SellingGeneralAndAdministrativeExpense", -1)),
+        bracket=(DoiTerm("Consolidated gross profit", "GrossProfit", +1),
+                 DoiTerm("Selling, general and administrative expense",
+                         "SellingGeneralAndAdministrativeExpense", -1),
+                 DoiTerm("Interest income (expense), net",
+                         "InterestIncomeExpenseNonoperatingNet", +1)),
+        notes=(
+            "BBW moved to the retail calendar in 2018: fiscal 2017 ended "
+            "December 30, 2017, and a five-week transition stub (to February 3, "
+            "2018) belongs to no fiscal year and never enters. The year ending "
+            "February 2024 is a 53-week year; the derivation does not care, but "
+            "a 53-week year should never read as organic growth against 52-week "
+            "neighbours.",
+            "The filed Consolidated gross profit already absorbs store asset "
+            "impairment (presented inside Total cost of merchandise sold in the "
+            "Dec-2017-era face). The derivation takes the filed figure, as ever.",
+            "The interest line is income in recent years and a small net expense "
+            "in several early ones; the bracket takes it signed. The element "
+            "(InterestIncomeExpenseNonoperatingNet) sits outside this reader's "
+            "interest group — the HRB pattern, filed behind an unread door.",
+        )),
+}
+
+
+def doi_terms_for(route: DoiRoute, fy: int) -> tuple[DoiTerm, ...]:
+    """The derivation terms applicable to one fiscal year — the splice
+    resolved. Bounds are inclusive on both ends."""
+    return tuple(t for t in route.terms if t.fy_lo <= fy <= t.fy_hi)
+
+
+def _doi_val(term: DoiTerm, fy: int, rev_raw: float | None,
+             extra: dict) -> float | None:
+    if term.source == "REV":
+        return rev_raw
+    s = extra.get(term.source, {})
+    return s[fy][2] if fy in s else None
+
+
+def doi_bracket_sum(route: DoiRoute, fy: int, rev_raw: float | None,
+                    extra: dict) -> float | None:
+    """Signed sum of the bracket lines in raw dollars, or None if any
+    line is missing for the year."""
+    total = 0.0
+    for t in route.bracket:
+        v = _doi_val(t, fy, rev_raw, extra)
+        if v is None:
+            return None
+        total += t.sign * v
+    return total
+
+
+def _doi_arith(pairs: list[tuple[int, float]]) -> str:
+    """Render a signed sum the way a hand checks it: 1,892.629 − 1,700.105
+    + 101.460 — each printed magnitude is the term's CONTRIBUTION in $M,
+    so a negated element (PBI's net-interest splice) prints as the
+    positive add-back the face shows."""
+    out = ""
+    for i, (sign, v) in enumerate(pairs):
+        c = sign * v / 1e6
+        if i == 0:
+            out = f"{c:,.3f}"
+        else:
+            out += (" − " if c < 0 else " + ") + f"{abs(c):,.3f}"
+    return out
+
+
+def doi_derive(route: DoiRoute, fy: int, rev_raw: float | None,
+               pretax_raw: float | None,
+               extra: dict) -> tuple[float | None, str, str]:
+    """(OI raw dollars | None, refusal reason, printed line). The printed
+    line is the hand-checkable record either way: the derivation and its
+    bracket on success, the named reason on refusal. Figures in $M."""
+    if fy in route.refused:
+        return None, route.refused[fy], f"FY{fy} refused — {route.refused[fy]}"
+    terms = doi_terms_for(route, fy)
+    pairs, missing = [], []
+    for t in terms:
+        v = _doi_val(t, fy, rev_raw, extra)
+        (missing if v is None else pairs).append(
+            t.source if v is None else (t.sign, v))
+    if missing:
+        why = f"{', '.join(missing)} did not answer for FY{fy}"
+        return None, why, f"FY{fy} refused — {why}"
+    if pretax_raw is None:
+        why = f"pretax income did not answer for FY{fy}, so the bracket cannot close"
+        return None, why, f"FY{fy} refused — {why}"
+    bpairs = []
+    for t in route.bracket:
+        v = _doi_val(t, fy, rev_raw, extra)
+        if v is None:
+            why = f"bracket line {t.source} did not answer for FY{fy}"
+            return None, why, f"FY{fy} refused — {why}"
+        bpairs.append((t.sign, v))
+    bsum = sum(s * v for s, v in bpairs)
+    if abs(bsum - pretax_raw) > DOI_EPS:
+        why = (f"bracket did not close for FY{fy}: "
+               f"{_doi_arith(bpairs)} = {bsum / 1e6:,.3f} against pretax "
+               f"{pretax_raw / 1e6:,.3f} — a completeness or vintage mismatch, "
+               "refused rather than papered over")
+        return None, why, f"FY{fy} refused — {why}"
+    oi = sum(s * v for s, v in pairs)
+    line = (f"FY{fy}: OI = {_doi_arith(pairs)} = {oi / 1e6:,.3f} · bracket "
+            f"{_doi_arith(bpairs)} = {bsum / 1e6:,.3f} = pretax ✓")
+    return oi, "", line
+
+
+def doi_banner(tk: str, route: DoiRoute) -> str:
+    return (f"**Operating income derived per registry.** {tk} presents no "
+            "operating subtotal, so OperatingIncomeLoss is never tagged and "
+            f"every year would refuse. OI = {route.formula} — every line a "
+            "filed figure, verified against the filer's own statements "
+            "(19 Sep 2026). Each year's derivation prints hand-checkable in "
+            "Notes and detail beside a completeness bracket that must equal "
+            "pretax income within \\$2; a year whose bracket does not close "
+            "refuses rather than reads. Figures in the printed lines are \\$M.")
+
+
+def doi_floor_suffix(tk: str, rows: list[EpvYear]) -> str:
+    """Appended to the normalization-floor refusal. Registered names point
+    at their per-year reasons; an unregistered filer with the docket's
+    shape (pretax reads, operating income never does) learns the route
+    exists and that it refuses rather than approximates."""
+    if tk in DOI_REGISTRY:
+        return (" This ticker is registered on the derived-OI route; the "
+                "per-year derivations and refusals under Notes and detail "
+                "say which brackets could not close.")
+    if rows and all(r.oi is None for r in rows)             and any(r.pretax is not None for r in rows):
+        return (" This filer appears to present no operating subtotal: "
+                "operating income never answered while pretax income did. A "
+                "registry-verified derivation admits such filers name by name "
+                "— ADP, HRB, PBI and BBW are registered — and an unregistered "
+                "name refuses rather than approximates.")
+    return ""
+
+
+def doi_apply(tk: str, rows: list[EpvYear],
+              pre: dict) -> tuple[DoiRoute | None, list[str]]:
+    """Fill derived OI into the page's rows, for registered tickers only —
+    one dict lookup and out for everyone else, the queue-G shape. Mutates
+    r.oi in place (the pool, table and both legs consume it through the
+    normal machinery); returns the route and the per-year printed lines.
+    Never touches a year whose OI the filer tagged, and never writes into
+    the reader's series — this is the page's own last step."""
+    route = DOI_REGISTRY.get(tk)
+    if route is None:
+        return None, []
+    try:
+        cik = _ticker_map().get(tk)
+        wanted = {t.source for t in route.terms + route.bracket
+                  if t.source != "REV"}
+        facts = _facts(cik)
+        extra = {tag: _annual(facts, [tag], []) for tag in sorted(wanted)}
+    except Exception as e:
+        return route, [f"The derived-OI route could not read the filings "
+                       f"({type(e).__name__}); every year refuses."]
+    lines = []
+    for r in sorted(rows, key=lambda r: r.fy):
+        if r.oi is not None:
+            continue
+        rev_raw = r.rev * 1e6 if r.rev is not None else None
+        pretax_raw = r.pretax * 1e6 if r.pretax is not None else None
+        oi, why, line = doi_derive(route, r.fy, rev_raw, pretax_raw, extra)
+        if oi is not None:
+            r.oi = oi / 1e6
+        lines.append(line)
+    return route, lines
+
+
+
 def _epv_fixture() -> list[EpvYear]:
     """A live-shaped fixture: a retailer's cycle — near-zero trough years,
     a strong recent run, one excluded listing-shaped year, one year whose
@@ -6336,6 +6671,165 @@ def epv_self_test() -> list[tuple[str, bool, str]]:
                 and "Expectations" in FROZEN_MENU,
                 ""))
 
+    # ── DOI: the derived-OI registry (19 Sep 2026) ───────────────────
+    # Fixtures are the session's banked figures, raw dollars, from the
+    # filers' own statements and companyconcept facts. Deterministic and
+    # offline: the checks exercise the derivation core, never the network.
+    _adp_x = {"CostsAndExpenses": {2026: ("", "", 16_627_700_000.0)},
+              "InterestExpense": {2026: ("", "", 459_300_000.0)},
+              "NonoperatingIncomeExpense": {2026: ("", "", 410_600_000.0)}}
+    _hrb_x = {"CostsAndExpenses": {2026: ("", "", 3_037_706_000.0)},
+              "OtherNonoperatingIncomeExpense": {2026: ("", "", 26_813_000.0)},
+              "InterestExpenseDebt": {2026: ("", "", 80_611_000.0)}}
+    _pbi_x = {"CostsAndExpenses": {2025: ("", "", 1_700_105_000.0),
+                                   2023: ("", "", 2_122_845_000.0),
+                                   2022: ("", "", 3_498_162_000.0)},
+              "InterestExpense": {2022: ("", "", 89_980_000.0)},
+              "InterestIncomeExpenseNet": {2025: ("", "", -101_460_000.0),
+                                           2023: ("", "", -98_769_000.0)}}
+    _bbw_x = {"GrossProfit": {2026: ("", "", 295_629_000.0),
+                              2017: ("", "", 168_973_000.0)},
+              "SellingGeneralAndAdministrativeExpense":
+                  {2026: ("", "", 229_203_000.0),
+                   2017: ("", "", 155_149_000.0)},
+              "InterestIncomeExpenseNonoperatingNet":
+                  {2026: ("", "", 801_000.0), 2017: ("", "", -11_000.0)}}
+
+    out.append(("DOI: the registry holds exactly the four docket names as DoiRoute "
+                "entries — terms, bracket and notes non-empty, the PBI splice "
+                "bounded in the term structure, FY2016 refused with a reason",
+                set(DOI_REGISTRY) == {"ADP", "HRB", "PBI", "BBW"}
+                and all(isinstance(r, DoiRoute) and r.terms and r.bracket
+                        and r.notes for r in DOI_REGISTRY.values())
+                and any(t.fy_hi == 2022 for t in DOI_REGISTRY["PBI"].terms)
+                and any(t.fy_lo == 2023 for t in DOI_REGISTRY["PBI"].terms)
+                and bool(DOI_REGISTRY["PBI"].refused.get(2016)),
+                f"{sorted(DOI_REGISTRY)}"))
+
+    _oi, _why, _ln = doi_derive(DOI_REGISTRY["ADP"], 2026, 21_947_400_000.0,
+                                5_730_300_000.0, _adp_x)
+    out.append(("DOI: ADP FY2026 known-answer — Rev − CAE + InterestExpense "
+                "derives 5,779.0M exactly",
+                _oi == 5_779_000_000.0 and _why == "", f"{_oi} {_why or _ln}"))
+    _oi, _why, _ln = doi_derive(DOI_REGISTRY["HRB"], 2026, 3_945_392_000.0,
+                                853_888_000.0, _hrb_x)
+    out.append(("DOI: HRB FY2026 known-answer — Rev − CAE derives 907.686M, the "
+                "banked cross-frame anchor, no add-back",
+                _oi == 907_686_000.0 and _why == "", f"{_oi} {_why or _ln}"))
+    _oi, _why, _ln = doi_derive(DOI_REGISTRY["PBI"], 2025, 1_892_629_000.0,
+                                192_524_000.0, _pbi_x)
+    out.append(("DOI: PBI FY2025 known-answer — the negated net element adds back "
+                "101.460M for 293.984M",
+                _oi == 293_984_000.0 and _why == "", f"{_oi} {_why or _ln}"))
+    _oi, _why, _ln = doi_derive(DOI_REGISTRY["BBW"], 2026, None,
+                                67_227_000.0, _bbw_x)
+    out.append(("DOI: BBW FY2026 known-answer — GP − SG&A derives 66.426M with no "
+                "revenue term at all (shape ii-prime)",
+                _oi == 66_426_000.0 and _why == "", f"{_oi} {_why or _ln}"))
+
+    out.append(("DOI: ADP bracket known-answer — Rev − CAE + Nonop equals pretax "
+                "exactly (the vintage pin)",
+                doi_bracket_sum(DOI_REGISTRY["ADP"], 2026, 21_947_400_000.0,
+                                _adp_x) == 5_730_300_000.0, ""))
+    out.append(("DOI: HRB bracket known-answer — the two outside tags close the "
+                "wedge against CONTINUING pretax exactly",
+                doi_bracket_sum(DOI_REGISTRY["HRB"], 2026, 3_945_392_000.0,
+                                _hrb_x) == 853_888_000.0, ""))
+    out.append(("DOI: PBI bracket known-answer — the degenerate pin, Rev − CAE = "
+                "pretax exactly",
+                doi_bracket_sum(DOI_REGISTRY["PBI"], 2025, 1_892_629_000.0,
+                                _pbi_x) == 192_524_000.0, ""))
+    out.append(("DOI: BBW bracket known-answer — GP − SG&A + net interest equals "
+                "pretax exactly, the self-verifying filed arithmetic",
+                doi_bracket_sum(DOI_REGISTRY["BBW"], 2026, None,
+                                _bbw_x) == 67_227_000.0, ""))
+
+    _mut = {k: dict(v) for k, v in _hrb_x.items()}
+    _mut["CostsAndExpenses"] = {2026: ("", "", 3_037_706_000.0 + 5_000_000.0)}
+    _mutated = (_mut["CostsAndExpenses"][2026][2]
+                != _hrb_x["CostsAndExpenses"][2026][2])
+    _oi, _why, _ln = doi_derive(DOI_REGISTRY["HRB"], 2026, 3_945_392_000.0,
+                                853_888_000.0, _mut)
+    out.append(("DOI: negative control — a mutated CostsAndExpenses (asserted "
+                "applied) fails the bracket and the year refuses with the reason "
+                "printed",
+                _mutated and _oi is None and "bracket did not close" in _why
+                and "refused" in _ln, _ln[:90]))
+
+    _oi, _why, _ = doi_derive(DOI_REGISTRY["HRB"], 2026, 3_945_392_000.0,
+                              853_888_000.0 + 2.0, _hrb_x)
+    out.append(("DOI: a \\$2 wedge passes — the float-safety epsilon, not a "
+                "materiality band",
+                _oi == 907_686_000.0 and _why == "", _why))
+    _oi, _why, _ = doi_derive(DOI_REGISTRY["HRB"], 2026, 3_945_392_000.0,
+                              853_888_000.0 + 3.0, _hrb_x)
+    out.append(("DOI: a \\$3 wedge refuses — beyond the epsilon the bracket "
+                "fails loudly",
+                _oi is None and "bracket did not close" in _why, _why[:90]))
+
+    _pre22 = {t.source for t in doi_terms_for(DOI_REGISTRY["PBI"], 2022)}
+    _oi22, _w22, _ = doi_derive(DOI_REGISTRY["PBI"], 2022, 3_538_042_000.0,
+                                39_880_000.0, _pbi_x)
+    out.append(("DOI: PBI splice, pre side — FY2022 resolves to InterestExpense "
+                "(never the net element) and derives 129.860M",
+                "InterestExpense" in _pre22
+                and "InterestIncomeExpenseNet" not in _pre22
+                and _oi22 == 129_860_000.0 and _w22 == "", f"{sorted(_pre22)}"))
+    _post23 = {t.source for t in doi_terms_for(DOI_REGISTRY["PBI"], 2023)}
+    _oi23, _w23, _ = doi_derive(DOI_REGISTRY["PBI"], 2023, 2_078_925_000.0,
+                                -43_920_000.0, _pbi_x)
+    out.append(("DOI: PBI splice, post side — FY2023 resolves to the negated net "
+                "element (never InterestExpense) and derives 54.849M through a "
+                "loss-year pretax",
+                "InterestIncomeExpenseNet" in _post23
+                and "InterestExpense" not in _post23
+                and _oi23 == 54_849_000.0 and _w23 == "", f"{sorted(_post23)}"))
+
+    _oi, _why, _ln = doi_derive(DOI_REGISTRY["PBI"], 2016, 3_000_000_000.0,
+                                100_000_000.0, _pbi_x)
+    out.append(("DOI: PBI FY2016 refuses by decision even with inputs present — "
+                "the registry reason prints",
+                _oi is None and _why == DOI_REGISTRY["PBI"].refused[2016]
+                and "not reconcilable" in _ln, _ln[:80]))
+
+    _oi, _why, _ln = doi_derive(DOI_REGISTRY["BBW"], 2017, None,
+                                13_813_000.0, _bbw_x)
+    out.append(("DOI: BBW Dec-2017 admitted — the bracket that closed on an "
+                "unseen face at exactly 13,813 derives 13.824M",
+                _oi == 13_824_000.0 and _why == "", f"{_oi} {_why or _ln}"))
+
+    _stub_facts = {"facts": {"us-gaap": {"GrossProfit": {"units": {"USD": [
+        {"start": "2017-12-31", "end": "2018-02-03", "val": 13902000,
+         "form": "10-K", "filed": "2019-04-18"},
+        {"start": "2018-02-04", "end": "2019-02-02", "val": 138754000,
+         "form": "10-K", "filed": "2019-04-18"}]}}}}}
+    _sg = _annual(_stub_facts, ["GrossProfit"], [])
+    out.append(("DOI: fiscal-transition stubs never enter — the route reads "
+                "through _annual, whose duration filter drops BBW's five-week "
+                "period and keeps the year",
+                set(_sg) == {2019} and _sg[2019][2] == 138754000.0,
+                f"{sorted(_sg)}"))
+
+    _bn = doi_banner("PBI", DOI_REGISTRY["PBI"])
+    out.append(("DOI: the banner names the route, the formula and the refusal "
+                "behaviour",
+                "derived per registry" in _bn and "InterestExpense FY2017" in _bn
+                and "does not close" in _bn, _bn[:80]))
+
+    _plain = [EpvYear(2024, 500.0, 60.0, 10.0, 58.0, 1.0, 1.0, "")]
+    _rt, _lns = doi_apply("MSFT", _plain, {})
+    _docket_shape = [EpvYear(2024, 500.0, None, 10.0, 58.0, 1.0, 1.0, "")]
+    out.append(("DOI: a non-docket name is untouched — one dict lookup and out, "
+                "no lines, OI as tagged, and the floor suffix stays empty unless "
+                "the filer has the docket's shape",
+                _rt is None and _lns == [] and _plain[0].oi == 60.0
+                and doi_floor_suffix("MSFT", _plain) == ""
+                and "no operating subtotal" in doi_floor_suffix("MSFT",
+                                                                _docket_shape)
+                and "registered" in doi_floor_suffix("ADP", _docket_shape),
+                ""))
+
+
     return out
 
 
@@ -6463,6 +6957,15 @@ if years and ticker and st.session_state.get("epv_tk") == ticker:
                       st.session_state["epv_tk"])
     alerts: list[tuple[str, str]] = [("info", n) for n in notes]
     rows = build_epv_years(years, pre.get("epv", {}))
+    # ── Derived-OI route (DOI, 19 Sep 2026): registered tickers only —
+    # one dict lookup and out for everyone else. Fills r.oi in place, so
+    # the pool, the table and both legs consume derived years through the
+    # normal machinery; the per-year printed lines land in the notes.
+    _doi_route, _doi_lines = doi_apply(tk, rows, pre)
+    if _doi_route is not None:
+        alerts += [("info", _l) for _l in _doi_lines]
+        alerts += [("info", "Derived-OI registry note: " + _n)
+                   for _n in _doi_route.notes]
     mpool = margin_pool(rows)
 
     _mfmt = money_fmt([v for r in rows for v in (r.rev, r.oi, r.G, r.omega, r.adj_oi)
@@ -6521,10 +7024,15 @@ if years and ticker and st.session_state.get("epv_tk") == ticker:
             _page_footer()
             st.stop()
 
+    # ══ derived-OI banner (DOI, 19 Sep 2026) ═════════════════════════
+    if _doi_route is not None:
+        st.info(doi_banner(tk, _doi_route))
+
     # ══ the normalization floor ══════════════════════════════════════
     _floor = normalization_refusal(len(mpool))
     if _floor:
-        st.error("**The window cannot be normalized.** " + _floor)
+        st.error("**The window cannot be normalized.** " + _floor
+                 + doi_floor_suffix(tk, rows))
         _notes_expander(expanded=True)
         _page_footer()
         st.stop()
