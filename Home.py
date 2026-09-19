@@ -1,5 +1,5 @@
 """
-Home.py — entrypoint for the Investor Toolkit (retitled in place, 12 Sep 2026;
+Home.py: entrypoint for the Investor Toolkit (retitled in place, 12 Sep 2026;
 the filename stays Home.py because the Cloud main-file setting pins it).
 
 Streamlit turns every file in pages/ into a nav item automatically, ordered by
@@ -28,7 +28,7 @@ from pathlib import Path
 import streamlit as st
 
 # ══════════════════════════════════════════════════════════════════════
-#  THE MENU — single source for the links below AND the self-test, so the
+#  THE MENU: single source for the links below AND the self-test, so the
 #  page cannot render a map its own checks do not pin.
 # ══════════════════════════════════════════════════════════════════════
 
@@ -49,29 +49,29 @@ MENU: list[tuple[str, str, str]] = [
 PAGE_BLURBS: dict[str, str] = {
     "Tragic Algebra Analyzer": (
         "The main page. Burry's Tragic Algebra: owners' earnings after the true cost of "
-        "stock compensation — the cash spent on buybacks that exist only to offset employee "
-        "grants, plus the market value of shares actually delivered — then the IV ladder "
+        "stock compensation (the cash spent on buybacks that exist only to offset employee "
+        "grants, plus the market value of shares actually delivered), then the IV ladder "
         "from IV8 to IV20 at a 15% required return, a stress test, and a watchlist mode "
         "ranking up to 25 tickers by ΔE, the share of reported profit that survives."
     ),
     "100-Bagger Checker": (
         "Chris Mayer's 100-bagger criteria on the same owners' earnings: the return a "
         "hundredfold in twenty years needs, against what the business has delivered and "
-        "what its return on capital — Burry's fully-adjusted formula — can fund."
+        "what its return on capital, Burry's fully-adjusted formula, can fund."
     ),
     "Inflection Checker": (
-        "Companies crossing from loss to profit. The evidence is the filed trend — "
-        "operating margin, gross margin, cash generation — and the pricing is Burry's "
+        "Companies crossing from loss to profit. The evidence is the filed trend "
+        "(operating margin, gross margin, cash generation) and the pricing is Burry's "
         "Stage 0 on an operating basis. It refuses often, and a shape that is not an "
         "inflection is sent by name to the page that fits it."
     ),
     "Financials Checker": (
         "Banks, insurers and REITs, which every other page refuses. Priced on a filed "
-        "base per share — tangible common equity, or FFO for REITs — the return on it, "
+        "base per share (tangible common equity, or FFO for REITs), the return on it, "
         "and what is kept. Burry publishes no method for financials beyond the stock-comp "
         "adjustment, so this page is the toolkit's own design, and it says so on the page. "
-        "Brokers that hold client assets without taking deposits — Interactive Brokers' "
-        "shape — are priced here too, on the same tangible-book frame, with the client "
+        "Brokers that hold client assets without taking deposits, Interactive Brokers' "
+        "shape, are priced here too, on the same tangible-book frame, with the client "
         "float shown beside the firm's own capital."
     ),
     "Non-US Checker": (
@@ -81,22 +81,22 @@ PAGE_BLURBS: dict[str, str] = {
     ),
     "DCF Evaluator": (
         "The standard two-stage free-cash-flow DCF (Aswath Damodaran's), with every "
-        "assumption in a box you can change — and beside it the same DCF on SBC-corrected "
+        "assumption in a box you can change, and beside it the same DCF on SBC-corrected "
         "cash flow, so the cost that the usual \"add stock comp back\" convention hides "
         "is visible in dollars per share."
     ),
     "Expectations": (
         "The Tragic Algebra Analyzer's question, run backwards. This page never says what "
-        "a company is worth: it solves what today's price implies — the owners'-earnings "
+        "a company is worth: it solves what today's price implies, the owners'-earnings "
         "growth that makes IV15 equal the price at your tier and required return, and the "
-        "year-15 exit the price implies at the seeded growth — then puts that implied "
+        "year-15 exit the price implies at the seeded growth, then puts that implied "
         "path against the company's own best filed stretches and a pinned base-rate "
         "table of how many names this kit reads ever sustained such rates. Rappaport and "
         "Mauboussin's *Expectations Investing*, on that page's engine inverted."
     ),
     "EPV": (
         "Bruce Greenwald's Earnings Power Value: what the business is worth assuming zero "
-        "growth — the average operating margin over the readable years, on current revenue, "
+        "growth: the average operating margin over the readable years, on current revenue, "
         "taxed at the filed rate and capitalized at your required return, less net debt. "
         "Beside it, the same value on SBC-corrected earnings, so the cost stock comp hides "
         "is priced in the no-growth frame too. The gap between EPV and the price is the "
@@ -105,15 +105,15 @@ PAGE_BLURBS: dict[str, str] = {
     ),
     "Magic Formula": (
         "Joel Greenblatt's two legs from *The Little Book That Beats the Market*: "
-        "earnings yield — operating income against enterprise value — and return on "
-        "capital — the same operating income against working capital plus net fixed "
-        "assets — computed for one ticker at a time with his definitions and his "
+        "earnings yield, which is operating income against enterprise value, and return on "
+        "capital, the same operating income against working capital plus net fixed "
+        "assets, computed for one ticker at a time with his definitions and his "
         "exclusions. The book's edge is a market-wide ranking, and a ranking needs a "
         "universe this kit does not fetch, so the page refuses to rank and instead "
         "shows the ticker beside a small dated table of the names this kit reads. "
         "Where no operating-income subtotal is filed, EBIT is derived from two filed "
         "lines with the subtraction printed on the page. Beside each leg, the same "
-        "figure on SBC-corrected operating income — because a formula screened on "
+        "figure on SBC-corrected operating income, because a formula screened on "
         "pre-SBC earnings is exactly where the hidden cost hides."
     ),
     "Return Calculator": (
@@ -124,7 +124,7 @@ PAGE_BLURBS: dict[str, str] = {
 }
 
 # ══════════════════════════════════════════════════════════════════════
-#  SELF-TEST — one check per menu entry: the frozen path exists on disk.
+#  SELF-TEST: one check per menu entry: the frozen path exists on disk.
 #  The numeric prefix in each path IS the frozen map, so these checks pin
 #  the renumbering as well as the menu's existence claims.
 # ══════════════════════════════════════════════════════════════════════
@@ -137,7 +137,7 @@ def test_summary(results: list[tuple[str, bool, str]]) -> tuple[str, str]:
         return "success", f"**{len(results)} checks, 0 failed.**"
     return "error", (f"**{len(results)} checks, {len(bad)} FAILED:** "
                      + "; ".join(bad[:4])
-                     + (f" — and {len(bad) - 4} more" if len(bad) > 4 else ""))
+                     + (f", and {len(bad) - 4} more" if len(bad) > 4 else ""))
 
 
 def self_test() -> list[tuple[str, bool, str]]:
@@ -147,7 +147,7 @@ def self_test() -> list[tuple[str, bool, str]]:
         p = root / path
         out.append((f"Menu: {label} exists at {path}",
                     p.is_file(),
-                    "present" if p.is_file() else "MISSING — menu and repo disagree"))
+                    "present" if p.is_file() else "MISSING: menu and repo disagree"))
     return out
 
 # ══════════════════════════════════════════════════════════════════════
@@ -155,32 +155,32 @@ def self_test() -> list[tuple[str, bool, str]]:
 # ══════════════════════════════════════════════════════════════════════
 
 st.set_page_config(
-    page_title="Investor Toolkit — Burry owners' earnings, IV15 and DCF from SEC filings",
+    page_title="Investor Toolkit: Burry owners' earnings, IV15 and DCF from SEC filings",
     page_icon="🧰",
     layout="centered",
     # Expanded on Home: the nav IS the toolkit, and the menu is the fastest
-    # answer to "what does this do". No page count here on purpose — counts
+    # answer to "what does this do". No page count here on purpose: counts
     # go stale as pages are added. Pages keep their own collapsed default.
     initial_sidebar_state="expanded",
 )
 
 st.title("🧰 Investor Toolkit")
-st.caption("One page per question, computed from audited SEC filings — "
+st.caption("One page per question, computed from audited SEC filings, "
            "the Tragic Algebra page first")
 
 st.markdown(
     """
 Reported profit is not what reaches you. Shares handed to employees cost real money the
-income statement never shows — either through dilution, or through buybacks that exist only
+income statement never shows, either through dilution or through buybacks that exist only
 to offset employee grants.
 
 Burry's study of the NASDAQ-100 over the ten years to 2025 put that cost at **$1.73 trillion**,
 leaving shareholders about **83 cents** of every reported GAAP dollar. That figure is his,
 for that period. This toolkit computes the same thing for any company, from whatever the
-filings say today — and then answers the questions that follow from it, one page per
+filings say today, and then answers the questions that follow from it, one page per
 question. The methods are published ones, each named on its page: Michael Burry's Tragic
-Algebra and IV15 where they apply, and other named authors — or the toolkit's own stated
-design — where they do not.
+Algebra and IV15 where they apply, and other named authors, or the toolkit's own stated
+design, where they do not.
 """
 )
 
@@ -194,7 +194,7 @@ st.divider()
 
 st.markdown(
     """
-**Three rules hold on every page.** A page never prints a number it cannot stand behind —
+**Three rules hold on every page.** A page never prints a number it cannot stand behind;
 it refuses out loud instead, and the refusal names its reason. What was read from a filing
 and what is your judgement are labelled apart, because the judgement column is where the
 work is. And every page carries an "assumptions used" block you can paste if a figure looks
@@ -220,7 +220,7 @@ with st.expander("Verify this page"):
         _sev, _line = test_summary(_results)
         getattr(st, _sev)(_line)
         for name, ok, got in _results:
-            st.write(("✅ " if ok else "❌ ") + f"{name} — {got}")
+            st.write(("✅ " if ok else "❌ ") + f"{name}: {got}")
 
 st.markdown(
     "Free, and staying free. If it's been useful: "
@@ -228,7 +228,7 @@ st.markdown(
 )
 
 st.caption(
-    "Research aid, not financial advice. Outputs depend on estimates you supply — change the "
+    "Research aid, not financial advice. Outputs depend on estimates you supply: change the "
     "growth rate and the answer changes a great deal. Methods follow the published writing of "
     "the authors named on each page; this project is independent and is not affiliated with "
     "or endorsed by any of them, including Michael Burry or Scion Asset Management."
