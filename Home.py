@@ -15,6 +15,7 @@ the numeric prefix. THE MENU MAP IS FROZEN (toolkit pass, 12 Sep 2026;
     8   (reserved: the watchlist page)
     9   Expectations                (added 13 Sep 2026)
     10  EPV                         (added 17 Sep 2026)
+    11  Magic Formula               (added 18 Sep 2026)
     99  Return Calculator           (structurally last for the life of the kit)
 
 3 is retired and is never reused; 8 is reserved. Never reuse a number. The
@@ -41,6 +42,7 @@ MENU: list[tuple[str, str, str]] = [
     ("pages/7_DCF_Evaluator.py",           "🧮", "DCF Evaluator"),
     ("pages/9_Expectations.py",            "🔭", "Expectations"),
     ("pages/10_EPV.py",                    "⚓", "EPV"),
+    ("pages/11_Magic_Formula.py",          "🪄", "Magic Formula"),
     ("pages/99_Return_Calculator.py",      "📈", "Return Calculator"),
 ]
 
@@ -100,6 +102,19 @@ PAGE_BLURBS: dict[str, str] = {
         "is priced in the no-growth frame too. The gap between EPV and the price is the "
         "dollar amount the market is paying for growth; the Expectations page states the "
         "path that payment implies."
+    ),
+    "Magic Formula": (
+        "Joel Greenblatt's two legs from *The Little Book That Beats the Market*: "
+        "earnings yield — operating income against enterprise value — and return on "
+        "capital — the same operating income against working capital plus net fixed "
+        "assets — computed for one ticker at a time with his definitions and his "
+        "exclusions. The book's edge is a market-wide ranking, and a ranking needs a "
+        "universe this kit does not fetch, so the page refuses to rank and instead "
+        "shows the ticker beside a small dated table of the names this kit reads. "
+        "Where no operating-income subtotal is filed, EBIT is derived from two filed "
+        "lines with the subtraction printed on the page. Beside each leg, the same "
+        "figure on SBC-corrected operating income — because a formula screened on "
+        "pre-SBC earnings is exactly where the hidden cost hides."
     ),
     "Return Calculator": (
         "A plain compound-return calculator: ending amount, required return, years to "
