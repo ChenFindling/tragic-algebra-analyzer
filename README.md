@@ -394,6 +394,25 @@ per-share figure floors at \$0.00 with the arithmetic shown unfloored beside it;
 with no live price the growth-payment split is refused rather than computed against a
 default.
 
+Four filers that present no operating subtotal, ADP, HRB, PBI and BBW, are admitted by
+a derived-OI registry local to this page (19 Sep 2026). These filers never tag
+OperatingIncomeLoss, so every window year used to refuse; the registry derives each
+year's operating income from the filer's own tagged lines (ADP: revenues minus total
+expenses plus the interest expense presented inside them; HRB: revenues minus costs,
+which is already the filer's own operating total; PBI: the same with a two-element
+interest splice, every spliced year verified against its own printed statement face;
+BBW: gross profit minus SG&A) and admits a year only when a completeness bracket, the
+same filed lines summed against pretax income, closes within a \$2 float epsilon. The
+bracket is also the vintage pin: a year whose tag vintages diverge fails it and refuses
+with the reason printed, and PBI's FY2016 is refused permanently because its era's
+interest tagging is not reconcilable. Every term is a filed figure; no ratio
+apportionment exists anywhere on the route, and the derivation, its bracket and the
+route's caveats print hand-checkable per year under Notes and detail. A docket finding
+worth recording: the brief assumed these names would need the per-filing instance
+route, and zero of the four did, every derivation input being a standard
+companyconcept tag, which is why the registry lives on this page alone and every
+future docket entry is a single-file deploy.
+
 The point of the anchor is the triad: EPV here, the price there, and the difference,
 stated in dollars per share and as a share of the price, is the growth payment, the
 part of the price that is a bet on the future. The Expectations page states the growth
