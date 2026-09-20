@@ -48,6 +48,7 @@ read or failed to find.
 | **Expectations** | What today's price implies: the growth path and the year-15 exit it takes to deliver the required return |
 | **EPV** | What zero growth is worth: normalized earnings power capitalized, and the growth payment inside today's price |
 | **Magic Formula** | Greenblatt's two legs for one ticker: earnings yield and return on capital, honestly, without the ranking |
+| **Net-Nets** | Graham's deep-value floor: current assets minus every liability and prior claim, against the price |
 | **Return Calculator** | Plain compound-return arithmetic, deliberately last in the menu |
 
 ---
@@ -470,6 +471,29 @@ method's boundary, computes the legs behind a banner stating the decision, and d
 excess cash to zero for the class since the pool likely backs policy liabilities. The
 year table shows each year as filed, no averaging: cyclicality is shown, not smoothed;
 normalization is EPV's job, and its page does it properly.
+
+## 🧊 Net-Nets
+
+Benjamin Graham's net-current-asset-value test from *Security Analysis* and *The
+Intelligent Investor*: current assets minus total liabilities minus every tagged claim
+ahead of the common (preferred stock, temporary equity, minority interest), per share,
+against the price. Graham's two-thirds buying threshold prints as his criterion and
+nothing more. Deducting minority interest and temporary equity is this project's own
+addition to his test, labelled as such on the page, because today's consolidated balance
+sheets carry claims his era's statements did not present.
+
+Where a filer does not tag a total liabilities line, the page adds the filed current and
+noncurrent halves and prints the addition, or refuses if it cannot; it never derives
+liabilities from the equity side. Every figure is an annual report's own year-end balance
+date: quarterly balance sheets are excluded, nothing fills or carries across years, and a
+year missing a line shows a dash naming it. No income statement is read anywhere on the
+page.
+
+Most companies this kit reads print NCAV far below the price, often negative. The page
+says so plainly, because that is the normal answer today, not a failure: true net-nets
+are nearly extinct among filers large enough to file readable XBRL. NCAV is a liquidation
+floor, not a going-concern value, and a real wind-down realizes assets below book, so the
+true floor is lower than the printed one.
 
 ## 📈 Return Calculator
 
