@@ -6138,12 +6138,13 @@ def nn_headline(rows: list[dict]) -> tuple[dict | None, str]:
         return None, "no annual balance dates could be read"
     complete = [r for r in rows if r["ncav"] is not None]
     if not complete:
-        return None, ("no year carries both a current-asset subtotal and a "
-                      "readable liabilities total at the same date")
+        return None, ("Every balance date read is missing either the "
+                      "current-asset subtotal or a readable liabilities "
+                      "total at that same date")
     head = complete[0]
     gap = rows[0]["fy"] - head["fy"]
     if gap > NN_STALE_CEILING:
-        return None, (f"the latest complete year is FY{head['fy']}, {gap} "
+        return None, (f"The latest complete year is FY{head['fy']}, {gap} "
                       f"years behind the latest filed balance date "
                       f"(FY{rows[0]['fy']}) — beyond {NN_STALE_CEILING} years "
                       "the page refuses rather than headline stale figures")
@@ -6239,9 +6240,9 @@ def nn_normal_answer(ncav_ps, price) -> str:
     nearly always, and the page owns that plainly."""
     if ncav_ps is None or price is None or ncav_ps >= price:
         return ""
-    neg = " (negative)" if ncav_ps < 0 else ""
+    neg = ", negative" if ncav_ps < 0 else ""
     return (f"NCAV per share ({money(ncav_ps)}{neg}) is below the price "
-            f"({money(price)}). **That is the normal answer among today's "
+            f"(\\${price:,.2f}). **That is the normal answer among today's "
             "readable filers, not a failure of the page**: true Graham "
             "net-nets are nearly extinct among companies large enough to "
             "file readable XBRL, and many print a negative NCAV.")
@@ -6417,6 +6418,31 @@ def nn_record(t: str) -> dict:
     rec["ncav_ps"] = ((head["ncav"] / 1e6) / rec["shares"]
                       if rec["shares"] else None)
     return rec
+
+
+def _nn_tag_panel(maps: dict) -> None:
+    """The tag panel, one helper so every surface that promises it can
+    render it — the success path and both structural stops alike (the
+    AZO catch, 20 Sep 2026: the no-headline stop promised a panel the
+    page never rendered; a sentence that misdescribes what the page
+    shows is worse than no sentence)."""
+    with st.expander("Tag panel — every element this page read or looked for"):
+        def _nnrow(label, series):
+            return {"Element": label, "Dates": len(series),
+                    "Latest": max(series) if series else "not found"}
+        st.dataframe(pd.DataFrame([
+            _nnrow("AssetsCurrent", maps["ca"]),
+            _nnrow("Liabilities", maps["l1"]),
+            _nnrow("LiabilitiesCurrent", maps["lc"]),
+            _nnrow("LiabilitiesNoncurrent", maps["ln"]),
+            _nnrow("PreferredStockValue", maps["pref"]),
+            _nnrow("RedeemablePreferredStockCarryingAmount", maps["rp"]),
+            _nnrow("TemporaryEquityCarryingAmount", maps["te"]),
+            _nnrow("MinorityInterest", maps["nci"]),
+        ]), width='stretch', hide_index=True)
+        st.caption("Instant facts, annual forms only, keyed by exact "
+                   "year-end date; a year enters the history only through "
+                   "its own annual report's balance date.")
 
 
 # ── pinned fixtures — verbatim rows from the 20 Sep 2026 pastes ──────
@@ -6679,10 +6705,13 @@ def nn_self_test() -> list[tuple[str, bool, str]]:
     # 19 — the normal-answer sentence fires below the price, silent at
     #      or above, fires for negative NCAV
     out.append(("NN 19: the normal-answer sentence fires whenever NCAV sits "
-                "below the price, negative included, and stays silent at or "
+                "below the price, negative included and named without nested "
+                "parentheses, the price at cents, and stays silent at or "
                 "above",
                 "normal answer" in nn_normal_answer(2.0, 50.0)
-                and "(negative)" in nn_normal_answer(-3.0, 50.0)
+                and ", negative)" in nn_normal_answer(-3.0, 50.0)
+                and "(negative)" not in nn_normal_answer(-3.0, 50.0)
+                and "50.00" in nn_normal_answer(2.0, 50.0)
                 and nn_normal_answer(50.0, 50.0) == ""
                 and nn_normal_answer(60.0, 50.0) == "",
                 "fires below only"))
@@ -6806,6 +6835,24 @@ def nn_self_test() -> list[tuple[str, bool, str]]:
                 "adjacency",
                 _stops > 0 and _stops == _covered,
                 f"{_covered} of {_stops} stops covered"))
+
+    # 29 — (added 20 Sep 2026, the AZO catch) both structural stops
+    #      render the tag panel they summarize, source-level; needles
+    #      split at runtime so this check can never match itself
+    _n29a = "nn_unclassified_stop(" + "_tk"
+    _n29b = "stand behind for {" + "_tk}"
+
+    def _panel_follows(needle: str) -> bool:
+        for _j, _m in enumerate(_slines):
+            if needle in _m:
+                _nxt = [q for q in _slines[_j + 1:_j + 6] if q.strip()]
+                return any("_nn_tag_panel(" in q for q in _nxt)
+        return False
+    out.append(("NN 29: both structural stops render the tag panel they "
+                "summarize — the promise is kept in source, not in hope",
+                _panel_follows(_n29a) and _panel_follows(_n29b)
+                and "_nn_tag_panel(_rec" in _self26,
+                "panel at every promising stop"))
     return out
 
 
@@ -6909,12 +6956,14 @@ if _nn_go and _tk:
         st.stop()
     if _rec["stop"] == "unclassified":
         st.error(nn_unclassified_stop(_tk, _rec["l_years"], _rec["l_latest"]))
+        _nn_tag_panel(_rec["maps"])
         _page_footer()
         st.stop()
     if _rec["stop"] == "no_headline":
         st.error(f"**No year this page can stand behind for {_tk}.** "
-                 + _rec["why"] + ". The tag panel names every element "
-                 "read or looked for.")
+                 + _rec["why"] + ". The tag panel below names every "
+                 "element read or looked for.")
+        _nn_tag_panel(_rec["maps"])
         _page_footer()
         st.stop()
     if not _rec.get("shares"):
@@ -6997,9 +7046,9 @@ if _nn_go and _tk:
             + (f" [{_head['mezz_tag']}]" if _head["mezz_tag"] else "")
             + f"   NCI {_head['nci']:,.0f}",
             f"NCAV {_head['ncav']:,.0f}   (= {_head['ncav'] / 1e6:,.3f}M)",
-            f"shares {_rec['shares']:,.3f}M   ({NN_COUNT_LABEL})",
-            f"price {_px}   NCAV/share {_ps:,.4f}   "
-            f"two-thirds {_ps * 2.0 / 3.0:,.4f}"
+            f"shares {_rec['shares']:,.6f}M   ({NN_COUNT_LABEL})",
+            f"price {_px}   NCAV/share {_ps:,.4f}   two-thirds "
+            + (f"{_ps * 2.0 / 3.0:,.4f}" if _ps > 0 else "—")
             + (f"   price/NCAV {_px / _ps:,.2f}x"
                if (_px and _ps and _ps > 0) else ""),
             f"dates read {len(_rec['maps']['dates'])} "
@@ -7007,24 +7056,6 @@ if _nn_go and _tk:
             f"registration as-of {NN_REGISTERED_AS_OF}",
         ]), language="text")
 
-    with st.expander("Tag panel — every element this page read or looked for"):
-        _mm = _rec["maps"]
-
-        def _nnrow(label, series):
-            return {"Element": label, "Dates": len(series),
-                    "Latest": max(series) if series else "not found"}
-        st.dataframe(pd.DataFrame([
-            _nnrow("AssetsCurrent", _mm["ca"]),
-            _nnrow("Liabilities", _mm["l1"]),
-            _nnrow("LiabilitiesCurrent", _mm["lc"]),
-            _nnrow("LiabilitiesNoncurrent", _mm["ln"]),
-            _nnrow("PreferredStockValue", _mm["pref"]),
-            _nnrow("RedeemablePreferredStockCarryingAmount", _mm["rp"]),
-            _nnrow("TemporaryEquityCarryingAmount", _mm["te"]),
-            _nnrow("MinorityInterest", _mm["nci"]),
-        ]), width='stretch', hide_index=True)
-        st.caption("Instant facts, annual forms only, keyed by exact "
-                   "year-end date; a year enters the history only through "
-                   "its own annual report's balance date.")
+    _nn_tag_panel(_rec["maps"])
 
 _page_footer()
