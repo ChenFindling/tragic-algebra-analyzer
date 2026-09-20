@@ -16,6 +16,7 @@ the numeric prefix. THE MENU MAP IS FROZEN (toolkit pass, 12 Sep 2026;
     9   Expectations                (added 13 Sep 2026)
     10  EPV                         (added 17 Sep 2026)
     11  Magic Formula               (added 18 Sep 2026)
+    12  Net-Nets                    (added 20 Sep 2026)
     99  Return Calculator           (structurally last for the life of the kit)
 
 3 is retired and is never reused; 8 is reserved. Never reuse a number. The
@@ -43,6 +44,7 @@ MENU: list[tuple[str, str, str]] = [
     ("pages/9_Expectations.py",            "🔭", "Expectations"),
     ("pages/10_EPV.py",                    "⚓", "EPV"),
     ("pages/11_Magic_Formula.py",          "🪄", "Magic Formula"),
+    ("pages/12_Net_Nets.py",               "🧊", "Net-Nets"),
     ("pages/99_Return_Calculator.py",      "📈", "Return Calculator"),
 ]
 
@@ -115,6 +117,15 @@ PAGE_BLURBS: dict[str, str] = {
         "lines with the subtraction printed on the page. Beside each leg, the same "
         "figure on SBC-corrected operating income, because a formula screened on "
         "pre-SBC earnings is exactly where the hidden cost hides."
+    ),
+    "Net-Nets": (
+        "Benjamin Graham's net-current-asset-value test: what the market pays against "
+        "current assets alone, with every liability and prior claim deducted. NCAV per "
+        "share is compared with the price, and Graham's two-thirds buying threshold is "
+        "stated as his criterion, never a verdict. Among today's readable filers a true "
+        "net-net is rare, so the page says plainly when the normal answer arrives: NCAV "
+        "far below the price. This is a balance-sheet floor, not a going-concern value; "
+        "a wind-down realizes assets below book, so the true floor sits lower still."
     ),
     "Return Calculator": (
         "A plain compound-return calculator: ending amount, required return, years to "
