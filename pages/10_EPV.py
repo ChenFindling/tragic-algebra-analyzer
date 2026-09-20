@@ -6168,7 +6168,7 @@ def out_of_scope_sentence() -> str:
 # ══════════════════════════════════════════════════════════════════════
 #
 # Four filers present no operating subtotal, so OperatingIncomeLoss is
-# never tagged and every window year refused the pool: ADP, HRB, PBI and
+# not tagged in the window and every window year refused the pool: ADP, HRB, PBI and
 # BBW (the EPV census, 18 Sep 2026). For each, a per-year derivation from
 # the filer's OWN tagged lines was established against pasted statement
 # faces and fact panels (DOI session, 19 Sep 2026), with an arithmetic
@@ -6493,7 +6493,8 @@ def doi_derive(route: DoiRoute, fy: int, rev_raw: float | None,
 
 def doi_banner(tk: str, route: DoiRoute) -> str:
     return (f"**Operating income derived per registry.** {tk} presents no "
-            "operating subtotal, so OperatingIncomeLoss is never tagged and "
+            "operating subtotal, so OperatingIncomeLoss is not tagged in this "
+            "window and "
             f"every year would refuse. OI = {route.formula} — every line a "
             "filed figure, verified against the filer's own statements "
             "(19 Sep 2026). Each year's derivation prints hand-checkable in "
@@ -6553,6 +6554,96 @@ def doi_apply(tk: str, rows: list[EpvYear],
     for _pfy in sorted(route.pins):
         lines.append(f"Pinned bracket target, FY{_pfy}: {route.pins[_pfy][1]}")
     return route, lines
+
+
+
+# ── Verified cell overrides (FLEET-SEAM session, 20 Sep 2026) ─────────
+#
+# One filer, one poisoned comparative context, two cells. Each of HRB's
+# FY2024, FY2025 and FY2026 10-Ks tagged its oldest June-year comparative
+# pretax income AND income tax expense with the April-2021 period dates
+# (pretax: 659,069 = FY2022's, 711,212 = FY2023's, 762,322 = FY2024's;
+# tax: 98,423 = FY2022's, 149,412 = FY2023's, 164,359 = FY2024's — the
+# slide, one year per filing), and newest-wins serves the latest of each.
+# Revenue and CostsAndExpenses in the same filings carry correct dates:
+# the mis-dated context is the pretax/tax pair, not the statement face,
+# which is why the DOI derivation and bracket terms were never touched.
+# The DOI pin repairs the bracket target ONLY, by its own scope limit;
+# the rate pool's FY2021 year was still the mis-dated pair — numerator
+# and denominator both FY2024's, a coherent wrong-year rate counted
+# twice while FY2021's real rate was missing (DOI §8.3, repaired here).
+#
+# Verified-or-nothing, both cells: pretax 668,736 per the FY2021, FY2022
+# and FY2023 10-Ks' agreeing annual facts plus the FY2021 10-K's printed
+# face; tax 78,524 per the same three 10-Ks' agreeing annual facts
+# (companyconcept, pasted 20 Sep 2026). An override applies only while
+# the page cell equals the recorded bad fact to the dollar: any future
+# vintage movement skips it loudly for review instead of overwriting a
+# fact nobody has verified. Page-local by the house rule — consumption
+# decides placement, and the pretax family's only figure-bearing
+# consumer of historical years is this page's rate pool; pages 4 and 11
+# hold the same facts and render nothing from them (their reconciliation
+# prints at the latest derived year only, which only moves forward).
+# The fy key is what keeps HRB's FY2024 safe: its own legitimate cells
+# EQUAL the recorded bad values — they are FY2024's true figures — and
+# the override never looks at any year but the registered one.
+
+@dataclass(frozen=True)
+class CellOverride:
+    cell: str        # EpvYear field name: "pretax" or "tax"
+    bad_raw: float   # the recorded mis-dated fact, raw dollars
+    good_raw: float  # the verified replacement, raw dollars
+    sources: str     # where the replacement was verified
+
+
+EPV_CELL_OVERRIDES: dict[str, dict[int, tuple[CellOverride, ...]]] = {
+    "HRB": {2021: (
+        CellOverride("pretax", 762_322_000.0, 668_736_000.0,
+                     "the FY2021, FY2022 and FY2023 10-Ks' agreeing annual "
+                     "facts and the FY2021 10-K's printed statement "
+                     "(pasted 19 Sep 2026)"),
+        CellOverride("tax", 164_359_000.0, 78_524_000.0,
+                     "the FY2021, FY2022 and FY2023 10-Ks' agreeing annual "
+                     "facts (companyconcept, pasted 20 Sep 2026)"),
+    )},
+}
+
+
+def apply_cell_overrides(tk: str, rows: list[EpvYear]) -> list[tuple[str, str]]:
+    """Repair registered mis-dated cells, equality-gated: an override
+    applies only while the page cell still equals the recorded bad fact
+    (within $1 — the $1-boundary lesson). A changed or unread cell skips
+    LOUDLY instead: the recorded defect no longer matches the page, and a
+    fact nobody has verified must not be overwritten. One dict lookup and
+    out for every other ticker. Mutates rows in place, before doi_apply
+    and the rate pool, so the bracket sees the corrected pretax (FY2021
+    prints its agreement with the pin) and the rate pool takes the
+    verified pair. Returns (severity, line) pairs for the notes."""
+    entries = EPV_CELL_OVERRIDES.get(tk)
+    if not entries:
+        return []
+    noted: list[tuple[str, str]] = []
+    for r in rows:
+        for ov in entries.get(r.fy, ()):
+            cur = getattr(r, ov.cell)
+            cur_raw = cur * 1e6 if cur is not None else None
+            if cur_raw is not None and abs(cur_raw - ov.bad_raw) < 1.0:
+                setattr(r, ov.cell, ov.good_raw / 1e6)
+                noted.append(("info", (
+                    f"Verified cell override, FY{r.fy} {ov.cell}: the page cell "
+                    f"{ov.bad_raw / 1e6:,.3f} is a mis-dated fact — the three-filing "
+                    f"slide — replaced by the verified {ov.good_raw / 1e6:,.3f}. "
+                    f"Sources: {ov.sources}. Every figure downstream, the tax-rate "
+                    "pool included, uses the verified cell.")))
+            else:
+                shown = "unread" if cur_raw is None else f"{cur_raw / 1e6:,.3f}"
+                noted.append(("warning", (
+                    f"Verified cell override, FY{r.fy} {ov.cell}: SKIPPED — the page "
+                    f"cell reads {shown}, not the recorded bad fact "
+                    f"{ov.bad_raw / 1e6:,.3f}. The filings have moved since this "
+                    "override was verified; review it before trusting either "
+                    "figure.")))
+    return noted
 
 
 
@@ -6960,6 +7051,80 @@ def epv_self_test() -> list[tuple[str, bool, str]]:
                 and "212.361 diverges" in _ln5, f"{_oi5} {_why5 or _ln5[-70:]}"))
 
 
+    # ── OVR: verified cell overrides (FLEET-SEAM, 20 Sep 2026) ───────
+    # Fixtures carry the banked raw figures from the HRB companyconcept
+    # pastes; the applier is exercised on copies so nothing leaks between
+    # checks. Every negative control asserts its mutation applied.
+    def _ovr_fixture() -> list[EpvYear]:
+        return [EpvYear(2021, 3_413.987, None, 164.359, 762.322, 20.0, 25.0, "")]
+
+    _ov_e = EPV_CELL_OVERRIDES["HRB"][2021]
+    out.append(("OVR: the HRB FY2021 entry repairs BOTH mis-dated cells — pretax "
+                "762.322 to 668.736 and tax 164.359 to 78.524 — with the "
+                "verifying filings named per cell",
+                {o.cell for o in _ov_e} == {"pretax", "tax"}
+                and {(o.bad_raw, o.good_raw) for o in _ov_e}
+                == {(762_322_000.0, 668_736_000.0), (164_359_000.0, 78_524_000.0)}
+                and all("FY2021, FY2022 and FY2023 10-Ks" in o.sources
+                        for o in _ov_e), ""))
+
+    _ov_r = _ovr_fixture()
+    _ov_lines = apply_cell_overrides("HRB", _ov_r)
+    out.append(("OVR: pretax known-answer — 762.322 replaced by the verified "
+                "668.736, the line naming both figures and the slide",
+                abs(_ov_r[0].pretax - 668.736) < 1e-9
+                and any(k == "info" and "pretax" in m and "762.322" in m
+                        and "668.736" in m and "three-filing" in m
+                        for k, m in _ov_lines), f"{_ov_r[0].pretax}"))
+    out.append(("OVR: tax known-answer — 164.359 replaced by the verified "
+                "78.524, its own line naming both figures",
+                abs(_ov_r[0].tax - 78.524) < 1e-9
+                and any(k == "info" and "tax" in m and "164.359" in m
+                        and "78.524" in m for k, m in _ov_lines),
+                f"{_ov_r[0].tax}"))
+    out.append(("OVR: rate consequence — the corrected FY2021 effective rate is "
+                "78.524/668.736 (11.74%), moved off the mis-dated pair's "
+                "21.56% (the mutation asserted both ways)",
+                abs(_ov_r[0].eff_rate - 78.524 / 668.736) < 1e-12
+                and abs(_ovr_fixture()[0].eff_rate - 164.359 / 762.322) < 1e-12
+                and _ov_r[0].eff_rate < 0.12 < 0.21 < _ovr_fixture()[0].eff_rate,
+                f"{_ov_r[0].eff_rate:.6f}"))
+
+    _ov_m = _ovr_fixture()
+    _ov_m[0].pretax = 762.323          # mutated: $1,000 off the recorded fact
+    _ov_ml = apply_cell_overrides("HRB", _ov_m)
+    out.append(("OVR: equality guard — a cell $1,000 off the recorded bad fact "
+                "is left untouched and the line says SKIPPED naming both "
+                "figures (mutation asserted applied)",
+                abs(_ov_m[0].pretax - 762.323) < 1e-9
+                and _ov_m[0].pretax != _ovr_fixture()[0].pretax
+                and any(k == "warning" and "SKIPPED" in m and "762.323" in m
+                        and "762.322" in m for k, m in _ov_ml), ""))
+
+    _ov_n = _ovr_fixture()
+    _ov_n[0].tax = None                # mutated: the cell never read
+    _ov_nl = apply_cell_overrides("HRB", _ov_n)
+    out.append(("OVR: unread guard — a None cell stays None and the line says "
+                "SKIPPED with 'unread' (mutation asserted applied)",
+                _ov_n[0].tax is None and _ov_n[0].tax != _ovr_fixture()[0].tax
+                and any(k == "warning" and "SKIPPED" in m and "unread" in m
+                        for k, m in _ov_nl), ""))
+
+    _ov_24 = [EpvYear(2024, 3_610.347, None, 164.359, 762.322, 20.0, 25.0, "")]
+    _ov_24l = apply_cell_overrides("HRB", _ov_24)
+    out.append(("OVR: the fy key protects FY2024 — its own legitimate cells "
+                "EQUAL the recorded bad values and pass through untouched, "
+                "no lines",
+                _ov_24l == [] and abs(_ov_24[0].pretax - 762.322) < 1e-9
+                and abs(_ov_24[0].tax - 164.359) < 1e-9, ""))
+
+    _ov_x = _ovr_fixture()
+    out.append(("OVR: a non-registered ticker is one dict lookup and out — no "
+                "lines, rows untouched",
+                apply_cell_overrides("MSFT", _ov_x) == []
+                and abs(_ov_x[0].pretax - 762.322) < 1e-9
+                and abs(_ov_x[0].tax - 164.359) < 1e-9, ""))
+
 
     return out
 
@@ -7088,6 +7253,11 @@ if years and ticker and st.session_state.get("epv_tk") == ticker:
                       st.session_state["epv_tk"])
     alerts: list[tuple[str, str]] = [("info", n) for n in notes]
     rows = build_epv_years(years, pre.get("epv", {}))
+    # ── Verified cell overrides (FLEET-SEAM, 20 Sep 2026): registered
+    # mis-dated cells repaired before anything reads them — the DOI
+    # bracket sees the corrected pretax and the rate pool the verified
+    # pair. Equality-gated; a moved cell skips loudly (see the block).
+    alerts += apply_cell_overrides(tk, rows)
     # ── Derived-OI route (DOI, 19 Sep 2026): registered tickers only —
     # one dict lookup and out for everyone else. Fills r.oi in place, so
     # the pool, the table and both legs consume derived years through the
