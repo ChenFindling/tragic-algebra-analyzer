@@ -1215,6 +1215,16 @@ def _annual(facts: dict, us: list[str], ifrs: list[str],
     years earlier ones left empty. Priority is preserved; nothing is summed;
     and every concept that contributed is appended to `sources` so the panel in
     the UI can show which ones answered.
+
+    Cross-tag fill is tag order by decision of record (FLEET-HANDOVER,
+    20 Sep 2026): the lists are priority ladders of definitionally
+    different concepts (N's three elements differ by NCI; Ce/Cw are
+    narrow-over-broad by gate design), so recency-across-tags would serve
+    wrong-definition figures wherever a lower tag re-filed later. The
+    known cost is the PBI-FY2018-shaped seam — a stale first-tag fact
+    shadowing a fresher recast in a second tag — repaired where it bites
+    by page-local verified pins/overrides, and caught on the EPV page by
+    the DOI bracket.
     """
     out: dict[int, tuple[str, str, str, float]] = {}
     for taxonomy, concepts in (("us-gaap", us), ("ifrs-full", ifrs)):
@@ -3312,7 +3322,17 @@ def load(ticker: str, n_years: int = 10):
                           "shares": diluted, "growth": growth, "sic": sic,
                           "sic_desc": sic_desc, "financial": fin_class in ("bank", "insurer", "reit", "broker", "refused"),
                           "fin_class": fin_class, "fin_reason": fin_reason,
-                          "sh_cov": (_cov_n, len(_win_cov))}
+                          "sh_cov": (_cov_n, len(_win_cov)),
+                          # The year-end count series the Year loop itself
+                          # consumed — post split_adjust, ladder repair,
+                          # XBRL-route fills and band-split scaling. Raw
+                          # shares, fy-keyed. Added 21 Sep 2026 for page 13's
+                          # share-issuance test: raw dS/1e6 minus Year.dS is
+                          # exactly the year's excluded non-SBC issuance.
+                          # Returned, never recomputed page-locally — a
+                          # second count read is the SHD-vs-_wv two-reads
+                          # defect (see the dual-class guard's history).
+                          "shares_by_fy": dict(shares_out)}
 
 
 # Lives ABOVE the UI line on purpose (6 Sep 2026): self-test 21 calls it,
