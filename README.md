@@ -49,6 +49,7 @@ read or failed to find.
 | **EPV** | What zero growth is worth: normalized earnings power capitalized, and the growth payment inside today's price |
 | **Magic Formula** | Greenblatt's two legs for one ticker: earnings yield and return on capital, honestly, without the ranking |
 | **Net-Nets** | Graham's deep-value floor: current assets minus every liability and prior claim, against the price |
+| **Piotroski F-Score** | Piotroski's nine financial-strength tests, each shown with its filed inputs, passed out of readable |
 | **Return Calculator** | Plain compound-return arithmetic, deliberately last in the menu |
 
 ---
@@ -494,6 +495,37 @@ says so plainly, because that is the normal answer today, not a failure: true ne
 are nearly extinct among filers large enough to file readable XBRL. NCAV is a liquidation
 floor, not a going-concern value, and a real wind-down realizes assets below book, so the
 true floor is lower than the printed one.
+
+## 🩺 Piotroski F-Score
+
+Joseph Piotroski's nine binary tests from "Value Investing: The Use of Historical
+Financial Statement Information" (2000), computed with his definitions and his scaling:
+ROA, cash flow and asset turnover scale by beginning of year total assets, and the
+leverage ratio by average total assets, so three of the tests need three consecutive
+year end balance dates and the page says so. The nine: positive ROA, positive operating
+cash flow, improving ROA, cash flow above net income, leverage not rising, improving
+current ratio, no new shares issued, improving gross margin, improving asset turnover.
+
+Every test prints its own filed inputs and arithmetic, so each line can be checked by
+hand against the filing. The leverage test passes on unchanged as well as lower, stated
+on the page as this project's reading of the paper's intent, because a strict fall would
+fail every company that has no debt and keeps none. The share test reads the same
+year end share counts the main page grades, and beside the pass or fail it prints the
+decomposition: what part of the year's change was employee compensation and what part
+was tagged corporate issuance such as acquisitions, offerings or conversions.
+
+A test whose inputs the filings do not carry for the needed years refuses by name: the
+element, the year, and where a balance line went stale, the last year it was filed. A
+stale line is never served as zero into a deterioration test. The summary counts tests
+passed out of tests readable, with the denominator stated plainly. Fewer than five
+readable tests refuses the page, because a score on a minority of the tests is not the
+F-Score. Change tests demand consecutive fiscal years, 330 to 400 days between year end
+dates, and refuse across a fiscal year end change rather than bridge it. Banks,
+insurers, REITs and client-asset brokers route to the Financials Checker, because the
+leverage and liquidity tests presume a nonfinancial balance sheet; foreign filers route
+to the Non-US Checker. The paper found the score does its work among cheap, unloved
+names, which is what the Net-Nets and Inflection pages surface, and the page is built
+to sit behind them.
 
 ## 📈 Return Calculator
 
