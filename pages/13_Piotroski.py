@@ -6057,17 +6057,24 @@ def pio_yearend_dates(facts: dict, concepts: list[str]) -> list[str]:
 
 # ── dates, fiscal years and consecutiveness ──────────────────────────
 
-def pio_fy_map(dates: list[str]) -> tuple[dict[int, str], set[int]]:
-    """({fy: its year-end date}, {fys with TWO discovered dates}).
-    One date per end-year, the latest kept; a duplicated end-year is a
-    fiscal year-end change and every delta test spanning it refuses
-    (whole years are excluded, never patched)."""
+def pio_fy_map(dates: list[str]) -> tuple[dict[int, str],
+                                          dict[int, list[str]]]:
+    """({fy: its year-end date}, {end-year with TWO discovered dates:
+    all its dates}). One date per end-year, the latest kept. What a
+    duplicate MEANS is decided by the gap between its dates
+    (pio_pair_why): a 52/53-week filer whose adjacent year-ends
+    straddle New Year (SFM's 2023-01-01 and 2023-12-31, 364 days — the
+    21 Sep 2026 free-roam catch) is NOT a year-end change,
+    and the refusal must not claim one; a stub-year pair far outside
+    the window is. Either way the years are excluded from delta tests,
+    never patched — only the sentence differs, and the sentence is the
+    page."""
     fy2d: dict[int, str] = {}
-    dups: set[int] = set()
+    dups: dict[int, list[str]] = {}
     for d in dates:                       # newest first: first wins
         fy = int(d[:4])
         if fy in fy2d:
-            dups.add(fy)
+            dups.setdefault(fy, [fy2d[fy]]).append(d)
         else:
             fy2d[fy] = d
     return fy2d, dups
@@ -6093,9 +6100,24 @@ def pio_pair_why(f_new: int, f_old: int, fy2d: dict, dups: set) -> str:
     or the out-of-window gap. Empty string means the pair is sound."""
     bad_dup = sorted(y for y in (f_new, f_old) if y in dups)
     if bad_dup:
-        return (f"FY{bad_dup[0]} has two annual balance dates — a fiscal "
-                "year-end change; the years do not tile and the test "
-                "refuses rather than bridge them")
+        y = bad_dup[0]
+        ds = sorted(dups[y], reverse=True)
+        gaps = [pio_gap_days(ds[i], ds[i + 1]) for i in range(len(ds) - 1)]
+        if any(PIO_PAIR_MIN_DAYS <= g <= PIO_PAIR_MAX_DAYS for g in gaps):
+            return (f"FY{y} has two annual balance dates ({ds[-1]} and "
+                    f"{ds[0]}, {gaps[0]} days apart) — adjacent fiscal "
+                    "years of a 52/53-week filer straddling New Year, "
+                    "which this page's calendar-year labeling cannot "
+                    "tile; the test refuses as this page's own stated "
+                    "limitation, not a year-end change"
+                    if len(ds) == 2 else
+                    f"FY{y} has {len(ds)} annual balance dates — this "
+                    "page's calendar-year labeling cannot tile them; "
+                    "refused as this page's own stated limitation")
+        return (f"FY{y} has two annual balance dates ({ds[-1]} and "
+                f"{ds[0]}, {gaps[0]} days apart) — a fiscal year-end "
+                "change; the years do not tile and the test refuses "
+                "rather than bridge them")
     if f_new not in fy2d or f_old not in fy2d:
         missing = f_new if f_new not in fy2d else f_old
         return (f"no annual balance date is discovered for FY{missing} — "
@@ -6755,14 +6777,15 @@ def pio_self_test() -> list[tuple[str, bool, str]]:
                 and _m3["2026-06-30"] == 74509000.0,
                 "restatements win at their date, never a neighbour's"))
 
-    # 4 — duplicate end-year = fiscal year-end change
+    # 4 — duplicate end-year, the true-change shape
     _f4, _du4 = pio_fy_map(["2018-12-31", "2018-06-30", "2017-06-30"])
     _w4 = pio_pair_why(2018, 2017, _f4, _du4)
-    out.append(("PIO 4: two discovered dates in one end-year refuse the "
-                "delta pair naming the fiscal year-end change",
-                _du4 == {2018} and _f4[2018] == "2018-12-31"
+    out.append(("PIO 4: a stub-year pair (184 days) refuses the delta "
+                "pair naming the fiscal year-end change with both dates",
+                set(_du4) == {2018} and _f4[2018] == "2018-12-31"
+                and _du4[2018] == ["2018-12-31", "2018-06-30"]
                 and "fiscal year-end change" in _w4
-                and "do not tile" in _w4,
+                and "do not tile" in _w4 and "184 days" in _w4,
                 "whole years excluded, never patched"))
 
     # 5 — the consecutive window, both bounds, on the live shapes
@@ -7139,6 +7162,31 @@ def pio_self_test() -> list[tuple[str, bool, str]]:
                 in _self26,
                 "filled years named; routed by menu name"))
 
+    # 31 — (Deploy 2, the SFM free-roam catch of 21 Sep 2026) the
+    #      New-Year straddle: adjacent 52/53-week year-ends sharing a
+    #      calendar year are NOT called a year-end change
+    _d31 = ["2025-12-28", "2024-12-29", "2023-12-31", "2023-01-01",
+            "2022-01-02"]
+    _f31, _du31 = pio_fy_map(_d31)
+    _w31 = pio_pair_why(2024, 2023, _f31, _du31)
+    _w31b = pio_pair_why(2018, 2017,
+                         *pio_fy_map(["2018-12-31", "2018-06-30",
+                                      "2017-06-30"]))
+    out.append(("PIO 31: SFM's 2023-01-01/2023-12-31 pair (364 days) "
+                "refuses as this page's own labeling limitation, both "
+                "dates named, straddle called adjacent years and NEVER "
+                "a year-end change; the stub shape keeps the change "
+                "sentence; the kept date is the true 2023-12-31",
+                _f31[2023] == "2023-12-31"
+                and "364 days" in _w31
+                and "straddling New Year" in _w31
+                and "own stated limitation" in _w31
+                and "year-end change" not in _w31.split("not a ")[0]
+                and "not a year-end change" in _w31
+                and "fiscal year-end change" in _w31b
+                and "do not tile" in _w31b,
+                "true refusals only — the sentence is the page"))
+
     return out
 
 
@@ -7266,8 +7314,7 @@ if _pio_go and _tk:
     with _c2:
         st.metric("Readable tests", f"{_rec['m']} of 9")
     with _c3:
-        st.metric("Headline year",
-                  f"FY{_F} ({_rec['fy2d'][_F]})")
+        st.metric("Headline year", f"FY{_F}")
 
     st.markdown(_rec["summary"])
 
