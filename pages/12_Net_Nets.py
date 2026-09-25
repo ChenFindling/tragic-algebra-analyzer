@@ -2610,6 +2610,12 @@ def load(ticker: str, n_years: int = 10):
         # filers nothing undimensioned exists to override.
         for _fy, _v in _xr["SHO"].items():
             shares_out.setdefault(_fy, _v)
+    # The as-filed snapshot (24 Sep 2026, page 14's basis contract): each
+    # year's count on its own filing's basis, captured before split_adjust,
+    # the post-filing market factor and the band-split scaling below. The
+    # ladder repair re-captures from the winning series' own as-filed form.
+    # Write-only to the engine; consumed only through the meta key.
+    shares_asfiled = dict(shares_out)
     # Bind `notes` HERE, not further down. The share-count ladder below appends
     # to it, and Python makes a name local to the whole function the moment it
     # is assigned anywhere in it — so initialising notes after the ladder threw
@@ -2700,6 +2706,23 @@ def load(ticker: str, n_years: int = 10):
                 _pick, _share_route = _best[2], _best[3]
             else:
                 _pick, _share_route = _wv, "the weighted-average diluted count"
+            # Re-capture the as-filed form from the series that WON. Cover
+            # page and weighted average are as-filed reads, so their dicts
+            # serve directly. Issued-minus-treasury is rebuilt from the
+            # pre-adjustment counts: `_net` above subtracts as-filed
+            # treasury from ALREADY-ADJUSTED counts, so on a split filer
+            # its early years sit on no filed basis — the rebuild does.
+            # The tagged-series candidate keeps the first capture: its
+            # dict here is post-split_adjust, not as-filed. A year the
+            # rebuild cannot cover drops out, and page 14 refuses its
+            # basis rather than guess (absent means unverifiable).
+            if _share_route == "issued minus treasury shares":
+                shares_asfiled = {fy: shares_asfiled[fy] - _treas[fy]
+                                  for fy in _pick if fy in shares_asfiled
+                                  and fy in _treas
+                                  and shares_asfiled[fy] - _treas[fy] > 0}
+            elif _share_route != "the tagged share count":
+                shares_asfiled = dict(_pick)
             shares_out, _extra = split_adjust(_pick)
             # The abandoned first-choice series' split notes go with the
             # series (TM's phantom pair; residue sweep, 16 Sep 2026).
@@ -3351,7 +3374,27 @@ def load(ticker: str, n_years: int = 10):
                           "shares": diluted, "growth": growth, "sic": sic,
                           "sic_desc": sic_desc, "financial": fin_class in ("bank", "insurer", "reit", "broker", "refused"),
                           "fin_class": fin_class, "fin_reason": fin_reason,
-                          "sh_cov": (_cov_n, len(_win_cov))}
+                          "sh_cov": (_cov_n, len(_win_cov)),
+                          # The year-end count series the Year loop itself
+                          # consumed — post split_adjust, ladder repair,
+                          # XBRL-route fills and band-split scaling. Raw
+                          # shares, fy-keyed. Added 21 Sep 2026 for page 13's
+                          # share-issuance test: raw dS/1e6 minus Year.dS is
+                          # exactly the year's excluded non-SBC issuance.
+                          # Returned, never recomputed page-locally — a
+                          # second count read is the SHD-vs-_wv two-reads
+                          # defect (see the dual-class guard's history).
+                          "shares_by_fy": dict(shares_out),
+                          # The same years on each year's own AS-FILED
+                          # basis — captured above, before split_adjust,
+                          # the band-split confirm and the post-filing
+                          # market factor. Added 24 Sep 2026 for page
+                          # 14's split-basis verification: shares_by_fy
+                          # over this, per year, is the total restatement
+                          # factor the engine applied; a year absent here
+                          # is basis-unverifiable and the consumer must
+                          # refuse it, never assume 1.0.
+                          "shares_asfiled_by_fy": dict(shares_asfiled)}
 
 
 # Lives ABOVE the UI line on purpose (6 Sep 2026): self-test 21 calls it,
