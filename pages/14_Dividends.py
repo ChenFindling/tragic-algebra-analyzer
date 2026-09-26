@@ -6325,7 +6325,7 @@ def div_coverage(n_dollars, paid_head, recent, pooled, no_counts,
     out["leg2"] = leg2
     out["identity"] = (f"leg 2 = leg 1 / dE = {div_pct(leg1)} / "
                        f"{div_pct(recent.dE)} = {div_pct(leg2)}"
-                       f"   (dE over the last {recent.years} priced "
+                       f"\n(dE over the last {recent.years} priced "
                        "years, measured, uncapped)")
     if recent.dE > 1.0:
         if buybacks_shrank_count(win):
@@ -6966,6 +6966,7 @@ def div_self_test() -> list[tuple[str, bool, str]]:
                 abs(_cov17["leg1"] - 0.30) < 1e-12
                 and abs(_cov17["leg2"] - 0.40) < 1e-12
                 and "30.0% / 75.0% = 40.0%" in _cov17["identity"]
+                and "\n(dE over" in _cov17["identity"]
                 and not _cov17["refusals"],
                 "one year, one N, one dE — the identity cannot sit on "
                 "mixed bases"))
