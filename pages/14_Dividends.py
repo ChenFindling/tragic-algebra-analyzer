@@ -7219,12 +7219,21 @@ def _page_footer() -> None:
             if st.button("Run checks"):
                 for _label, _suite in (("Engine", self_test()),
                                        ("Dividends", div_self_test())):
-                    _bad = [n for n, ok, _ in _suite if not ok]
-                    st.markdown(f"**{_label}: {len(_suite)} checks, "
-                                f"{len(_bad)} failed.**")
-                    for _n, _ok, _ev in _suite:
-                        if not _ok:
-                            st.error(f"{_n} — {_ev}")
+                    _sev, _line = test_summary(_suite)
+                    getattr(st, _sev)(f"{_label}: " + _line.strip("*"))
+                    for name, ok, got in _suite:
+                        if not ok:
+                            st.write("❌ " + f"{name} — {got}")
+                st.caption("Only failures list line by line; the counts "
+                           "above are the record.")
+    st.caption(
+        "Research aid, not financial advice. Nobody's published model "
+        "is implemented here by design: the serving rule, the pair and "
+        "basis refusals and the coverage identity are this project's "
+        "own, on the kit's owners'-earnings machinery. Independent; "
+        "not affiliated with or endorsed by any index provider or "
+        "publisher."
+    )
 
 
 with st.form("div_form"):
