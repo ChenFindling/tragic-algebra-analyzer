@@ -6439,10 +6439,14 @@ def div_zero_sentence(tk: str) -> str:
 
 
 def div_stale_sentence(tk: str, dps_last, paid_last,
-                       fy_head: int) -> str:
+                       fy_head: int, paid_head=None) -> str:
     """The two-line design resolves the ambiguity where it can: a stale
-    per-share line beside a current dollar line means the filer still
-    pays and stopped tagging the element — and the sentence says so.
+    per-share line beside a current, POSITIVE dollar line means the
+    filer still pays and stopped tagging the element — and the sentence
+    says so. A current dollar line tagged at ZERO says the opposite
+    (INTC's live FY2025 shape, run 7 of 26 Sep 2026): an explicit zero
+    is the filing stating the payments stopped, cleaner evidence than
+    absence, and the sentence must not claim the filer still pays.
     Only both-stale keeps the two-possibility sentence."""
     if dps_last is None and paid_last is None:
         return ""
@@ -6450,6 +6454,16 @@ def div_stale_sentence(tk: str, dps_last, paid_last,
         return ""
     if (dps_last is not None and dps_last < fy_head
             and (paid_last or 0) >= fy_head):
+        if paid_head is not None and paid_head == 0:
+            return (f"**The per-share line is stale, and the dollar "
+                    f"line filed a zero.** {tk}'s last filed full-year "
+                    f"per-share fact is FY{dps_last}; for FY{fy_head} "
+                    "the filer tagged zero dividend dollars — an "
+                    "explicit zero on the dollar line is the filing "
+                    "saying the payments stopped, cleaner evidence "
+                    "than a stale tag. The record table ends where "
+                    "per-share data ends, and coverage stands on the "
+                    "zero.")
         return (f"**The per-share line is stale; the dollar line is "
                 f"not.** {tk}'s last filed full-year per-share fact is "
                 f"FY{dps_last}, but the cash-dividends dollar line "
@@ -6671,7 +6685,8 @@ def div_record(t: str) -> dict:
                 "cagr": cagr, "cov": cov, "n_dollars": n_dollars,
                 "paid_head": paid_head,
                 "stale": div_stale_sentence(resolved, dps_last,
-                                            paid_last, fy_head),
+                                            paid_last, fy_head,
+                                            paid_head),
                 "dps_absent": dps_absent,
                 "paid_note": div_paid_note(paid_origin),
                 "shares_by_fy": by_fy_m})
@@ -7082,18 +7097,23 @@ def div_self_test() -> list[tuple[str, bool, str]]:
 
     # DIV 24: stale sentences — both-stale, and both resolved shapes
     _st_both = div_stale_sentence("X", 2022, 2022, 2026)
-    _st_dps = div_stale_sentence("X", 2022, 2026, 2026)
+    _st_dps = div_stale_sentence("X", 2022, 2026, 2026, 100e6)
+    _st_zero = div_stale_sentence("X", 2024, 2025, 2025, 0.0)
     _st_paid = div_stale_sentence("X", 2026, 2023, 2026)
     _st_clean = div_stale_sentence("X", 2026, 2026, 2026)
     out.append(("DIV 24: both-stale keeps two possibilities; a current "
-                "sibling line resolves the ambiguity and says so",
+                "POSITIVE dollar line says still-pays; a current ZERO "
+                "says the payments stopped (INTC, run 7)",
                 "cannot tell them apart" in _st_both
                 and "stopped tagging the per-share element" in _st_dps
                 and "still pays" in _st_dps
+                and "filed a zero" in _st_zero
+                and "payments stopped" in _st_zero
+                and "still pays" not in _st_zero
                 and "coverage refuses on the missing headline dollars"
                 in _st_paid and _st_clean == "",
-                "a suspended dividend and a stale tag are different "
-                "facts"))
+                "an explicit zero is the filing saying it stopped; "
+                "the sentence must never claim otherwise"))
 
     # DIV 25: the multi-rung fill — origins named, scope caveat, stale
     # rung fills the past only
