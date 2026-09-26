@@ -50,6 +50,7 @@ read or failed to find.
 | **Magic Formula** | Greenblatt's two legs for one ticker: earnings yield and return on capital, honestly, without the ranking |
 | **Net-Nets** | Graham's deep-value floor: current assets minus every liability and prior claim, against the price |
 | **Piotroski F-Score** | Piotroski's nine financial-strength tests, each shown with its filed inputs, passed out of readable |
+| **Dividends** | The filed dividend record, and its coverage against both reported earnings and owners' earnings after stock comp |
 | **Return Calculator** | Plain compound-return arithmetic, deliberately last in the menu |
 
 ---
@@ -526,6 +527,12 @@ leverage and liquidity tests presume a nonfinancial balance sheet; foreign filer
 to the Non-US Checker. The paper found the score does its work among cheap, unloved
 names, which is what the Net-Nets and Inflection pages surface, and the page is built
 to sit behind them.
+
+## 🪙 Dividends
+
+The filed dividend record first, with the discipline the record needs. Dividends per share are read for every year the toolkit's window covers, from one reporting element for the whole series, never stitched together from different elements, because a seam between declared and paid amounts can invent a raise out of pure timing. The streak label says how long the company has paid and raised within the readable window, which is the window this page reads and not the company's full history. Growth is the plain rate between the first and last verified years, with both years named and no smoothing. A raise only counts between fiscal years whose end dates sit 330 to 400 days apart, so a fiscal year-end change refuses instead of pretending the years line up, and a series that crosses a stock split is refused for streak and growth purposes, because a split halves the filed figure exactly the way a cut does, and this page will not guess which happened. Where the per-share line and the dollars-paid line disagree about the implied share count, the gap is noted with its size, never resolved silently.
+
+The reason this page exists is the coverage pair. For the latest engine year it shows the dividend as a fraction of reported earnings, and beside it the same dividend against owners' earnings after the true cost of stock compensation, using the toolkit's pooled delta-E. The second number is the first divided by delta-E, and the page prints that arithmetic: a dividend taking 40 cents of each reported dollar takes 50 cents of each dollar that reaches you at a delta-E of 80 percent. Negative or zero earnings refuse the ratio out loud rather than print a meaningless percentage. A company that has never tagged a dividend gets a clean answer saying so, which is different from a payer whose data went stale, and the page names which one it found. There is no dividend discount model here by decision: a Gordon model needs an assumed growth rate, and the Expectations page already answers the price implied question rigorously.
 
 ## 📈 Return Calculator
 
