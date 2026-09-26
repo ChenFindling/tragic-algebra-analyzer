@@ -7160,6 +7160,14 @@ def div_self_test() -> list[tuple[str, bool, str]]:
                 "is on the exact comprehension; rename if a legitimate "
                 "c * 1e6 ever belongs in div_record)"))
 
+    # DIV 28: the growth line escapes its dollar signs for markdown
+    out.append(("DIV 28: the Growth render escapes $ before st.markdown "
+                "(LaTeX would eat the pair)",
+                _src.count('.replace("$", "\\\\$")') == 1,
+                "the ADP run showed $2.24...$6.64 rendered as a math "
+                "span; the sentence itself stays unescaped and DIV 15 "
+                "pins it"))
+
     return out
 
 
@@ -7371,7 +7379,11 @@ if _div_go and _tk:
         st.caption("• " + _n)
 
     if _rec["cagr"]:
-        st.markdown("Growth: " + _rec["cagr"]["sentence"])
+        # st.markdown eats $...$ as LaTeX (the ADP run of 26 Sep 2026
+        # rendered "$2.24 ... $6.64" as a math span); escape at the
+        # surface, never in the sentence DIV 15 pins.
+        st.markdown("Growth: "
+                    + _rec["cagr"]["sentence"].replace("$", "\\$"))
     elif _serW and _sk["paid"] < 2:
         st.caption("No growth rate is printed: fewer than two "
                    "consecutive verified years on the walk.")
