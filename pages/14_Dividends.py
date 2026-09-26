@@ -6366,8 +6366,10 @@ def div_xcheck(ser_w: dict, paid: dict, by_fy: dict
     from above without crossing. Silent below DIV_XCHECK_NOTE; at the
     note threshold the causes are named; at DIV_XCHECK_SPLIT with a
     near-integer ratio the year is split-basis-suspect and refuses from
-    streak and growth. by_fy is in RAW SHARES (the caller scales the
-    reader's millions)."""
+    streak and growth. by_fy is the reader's shares_by_fy passed
+    UNSCALED — "Raw shares, fy-keyed", the span's own words; the
+    graded ADP run of 26 Sep 2026 caught a x1e6 rescale here turning
+    every year split-suspect."""
     notes, suspects = [], set()
     for fy in sorted(set(ser_w) & set(paid) & set(by_fy)):
         dps, real = ser_w[fy][2], by_fy[fy]
@@ -6380,7 +6382,7 @@ def div_xcheck(ser_w: dict, paid: dict, by_fy: dict
         if abs(r) >= DIV_XCHECK_SPLIT:
             ratio = implied / real if implied >= real else real / implied
             k = round(ratio)
-            if k >= 2 and abs(ratio - k) <= 0.06 * k:
+            if 2 <= k <= 20 and abs(ratio - k) <= 0.06 * k:
                 suspects.add(fy)
                 notes.append(
                     f"FY{fy}: paid / DPS implies {implied / 1e6:,.0f}M "
@@ -6624,8 +6626,7 @@ def div_record(t: str) -> dict:
     paid_w = {fy: v for fy, v in paid_full.items() if fy in win_set}
     by_fy_m = meta.get("shares_by_fy") or {}
     basis_ok, basis_why = div_basis(sorted(ser_w), meta, fy_head)
-    xnotes, suspects = div_xcheck(
-        ser_w, paid_w, {fy: c * 1e6 for fy, c in by_fy_m.items()})
+    xnotes, suspects = div_xcheck(ser_w, paid_w, by_fy_m)
     for fy in suspects & set(ser_w):
         basis_ok.discard(fy)
         basis_why[fy] = (f"FY{fy} is split-basis-suspect from the "
@@ -7139,6 +7140,25 @@ def div_self_test() -> list[tuple[str, bool, str]]:
                 and _pin26,
                 "evidence, never a verdict; tags, window and "
                 "tolerances exactly as registered"))
+
+    # DIV 27: the ADP units regression (graded run 1, 26 Sep 2026)
+    _ser27 = {2026: ("2025-07-01", "2026-06-30", 6.64)}
+    _paid27 = {2026: ("2025-07-01", "2026-06-30", 2626.3e6)}
+    _n27a, _s27a = div_xcheck(_ser27, _paid27, {2026: 397.8e6})
+    _n27b, _s27b = div_xcheck(_ser27, _paid27, {2026: 397.8e12})
+    out.append(("DIV 27: shares_by_fy is consumed raw — ADP FY2026's "
+                "live figures are silent, a x1e6-scaled count is never "
+                "split-suspect, and the rescale is pinned out of "
+                "div_record",
+                not _n27a and not _s27a and not _s27b
+                and len(_n27b) == 1 and "no split shape" in _n27b[0]
+                and "c * 1e6" not in inspect.getsource(div_record)
+                and "Raw shares, fy-keyed." in _src,
+                "the span says 'Raw shares, fy-keyed'; run 1 caught a "
+                "rescale here that turned all ten ADP years "
+                "split-suspect and zeroed the streaks (the source pin "
+                "is on the exact comprehension; rename if a legitimate "
+                "c * 1e6 ever belongs in div_record)"))
 
     return out
 
