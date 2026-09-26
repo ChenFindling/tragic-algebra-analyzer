@@ -5,7 +5,8 @@ the filename stays Home.py because the Cloud main-file setting pins it).
 Streamlit turns every file in pages/ into a nav item automatically, ordered by
 the numeric prefix. THE MENU MAP IS FROZEN (toolkit pass, 12 Sep 2026;
 9 added 13 Sep 2026; 10 added 17 Sep 2026; 11 added 18 Sep 2026;
-12 added 20 Sep 2026; 13 added 21 Sep 2026):
+12 added 20 Sep 2026; 13 added 21 Sep 2026; 14 added 25 Sep
+2026):
 
     1   Tragic Algebra Analyzer
     2   Hundred Bagger Checker      (renders "100-Bagger Checker" on the page)
@@ -19,6 +20,7 @@ the numeric prefix. THE MENU MAP IS FROZEN (toolkit pass, 12 Sep 2026;
     11  Magic Formula               (added 18 Sep 2026)
     12  Net-Nets                    (added 20 Sep 2026)
     13  Piotroski F-Score           (added 21 Sep 2026)
+    14  Dividends                   (added 25 Sep 2026)
     99  Return Calculator           (structurally last for the life of the kit)
 
 3 is retired and is never reused; 8 is reserved. Never reuse a number. The
@@ -48,6 +50,7 @@ MENU: list[tuple[str, str, str]] = [
     ("pages/11_Magic_Formula.py",          "🪄", "Magic Formula"),
     ("pages/12_Net_Nets.py",               "🧊", "Net-Nets"),
     ("pages/13_Piotroski.py",              "🩺", "Piotroski F-Score"),
+    ("pages/14_Dividends.py",              "🪙", "Dividends"),
     ("pages/99_Return_Calculator.py",      "📈", "Return Calculator"),
 ]
 
@@ -140,6 +143,16 @@ PAGE_BLURBS: dict[str, str] = {
         "tests refuses the page, because a score on a minority of the tests is not the "
         "F-Score. Built for the cheap and ugly names the Net-Nets and Inflection pages "
         "surface, which is where the paper found the score does its work."
+    ),
+    "Dividends": (
+        "The filed dividend record and what it costs. How long this filer has paid "
+        "and raised within the readable window, at what growth, and then the coverage "
+        "pair no other tool prints: the fraction of reported earnings the dividend "
+        "consumes, beside the same dividend against owners' earnings after the true "
+        "cost of stock comp at this filer's \u0394E. A dividend that looks modest "
+        "against reported profit can be most of what actually reaches you. No "
+        "dividend model is fitted here on purpose: the growth a price implies is the "
+        "Expectations page's question."
     ),
     "Return Calculator": (
         "A plain compound-return calculator: ending amount, required return, years to "
