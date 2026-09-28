@@ -6,7 +6,7 @@ Streamlit turns every file in pages/ into a nav item automatically, ordered by
 the numeric prefix. THE MENU MAP IS FROZEN (toolkit pass, 12 Sep 2026;
 9 added 13 Sep 2026; 10 added 17 Sep 2026; 11 added 18 Sep 2026;
 12 added 20 Sep 2026; 13 added 21 Sep 2026; 14 added 25 Sep
-2026):
+2026; 15 added 27 Sep 2026):
 
     1   Tragic Algebra Analyzer
     2   Hundred Bagger Checker      (renders "100-Bagger Checker" on the page)
@@ -21,6 +21,7 @@ the numeric prefix. THE MENU MAP IS FROZEN (toolkit pass, 12 Sep 2026;
     12  Net-Nets                    (added 20 Sep 2026)
     13  Piotroski F-Score           (added 21 Sep 2026)
     14  Dividends                   (added 25 Sep 2026)
+    15  Altman Z-Score              (added 27 Sep 2026)
     99  Return Calculator           (structurally last for the life of the kit)
 
 3 is retired and is never reused; 8 is reserved. Never reuse a number. The
@@ -51,6 +52,7 @@ MENU: list[tuple[str, str, str]] = [
     ("pages/12_Net_Nets.py",               "🧊", "Net-Nets"),
     ("pages/13_Piotroski.py",              "🩺", "Piotroski F-Score"),
     ("pages/14_Dividends.py",              "🪙", "Dividends"),
+    ("pages/15_Altman.py",                 "🌡️", "Altman Z-Score"),
     ("pages/99_Return_Calculator.py",      "📈", "Return Calculator"),
 ]
 
@@ -153,6 +155,19 @@ PAGE_BLURBS: dict[str, str] = {
         "against reported profit can be most of what actually reaches you. No "
         "dividend model is fitted here on purpose: the growth a price implies is the "
         "Expectations page's question."
+    ),
+    "Altman Z-Score": (
+        "Edward Altman's bankruptcy score: five filed ratios, his 1968 coefficients, "
+        "summed into the single distress number that half a century of credit work "
+        "still leans on. The page selects the model Altman fitted for the filer's "
+        "kind, the original for manufacturers and his re-fit without the turnover "
+        "ratio for everyone else, prints each ratio's own arithmetic so a row can be "
+        "checked by hand, and states his zone labels as his labels with his own later "
+        "warning attached: the boundaries are regression constants from decades-old "
+        "samples, and Altman himself no longer recommends the old cutoff as a default "
+        "verdict. This is the survival lens the other pages assume. A turnaround "
+        "story or a cheap balance sheet reads differently when the score sits in the "
+        "zone Altman called distress."
     ),
     "Return Calculator": (
         "A plain compound-return calculator: ending amount, required return, years to "
