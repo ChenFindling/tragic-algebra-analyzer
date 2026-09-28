@@ -51,6 +51,7 @@ read or failed to find.
 | **Net-Nets** | Graham's deep-value floor: current assets minus every liability and prior claim, against the price |
 | **Piotroski F-Score** | Piotroski's nine financial-strength tests, each shown with its filed inputs, passed out of readable |
 | **Dividends** | The filed dividend record, and its coverage against both reported earnings and owners' earnings after stock comp |
+| **Altman Z-Score** | Altman's bankruptcy score: five filed ratios, his coefficients, his zone labels with attribution, the model selected by SIC |
 | **Return Calculator** | Plain compound-return arithmetic, deliberately last in the menu |
 
 ---
@@ -533,6 +534,43 @@ to sit behind them.
 The filed dividend record first, with the discipline the record needs. Dividends per share are read for every year the toolkit's window covers, from one reporting element for the whole series, never stitched together from different elements, because a seam between declared and paid amounts can invent a raise out of pure timing. The streak label says how long the company has paid and raised within the readable window, which is the window this page reads and not the company's full history. Growth is the plain rate between the first and last verified years, with both years named and no smoothing. A raise only counts between fiscal years whose end dates sit 330 to 400 days apart, so a fiscal year-end change refuses instead of pretending the years line up, and a series that crosses a stock split is refused for streak and growth purposes, because a split halves the filed figure exactly the way a cut does, and this page will not guess which happened. Where the per-share line and the dollars-paid line disagree about the implied share count, the gap is noted with its size, never resolved silently.
 
 The reason this page exists is the coverage pair. For the latest engine year it shows the dividend as a fraction of reported earnings, and beside it the same dividend against owners' earnings after the true cost of stock compensation, using the toolkit's pooled delta-E. The second number is the first divided by delta-E, and the page prints that arithmetic: a dividend taking 40 cents of each reported dollar takes 50 cents of each dollar that reaches you at a delta-E of 80 percent. Negative or zero earnings refuse the ratio out loud rather than print a meaningless percentage. A company that has never tagged a dividend gets a clean answer saying so, which is different from a payer whose data went stale, and the page names which one it found. There is no dividend discount model here by decision: a Gordon model needs an assumed growth rate, and the Expectations page already answers the price implied question rigorously.
+
+## 🌡️ Altman Z-Score
+
+Edward Altman's 1968 bankruptcy score: working capital, retained earnings, EBIT, market
+value of equity and revenue, each against the balance sheet, weighted with his fitted
+coefficients and summed. The page selects the model Altman fitted for the filer's kind.
+Filers in the SIC manufacturing division get the original Z. Every other non-financial
+filer gets his 1995 re-fit, which drops the turnover ratio because it swings by
+industry, takes book equity instead of market value, and therefore needs no market
+input at all: every ratio in its history stands at its own filed balance date. His zone
+boundaries print as his labels with the attribution beside them, together with his own
+2018 caution that he no longer recommends the old cutoff as a default test. The
+boundaries are regression constants fitted on 33 bankrupt and 33 surviving
+manufacturers from the 1946 to 1965 period, and the page says so every time it shows
+them.
+
+The inputs are the toolkit's proven lines. Working capital and total assets come from
+the same elements other pages read, total liabilities from the Net-Nets ladder where a
+filed total wins and filed halves derive it with the addition printed, and EBIT from
+the derived-EBIT block the Magic Formula page built, ported whole and hash checked, so
+where no operating subtotal is filed the subtraction from two filed lines prints on the
+page with an interest note naming what the derived figure contains. Retained earnings
+is new to the fleet and reads date-keyed like every other instant; an accumulated
+deficit prints as filed, because a deeply negative second ratio is the score working,
+not an error. All the instant inputs for a year come from one balance date, that year's
+own annual report, and a year missing any input refuses by name rather than score on a
+partial sum, because a weighted sum minus a term is not the score.
+
+Under the original Z the market value of equity is priced at today's price against each
+year's filed liabilities, and the page labels it as the one aging input: the history is
+the trend of the filed inputs, not of the market cap. Where the filer tags preferred
+stock at a served date, a note says that Altman's definition measures all shares,
+preferred and common, while this page prices common only. Banks and insurers route to
+the Financials Checker with the attribution stated: Altman's estimation samples never
+contained financial firms, and the exclusion here is this project's rule with a
+mechanical reason on top, since an unclassified balance sheet has no current lines to
+read. The emerging-market constant of 3.25 is deliberately not applied.
 
 ## 📈 Return Calculator
 
