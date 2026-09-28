@@ -801,6 +801,120 @@ def is_financial(sic: str) -> bool:
     return sic.isdigit() and 6000 <= int(sic) <= 6799
 
 
+# ══════════════════════════════════════════════════════════════════════
+#  COMMODITY_SIC — the commodity-producer flag (FLAG session, 28 Sep 2026)
+# ══════════════════════════════════════════════════════════════════════
+#
+# A single-commodity producer at a cycle peak is the textbook value-screen
+# false positive: peak commodity price -> peak margins -> peak earnings ->
+# low multiple, and a screen reads the market's refusal to capitalize peak
+# margins as cheapness. KGC (gold, 40-F) took a "fat pitch" from the NonUS
+# Checker this way on 27 Sep 2026 — the banked exhibit. The fix is a FLAG,
+# not a model: the verdict machinery is untouched; a named caveat renders
+# beside any favorable verdict, and the filed margin history renders as
+# the cyclicality evidence. The spot/-20%/-40% EPV sensitivity table was
+# DECLINED with reason (unfiled inputs: AISC is non-GAAP untagged,
+# guidance is press-release, spot is a market feed this kit reads for
+# nothing); paste mode is the home for that hand analysis.
+#
+# The set is deliberately narrow — a false flag on a diversified
+# industrial is the error to avoid; widening is a recorded ride, never a
+# drift. Ranges INCLUDED, each because its output is priced by a market
+# the filer does not set:
+#   1000-1099  metal mining (iron 1011, copper 1021, gold 1040, silver
+#              1044, uranium 1090/1094). Royalty and streaming names file
+#              inside this range and belong: their earnings track the
+#              same price. Entering by range keeps this name-logic-free.
+#   1200-1299  coal mining — benchmark-priced output, same disease.
+#   1300-1379  oil & gas extraction (crude & gas 1311, NGLs 1321) — E&P
+#              filers are pure price takers; the boundary at 1380 cleanly
+#              separates extraction from services.
+# EXCLUDED with reasons, on the record (28 Sep 2026):
+#   1381-1389  oil & gas field services — revenue is producers' capex,
+#              one step removed from spot; "margins are a function of a
+#              commodity price" would overclaim on them. Widening
+#              candidate with its own wording, if ever.
+#   1400-1499  nonmetallic minerals / quarrying — aggregates price
+#              locally with no quoted spot; a construction cycle, not a
+#              commodity price. The strongest reason the set starts
+#              narrow.
+#   2911       refining and the integrated majors — crack spreads are
+#              commodity-driven, so pure refiners half-belong, but the
+#              same code holds integrateds with partial natural hedges.
+#              FIRST widening candidate, reasoning banked.
+#   3312/3334  steel and aluminum — commodity output under manufacturing
+#              SIC, but spread economics (scrap, alumina, power) rather
+#              than one unmodeled price. Second widening candidate.
+#   6792       oil royalty traders — financial range; the financial
+#              gates already govern every carrier, so the flag never
+#              reaches them. Stated so the boundary is deliberate, not
+#              forgotten.
+
+COMMODITY_SIC_RANGES: tuple[tuple[int, int, str], ...] = (
+    (1000, 1099, "metal mining"),
+    (1200, 1299, "coal mining"),
+    (1300, 1379, "oil & gas extraction"),
+)
+
+
+def commodity_sic(sic: str) -> str | None:
+    """The flag's whole gate: the range label for a commodity producer,
+    None for everyone else. An unflagged ticker takes this call and
+    leaves — zero fetches, zero behaviour change anywhere else."""
+    if not (isinstance(sic, str) and sic.isdigit()):
+        return None
+    code = int(sic)
+    for lo, hi, label in COMMODITY_SIC_RANGES:
+        if lo <= code <= hi:
+            return label
+    return None
+
+
+def commodity_caveat(sic: str, sic_desc: str) -> str | None:
+    """The named caveat for the growth-model and screen carriers.
+    Rendered ADJACENT to a favorable verdict sentence, never instead of
+    it — the verdict machinery is untouched by design."""
+    label = commodity_sic(sic)
+    if label is None:
+        return None
+    return (f"**Commodity producer.** {sic_desc or label} (SIC {sic}). Margins here are "
+            "a function of a commodity price the filings do not model: trailing "
+            "earnings at a cycle's price level are not earnings power, and this page "
+            "cannot normalize them. The filed margin history below is the cyclicality "
+            "evidence.")
+
+
+def commodity_caveat_epv(sic: str, sic_desc: str) -> str | None:
+    """The EPV carrier's variant. That page DOES normalize — across its
+    readable window — so the third clause changes to stay true on
+    machinery that differs: it normalizes across the window, not to a
+    mid-cycle price. A caveat must never be false on a member of its
+    own set."""
+    label = commodity_sic(sic)
+    if label is None:
+        return None
+    return (f"**Commodity producer.** {sic_desc or label} (SIC {sic}). Margins here are "
+            "a function of a commodity price the filings do not model: trailing "
+            "earnings at a cycle's price level are not earnings power, and the "
+            "normalized margin is a mean over the commodity prices of the readable "
+            "years, not over a commodity cycle — this page normalizes across its "
+            "window, not to a mid-cycle price. The Margin column above is the "
+            "cyclicality evidence.")
+
+
+def commodity_margin_rows(n_by_fy: dict, rev_by_fy: dict) -> list[dict]:
+    """The filed margin history: net income over revenue, both as filed,
+    on their overlap years only. Figures arrive from the reader's own
+    series — returned, never recomputed page-locally (the SHD-vs-_wv
+    two-reads lesson). No threshold, no verdict: evidence, rendered."""
+    rows = []
+    for fy in sorted(set(n_by_fy) & set(rev_by_fy)):
+        rev, n = rev_by_fy[fy], n_by_fy[fy]
+        rows.append({"FY": fy, "Revenue": rev, "Net income": n,
+                     "Net margin": (n / rev) if rev else float("nan")})
+    return rows
+
+
 @st.cache_data(ttl=86400, show_spinner=False)
 def _facts(cik: str) -> dict:
     return _sec_get(f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json",
@@ -7178,6 +7292,55 @@ def epv_self_test() -> list[tuple[str, bool, str]]:
                 and abs(_ov_x[0].pretax - 762.322) < 1e-9
                 and abs(_ov_x[0].tax - 164.359) < 1e-9, ""))
 
+    # ── the commodity-producer flag (FLAG session, 28 Sep 2026) ──────
+    out.append(("Commodity flag: in-set boundaries classify with their labels",
+                commodity_sic("1000") == "metal mining" and commodity_sic("1099") == "metal mining"
+                and commodity_sic("1200") == "coal mining" and commodity_sic("1299") == "coal mining"
+                and commodity_sic("1300") == "oil & gas extraction"
+                and commodity_sic("1311") == "oil & gas extraction"
+                and commodity_sic("1379") == "oil & gas extraction",
+                "1000/1099 metal, 1200/1299 coal, 1300/1311/1379 oil & gas"))
+    out.append(("Commodity flag: every reasoned exclusion stays out",
+                all(commodity_sic(s) is None for s in
+                    ("0999", "1100", "1199", "1381", "1389", "1400", "1499",
+                     "2911", "3312", "3334", "6792", "", "ABC")),
+                "services, quarrying, refining, smelting, financial range, junk"))
+    out.append(("Commodity flag: KGC's SIC 1040 classifies as metal mining",
+                commodity_sic("1040") == "metal mining", "the banked exhibit"))
+    _cc = commodity_caveat("1040", "Gold Mining")
+    out.append(("Commodity caveat carries the three clauses and names the SIC",
+                _cc is not None and "commodity price the filings do not model" in _cc
+                and "not earnings power" in _cc and "cannot normalize" in _cc
+                and "SIC 1040" in _cc and "Gold Mining" in _cc,
+                "the FLAG-BRIEF sentence, its clauses verbatim"))
+    out.append(("Commodity caveat is silent off the set",
+                commodity_caveat("3674", "Semiconductors") is None
+                and commodity_caveat("7372", "Prepackaged Software") is None
+                and commodity_caveat("", "") is None,
+                "ASML- and MSFT-shaped SICs, and an empty SIC"))
+    _ce = commodity_caveat_epv("1311", "Crude Petroleum & Natural Gas")
+    out.append(("EPV caveat variant normalizes-across-window, no false cannot-normalize claim",
+                _ce is not None
+                and "normalizes across its window, not to a mid-cycle price" in _ce
+                and ("cannot norm" + "alize") not in _ce
+                and commodity_caveat_epv("7372", "") is None,
+                "a caveat must never be false on a member of its own set"))
+    _mr = commodity_margin_rows({2023: 50.0, 2024: -10.0, 2025: 240.0},
+                                {2024: 1000.0, 2025: 1200.0, 2026: 999.0})
+    out.append(("Margin rows: overlap years only, N over REV exact, ascending",
+                [r["FY"] for r in _mr] == [2024, 2025]
+                and abs(_mr[0]["Net margin"] - (-0.01)) < 1e-12
+                and abs(_mr[1]["Net margin"] - 0.20) < 1e-12
+                and commodity_margin_rows({}, {2025: 1.0}) == [],
+                "2024 -1.0%, 2025 20.0%; disjoint and empty inputs yield nothing"))
+    from pathlib import Path as _Pcf
+    _scf = _Pcf(__file__).read_text(encoding="utf-8")
+    _vi = _scf.find("st.info(triad_sentence(" + "price, ps1, fl1))")
+    _fi = _scf.find("commodity_sic(pre.get(" + chr(34) + "sic" + chr(34) + ", " + chr(34) + chr(34) + "))")
+    out.append(("Commodity flag renders adjacent to the triad, favorable shape gated",
+                0 <= _vi < _fi and (_fi - _vi) < 1100
+                and ("price <= ps1" in _scf[_vi:_fi + 600]),
+                "own-source scan: the flag block sits directly after the triad render"))
 
     return out
 
@@ -7510,6 +7673,23 @@ if years and ticker and st.session_state.get("epv_tk") == ticker:
         st.caption("No live price could be fetched, so the growth-payment split is "
                    "refused rather than computed against a stale or default figure. "
                    "Type the price above to see it.")
+
+    # ── the commodity-producer flag (FLAG session, 28 Sep 2026) ──────
+    # Two parts: the identification renders for ANY flagged producer,
+    # whatever the triad said; the named caveat — the EPV variant, which
+    # stays true on a page that DOES normalize — additionally sits
+    # adjacent to the favorable triad shape (price at or below the
+    # no-growth value), because that is where the false positive is
+    # read. The evidence is the Margin column this page already
+    # renders; no second table.
+    _cmdty = commodity_sic(pre.get("sic", ""))
+    if _cmdty:
+        if price > 0 and not fl1 and ps1 > 0 and price <= ps1:
+            st.warning(commodity_caveat_epv(pre["sic"], pre.get("sic_desc", "")))
+        else:
+            st.caption(f"Commodity producer — {pre.get('sic_desc') or _cmdty} "
+                       f"(SIC {pre['sic']}). The Margin column above is the "
+                       "cyclicality evidence.")
 
     _notes_expander()
 
