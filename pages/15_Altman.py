@@ -7464,7 +7464,7 @@ if _alt_go and _tk:
                            "operating-income subtotal is filed, so "
                            "revenue minus the all-in expense total "
                            "derives it, subtraction printed in the "
-                           "expander below. "
+                           "expander below; "
                            + mf_interest_note(_rec["fy_star"],
                                               _rec["intexp_at"],
                                               _rec["intexp_tag"],
