@@ -6675,6 +6675,27 @@ def alt_ratio_cells(num: float, den: float) -> tuple[str, str, str]:
     return fn, fd, f"{num / den:.8f}"
 
 
+def alt_mve_cells(px: float, sh_m: float) -> tuple[str, str, str]:
+    """(price, diluted count in millions, MVE dollars) displayed so
+    the printed multiplication reproduces the printed MVE at its own
+    precision — the mf_arith principle applied to the page's one
+    multiplication (check 34; the ALT-NIT-1 fix, 28 Sep 2026: a
+    count rounded to one decimal put the caption's product a million
+    off the printed numerator). Price stays at 2 decimals whenever a
+    count precision 1–8 reproduces; only then does price escalate."""
+    mve = alt_dollars(px * sh_m)
+    fm = f"{mve:,.0f}"
+    for pd_ in range(2, 7):
+        fp = f"{px:,.{pd_}f}"
+        for nd in range(1, 9):
+            fs = f"{sh_m:,.{nd}f}"
+            redo = (float(fp.replace(",", ""))
+                    * float(fs.replace(",", "")) * ALT_M)
+            if f"{redo:,.0f}" == fm:
+                return fp, fs, fm
+    return f"{px}", f"{sh_m}", fm
+
+
 # ── the per-year build ───────────────────────────────────────────────
 
 def alt_year(rec: dict, d: str) -> dict:
@@ -6854,9 +6875,11 @@ def alt_record(t: str) -> dict:
 
 
 # ══════════════════════════════════════════════════════════════════════
-#  SELF-TESTS — Alt 33 (frozen 27 Sep 2026): 1–10 re-prove the ported
-#  block on this carrier with page 11's own synthetics; 11–33 are this
-#  carrier's own. The footer target is Engine 202 + Alt 33, 0 failed.
+#  SELF-TESTS — Alt 34 (frozen 27 Sep 2026 as 33; ALT 34 added by the
+#  Deploy 2 caption-precision fix, 28 Sep 2026): 1–10 re-prove the
+#  ported block on this carrier with page 11's own synthetics; 11–34
+#  are this carrier's own. The footer target is Engine 202 + Alt 34,
+#  0 failed.
 # ══════════════════════════════════════════════════════════════════════
 
 def _alt_syn_rec(variant: str, *, drop: str = "", re_val: float = 5_000.0,
@@ -7183,6 +7206,19 @@ def alt_self_test() -> list[tuple[str, bool, str]]:
                 and alt_dollars(20.0 * 181.0) == 3_620_000_000.0
                 and alt_dollars(0.0) == 0.0,
                 "ALT_M"))
+    _m1 = alt_mve_cells(71.77, 3.186135)
+    _m2 = alt_mve_cells(25.0, 3.5)
+    _m3 = alt_mve_cells(8.35, 6.030612)
+    _mrepro = all(
+        f"{float(a.replace(',', '')) * float(b.replace(',', '')) * ALT_M:,.0f}"
+        == c for a, b, c in (_m1, _m2, _m3))
+    out.append(("ALT 34: the MVE caption's multiplication reproduces at "
+                "displayed precision — price stays at 2 decimals, the "
+                "count escalates only as far as reproduction needs (the "
+                "ALT-NIT-1 fix, 28 Sep 2026)",
+                _mrepro and _m1 == ("71.77", "3.186135", "228,668,909")
+                and _m2 == ("25.00", "3.5", "87,500,000"),
+                f"{_m1[1]} / {_m2[1]}"))
     return out
 
 
@@ -7417,10 +7453,12 @@ if _alt_go and _tk:
             if _head["se_note"]:
                 st.caption(_head["se_note"])
             if _rec["variant"] == "Z":
+                _fp, _fs, _fm = alt_mve_cells(_rec["px"],
+                                              _rec["shares"])
                 st.caption("X4 prices today's market value of the "
                            "common against the filed liabilities: "
-                           f"share price {money(_rec['px'])} × "
-                           f"{_rec['shares']:,.1f}M diluted shares.")
+                           f"share price \\${_fp} × {_fs}M diluted "
+                           f"shares = \\${_fm}.")
             if _rec["rung"] == "D4":
                 st.caption("X3's EBIT is DERIVED (rung D4): no "
                            "operating-income subtotal is filed, so "
@@ -7473,8 +7511,9 @@ if _alt_go and _tk:
             f"EBIT rung {_rec['rung']}"
             + (f"   headline flow FY{_rec['fy_star']}"
                if _rec["fy_star"] else ""),
-            (f"price {_rec['px']} x {_rec['shares']:,.1f}M diluted "
-             "(today's MVE, the one aging input)"
+            ((lambda _c: f"price {_c[0]} x {_c[1]}M diluted "
+              "(today's MVE, the one aging input)")(
+                  alt_mve_cells(_rec["px"], _rec["shares"]))
              if _rec["variant"] == "Z" and _rec["px"]
              else "price not consulted"
              + (" (Z'' is fully filed)" if _rec["variant"] == "Zpp"
@@ -7487,4 +7526,3 @@ if _alt_go and _tk:
     _alt_tag_panel(_rec)
 
 _alt_page_footer()
-
