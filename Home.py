@@ -6,7 +6,7 @@ Streamlit turns every file in pages/ into a nav item automatically, ordered by
 the numeric prefix. THE MENU MAP IS FROZEN (toolkit pass, 12 Sep 2026;
 9 added 13 Sep 2026; 10 added 17 Sep 2026; 11 added 18 Sep 2026;
 12 added 20 Sep 2026; 13 added 21 Sep 2026; 14 added 25 Sep
-2026; 15 added 27 Sep 2026):
+2026; 15 added 27 Sep 2026; 16 added 29 Sep 2026):
 
     1   Tragic Algebra Analyzer
     2   Hundred Bagger Checker      (renders "100-Bagger Checker" on the page)
@@ -22,6 +22,7 @@ the numeric prefix. THE MENU MAP IS FROZEN (toolkit pass, 12 Sep 2026;
     13  Piotroski F-Score           (added 21 Sep 2026)
     14  Dividends                   (added 25 Sep 2026)
     15  Altman Z-Score              (added 27 Sep 2026)
+    16  Serial Acquirers            (added 29 Sep 2026)
     99  Return Calculator           (structurally last for the life of the kit)
 
 3 is retired and is never reused; 8 is reserved. Never reuse a number. The
@@ -53,6 +54,7 @@ MENU: list[tuple[str, str, str]] = [
     ("pages/13_Piotroski.py",              "🩺", "Piotroski F-Score"),
     ("pages/14_Dividends.py",              "🪙", "Dividends"),
     ("pages/15_Altman.py",                 "🌡️", "Altman Z-Score"),
+    ("pages/16_Serial_Acquirers.py",       "🧲", "Serial Acquirers"),
     ("pages/99_Return_Calculator.py",      "📈", "Return Calculator"),
 ]
 
@@ -168,6 +170,20 @@ PAGE_BLURBS: dict[str, str] = {
         "verdict. This is the survival lens the other pages assume. A turnaround "
         "story or a cheap balance sheet reads differently when the score sits in the "
         "zone Altman called distress."
+    ),
+    "Serial Acquirers": (
+        "The filed evidence of growth bought versus grown, for the roll-up shape the "
+        "other pages' exclusion rules thin out. Per year, side by side: revenue and its "
+        "growth, cash spent on acquisitions, goodwill and its change, the stock the "
+        "engine excludes from its dilution measure because it is deal currency rather "
+        "than pay, and buybacks beside it. The filings do not tag the split between "
+        "organic and acquired revenue, so this page never prints one; it shows the "
+        "ingredients and says why it refuses. Return on capital here counts the "
+        "goodwill, because a serial acquirer judged on capital that forgets what it "
+        "paid for its deals grades itself on the wrong denominator; the Magic Formula "
+        "page's return on tangible capital is the deliberate contrast, and the page "
+        "names it. Michael Burry's essay on serial acquirers names the shape; the "
+        "surfaces are this toolkit's own design, and the page says so."
     ),
     "Return Calculator": (
         "A plain compound-return calculator: ending amount, required return, years to "
