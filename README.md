@@ -211,6 +211,10 @@ implies (return times retention) is computed and handed to the Tragic Algebra An
 the rate not to exceed. A growth assumption above that ceiling is a claim that the company
 funds expansion from outside, more debt or stock, stated out loud instead of assumed.
 
+On a commodity producer the page shows the filed margin history and, beside an open
+verdict, notes that the delivered rate is measured to an endpoint at the current commodity
+price level.
+
 ## 🌱 Inflection Checker
 
 For companies whose income statement looks terrible but whose trend tells a story: revenue
@@ -283,6 +287,11 @@ quoting in the filing currency, which the page discovers itself, and an ADS rati
 units, never currency. A paste mode takes typed figures through the identical engine for
 companies EDGAR has never heard of, and a US-GAAP dollar filer (Shopify's 40-F included)
 is sent back to the Tragic Algebra Analyzer by name.
+
+On a commodity producer, identified by SIC code (metal mining, coal, oil and gas
+extraction), the page adds a named caveat beside a favorable verdict and shows the filed
+margin history, because trailing earnings at a cycle's price level are not earnings power
+and this page cannot normalize them.
 
 ## 🧮 DCF Evaluator
 
@@ -374,6 +383,10 @@ adjustments, depreciation in excess of maintenance capex and SG&A spent on growt
 are boxes with stated defaults of zero, never silent estimates, because filings do not
 encode either split. EPV at r is a price, not a property of the company: the price at
 which a buyer earns r a year on the business exactly as it stands, growing never.
+
+On a commodity producer the page notes that the normalized margin is a mean over the
+commodity prices of the readable years, not over a commodity cycle: it normalizes across
+its window, not to a mid-cycle price, and the margin history beside it is the evidence.
 
 Beside the standard leg, the kit's signature: the same EPV on SBC-corrected earnings,
 the margin recomputed with the true stock-comp cost Ω in place of the GAAP charge, both
@@ -595,7 +608,10 @@ pages, and it sits last in the menu on purpose.
   ΔE outside a meaningful range, financial-sector structures, unbounded growth seeds, and
   balance-sheet lines that stop before net income does all produce a warning rather than a
   confident wrong number. A forward year that is a loss on a profitable record (a one-off
-  write-down) seeds owners' earnings from the five-year median and says so.
+  write-down) seeds owners' earnings from the five-year median and says so. When the
+  latest net margin sits far above the company's own long-window median, a note beside
+  the owners' earnings box says the seed is built from cycle-level earnings and the
+  ladder inherits it.
 * **Works at microcap scale**: the year-by-year table chooses its own precision from the
   figures in it, so a company with 3M shares reads in tenths or hundredths of a million
   rather than rounding its stock comp to zero.
