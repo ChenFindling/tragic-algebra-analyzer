@@ -52,6 +52,7 @@ read or failed to find.
 | **Piotroski F-Score** | Piotroski's nine financial-strength tests, each shown with its filed inputs, passed out of readable |
 | **Dividends** | The filed dividend record, and its coverage against both reported earnings and owners' earnings after stock comp |
 | **Altman Z-Score** | Altman's bankruptcy score: five filed ratios, his coefficients, his zone labels with attribution, the model selected by SIC |
+| **Serial Acquirers** | Growth bought versus grown: acquisition spend, goodwill, deal currency issuance, and return on capital with the goodwill counted |
 | **Return Calculator** | Plain compound-return arithmetic, deliberately last in the menu |
 
 ---
@@ -584,6 +585,51 @@ the Financials Checker with the attribution stated: Altman's estimation samples 
 contained financial firms, and the exclusion here is this project's rule with a
 mechanical reason on top, since an unclassified balance sheet has no current lines to
 read. The emerging-market constant of 3.25 is deliberately not applied.
+
+## 🧲 Serial Acquirers
+
+The roll-up question, asked from the filings alone. Michael Burry's essay on serial
+acquirers names the shape: companies whose growth is bought, whose share count is deal
+currency, and whose returns must be judged on everything they paid. The surfaces on this
+page are this toolkit's own design, and the page says so.
+
+The honest core is a refusal. True organic versus acquired revenue decomposition lives in
+footnote text, not in reliably tagged elements, so this page never prints an organic
+growth figure. Instead it prints, per year and side by side, the filed facts the split
+would be made of: revenue and its growth, cash spent on acquisitions net of cash acquired
+and signed as filed (a negative year means the cash inside the acquired companies
+exceeded the cash paid, and the page says so), the tagged dollar value of stock issued
+for acquisitions, goodwill at each year's own balance date with its year to year change
+verified between matching year ends, the share issuance the valuation engine excludes
+from its dilution measure because it is deal currency rather than pay, and buyback
+dollars beside it all. A dash is an absent fact, never a zero, and a filed zero prints as
+the zero it is. One sentence states why the split itself is missing: the filings do not
+tag it, and this page will not claim it.
+
+Return on capital here counts the goodwill. The Magic Formula page computes Greenblatt's
+return on tangible capital, which excludes goodwill on purpose; a serial acquirer judged
+that way grades itself on a denominator that forgets its purchase prices. This page uses
+the same operating income machinery and the same working capital conventions, then adds
+goodwill and acquired intangibles back into the base, with the addition printed as
+arithmetic so the difference between the two pages is a number you can check by hand.
+Beside it, the same return on SBC-corrected operating income, the toolkit's signature.
+Balance lines must sit at the year's exact balance date or the year refuses by name, and
+the refusal names the nearest filed value so you can judge for yourself whether the
+missing line matters; a goodwill line that went dark refuses the year rather than serving
+as zero, because a shrunken denominator is exactly the flattery this page exists to
+prevent. An intangibles line filed under the finite lived element counts only where the
+filer also presents goodwill, because a company with no goodwill anywhere whose
+intangibles element suddenly reads is presenting something else under that name.
+
+A company that never tagged an acquisition payment gets a clean answer saying so, which
+is different from a stale line, and the page names which it found. There is a tension
+with the main page, stated in the open: the Tragic Algebra Analyzer excludes deal
+issuance from its dilution measure because it is not compensation, and the price of that
+correct ruling is that a roll-up's deal currency is invisible there. This page shows it
+instead. Years the engine excluded as capital events still render, with the exclusion
+marked, because the deal year is this page's subject. Financials route to the Financials
+Checker; foreign filers to the Non-US Checker. No score, no verdict, no per deal
+analysis: deal level returns need disclosure the tags do not carry.
 
 ## 📈 Return Calculator
 
