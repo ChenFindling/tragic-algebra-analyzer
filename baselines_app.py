@@ -3342,6 +3342,12 @@ def load(ticker: str, n_years: int = 10):
         for name, ks in BALANCE_ROWS]
     return years, notes, {"up_c_basis": _upcb, "tags": tags, "net_cash": net_cash, "cash": cash_total, "debt": debt_total,
                           "median_OE": _med, "revenue": latest_rev, "cagr3": cagr3,
+                          # FLAG session (28 Sep 2026): the filed revenue series,
+                          # fy-keyed in $M. Consumed by tool 1's seed cycle
+                          # note; other span carriers return it unrendered.
+                          # Returned, never recomputed page-locally (the
+                          # SHD-vs-_wv two-reads lesson).
+                          "rev_by_fy": {fy: v[2] / 1e6 for fy, v in rev.items()},
                           "leases": lease_total,
                           # The form that resolved against the SEC list. Yahoo uses the
                           # same hyphenated spelling, so pricing BRK.B as typed returned
