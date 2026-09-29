@@ -7218,26 +7218,35 @@ if _sa_go and _tk:
     # ── the summary strip: assembly, not opinion ──
     _sm = sa_summary(_rec["window"], _acq["ser"], _gw_cells, _rows)
     _s1, _s2, _s3, _s4 = st.columns(4)
-    _s1.metric("Acq spend, window total",
-               f"${_sm['spend_total']:,.0f}M"
-               if _sm["spend_total"] is not None else "n/a",
-               help=f"signed sum over {_sm['spend_n']} of "
-                    f"{_sm['spend_m']} tagged window years")
-    _s2.metric("Goodwill, first shown → latest",
-               (f"${_sm['gw_first']:,.0f}M → ${_sm['gw_last']:,.0f}M"
-                if _sm["gw_first"] is not None else
-                ("none tagged" if _gi["gw_never"] else "n/a")))
-    _s3.metric("Deal capital share of base",
-               f"{_sm['share'] * 100:,.0f}%"
-               if _sm["share"] is not None else "n/a",
-               help="goodwill plus intangibles over capital with deals "
-                    "counted, latest computed year")
-    _s4.metric(f"ROIC FY{_sm['fy_last']} (SBC-corrected)"
-               if _sm["fy_last"] else "ROIC, latest",
-               (f"{_sm['roic_last'] * 100:,.1f}% "
-                + (f"({_sm['adj_last'] * 100:,.1f}%)"
-                   if _sm["adj_last"] is not None else "(n/a)"))
-               if _sm["roic_last"] is not None else "n/a")
+    with _s1:
+        st.caption("Acq spend, window total")
+        st.markdown("### " + (d(_sm["spend_total"], 0) + "M"
+                              if _sm["spend_total"] is not None
+                              else "n/a"))
+        st.caption(f"signed sum, {_sm['spend_n']} of "
+                   f"{_sm['spend_m']} window years tagged")
+    with _s2:
+        st.caption("Goodwill, first shown → latest")
+        st.markdown("### " + (d(_sm["gw_first"], 0) + "M → "
+                              + d(_sm["gw_last"], 0) + "M"
+                              if _sm["gw_first"] is not None else
+                              ("none tagged" if _gi["gw_never"]
+                               else "n/a")))
+    with _s3:
+        st.caption("Deal capital share of base")
+        st.markdown("### " + (f"{_sm['share'] * 100:,.0f}%"
+                              if _sm["share"] is not None else "n/a"))
+        st.caption("goodwill + intangibles over capital with deals "
+                   "counted, latest computed year")
+    with _s4:
+        st.caption(f"ROIC FY{_sm['fy_last']} (SBC-corrected)"
+                   if _sm["fy_last"] else "ROIC, latest")
+        st.markdown("### " + ((f"{_sm['roic_last'] * 100:,.1f}% "
+                               + (f"({_sm['adj_last'] * 100:,.1f}%)"
+                                  if _sm["adj_last"] is not None
+                                  else "(n/a)"))
+                              if _sm["roic_last"] is not None
+                              else "n/a"))
     st.caption(SA_STRIP_CAPTION)
     st.markdown("**How to read the shape:** " + SA_READING_KEY)
     st.divider()
