@@ -3336,6 +3336,12 @@ def load(ticker: str, n_years: int = 10):
         for name, ks in BALANCE_ROWS]
     return years, notes, {"up_c_basis": _upcb, "tags": tags, "net_cash": net_cash, "cash": cash_total, "debt": debt_total,
                           "median_OE": _med, "revenue": latest_rev, "cagr3": cagr3,
+                          # FLAG session (28 Sep 2026): the filed revenue series,
+                          # fy-keyed in $M. Consumed by tool 1's seed cycle
+                          # note; other span carriers return it unrendered.
+                          # Returned, never recomputed page-locally (the
+                          # SHD-vs-_wv two-reads lesson).
+                          "rev_by_fy": {fy: v[2] / 1e6 for fy, v in rev.items()},
                           "leases": lease_total,
                           # The form that resolved against the SEC list. Yahoo uses the
                           # same hyphenated spelling, so pricing BRK.B as typed returned
@@ -5908,6 +5914,127 @@ def d(x, dp=2):
     return f"\\${x:,.{dp}f}"
 
 
+# ══════════════════════════════════════════════════════════════════════
+#  SEED CYCLE NOTE — FLAG session job 2 (28 Sep 2026)
+# ══════════════════════════════════════════════════════════════════════
+#
+# The 2-Sep coverage map's item 3, recovered by the 28-Sep shelf audit:
+# when the latest net margin sits far above the filer's own long-window
+# median, the owners'-earnings seed is a cycle reading and the IV15
+# ladder inherits it — the same disease the commodity flag names on
+# pages 6/2/10, with a broader trigger and no SIC: the filer's own
+# history is the evidence. A NOTE beside the seed, never a verdict
+# change. Net margin (N/REV), not operating margin: those are the two
+# raw filed lines this reader already returns, and OE years get
+# excluded and capped by guards, so an OE-margin median would carry
+# holes. Both series arrive from load's own return — returned, never
+# recomputed page-locally (the SHD-vs-_wv two-reads lesson).
+#
+# The trigger is a BAND, not a cliff — three joint conditions, each
+# pinned by fixture, so no single-parameter knife edge can flip it:
+#   window  ≥ 8 overlapping filed years of N and REV (fewer is not a
+#           "long-window" claim; silent, with no note about the note)
+#   level   latest ≥ median + 6.0 pp
+#   ratio   latest ≥ 1.5 × median when the median is positive; a
+#           non-positive median fires on the pp condition alone (a
+#           history of losses under a solidly profitable latest year
+#           is a cycle reading by definition, and the ratio is
+#           meaningless there)
+# Fires in the flattering direction only — a latest margin far BELOW
+# its median is the thin-margin recovery note's territory, not this
+# one's. KGC (page 6's banked exhibit): 9 filed years, median 13.5%,
+# latest 33.9% — +20.4 pp at 2.5× — fires decisively; NEM: median
+# 7.1%, latest 31.3% — +24.2 pp at 4.4×. MSFT-shaped stability stays
+# silent on the ratio leg.
+
+SEED_CYCLE_MIN_YEARS = 8
+SEED_CYCLE_PP = 0.06
+SEED_CYCLE_RATIO = 1.5
+
+
+def seed_cycle_note(n_by_fy: dict, rev_by_fy: dict) -> str | None:
+    """The note, or None. Names the margin, the median and the window,
+    ties the level to the seed, and asserts nothing about which level
+    is normal — the filings do not say."""
+    overlap = sorted(fy for fy in set(n_by_fy) & set(rev_by_fy)
+                     if rev_by_fy[fy] and rev_by_fy[fy] > 0)
+    if len(overlap) < SEED_CYCLE_MIN_YEARS:
+        return None
+    margins = [n_by_fy[fy] / rev_by_fy[fy] for fy in overlap]
+    latest_fy, latest = overlap[-1], margins[-1]
+    _v = sorted(margins)
+    _n = len(_v)
+    med = _v[_n // 2] if _n % 2 else (_v[_n // 2 - 1] + _v[_n // 2]) / 2.0
+    if latest - med < SEED_CYCLE_PP:
+        return None
+    if med > 0 and latest < SEED_CYCLE_RATIO * med:
+        return None
+    return (f"**The seed is a cycle reading.** FY{latest_fy} net margin {latest:.1%} sits "
+            f"{(latest - med) * 100:.1f} pp above the {med:.1%} median of the {len(overlap)} "
+            "filed years. The seed above is built from earnings at that level, and the IV15 "
+            "ladder inherits it. The filings do not say which level is normal.")
+
+
+def seed_note_self_test() -> list[tuple[str, bool, str]]:
+    """The Seed-note suite — five checks, printed by the footer beside
+    the engine's own line."""
+    out: list[tuple[str, bool, str]] = []
+    _rev8 = {fy: 1000.0 for fy in range(2018, 2026)}
+
+    _edge_n = {fy: 125.0 for fy in range(2018, 2025)}
+    _edge_n[2025] = 187.5
+    _strong_n = {fy: 50.0 for fy in range(2018, 2025)}
+    _strong_n[2025] = 300.0
+    out.append(("Seed note fires at the band's exact edge and on the strong case",
+                seed_cycle_note(_edge_n, _rev8) is not None
+                and seed_cycle_note(_strong_n, _rev8) is not None,
+                "median 12.5%, latest 18.75% — exactly +6.25 pp at exactly 1.5x; and 5% vs 30%"))
+
+    _pp_only = {fy: 200.0 for fy in range(2018, 2025)}
+    _pp_only[2025] = 270.0
+    _ratio_only = {fy: 20.0 for fy in range(2018, 2025)}
+    _ratio_only[2025] = 50.0
+    _under_both = {fy: 125.0 for fy in range(2018, 2025)}
+    _under_both[2025] = 180.0
+    out.append(("Seed note: no single-parameter knife edge — each condition alone stays silent",
+                seed_cycle_note(_pp_only, _rev8) is None
+                and seed_cycle_note(_ratio_only, _rev8) is None
+                and seed_cycle_note(_under_both, _rev8) is None,
+                "+7 pp at 1.35x silent; 2.5x at +3 pp silent; +5.5 pp at 1.44x silent"))
+
+    _rev7 = {fy: 1000.0 for fy in range(2019, 2026)}
+    out.append(("Seed note: seven overlap years are silent, eight fire",
+                seed_cycle_note(_strong_n, _rev7) is None
+                and seed_cycle_note(_strong_n, _rev8) is not None,
+                "a 7-year median is not a long-window claim"))
+
+    _neg_med = {2018: -80.0, 2019: -60.0, 2020: -40.0, 2021: -20.0,
+                2022: -10.0, 2023: 5.0, 2024: 10.0, 2025: 50.0}
+    _below = {fy: 200.0 for fy in range(2018, 2025)}
+    _below[2025] = 40.0
+    out.append(("Seed note: a non-positive median fires on the pp condition alone; "
+                "below-median stays silent",
+                seed_cycle_note(_neg_med, _rev8) is not None
+                and seed_cycle_note(_below, _rev8) is None,
+                "a +5% latest 6.5 pp above a -1.5% loss-history median fires; "
+                "the flattering direction only"))
+
+    _msg = seed_cycle_note(_edge_n, _rev8)
+    from pathlib import Path as _Psc
+    _ssc = _Psc(__file__).read_text(encoding="utf-8")
+    _ai = _ssc.find('c1.caption(f"Net cash' + ' {d(net_cash,0)}M')
+    _bi = _ssc.find("seed_cycle_note({y.fy: y.N" + " for y in years}")
+    out.append(("Seed note wording names margin, median and window; renders beside the seed box",
+                _msg is not None and "cycle reading" in _msg
+                and "FY2025 net margin 18.8%" in _msg
+                and "6.2 pp above the 12.5% median of the 8 filed years" in _msg
+                and "which level is normal" in _msg
+                and 0 <= _ai < _bi and (_bi - _ai) < 900,
+                "the fixture sentence exact; own-source scan: note adjacent to the inputs row"))
+
+    return out
+
+
 def _page_footer() -> None:
     """The glossary, the self-test button and the disclaimer. A refused
     ticker st.stop()s before the bottom of the script, and these used to
@@ -5946,8 +6073,11 @@ def _page_footer() -> None:
             if st.button("Run checks"):
                 _results = self_test()
                 _sev, _line = test_summary(_results)
-                getattr(st, _sev)(_line)
-                for name, ok, got in _results:
+                getattr(st, _sev)("Engine: " + _line)
+                _sn_results = seed_note_self_test()
+                _sn_sev, _sn_line = test_summary(_sn_results)
+                getattr(st, _sn_sev)("Seed-note: " + _sn_line)
+                for name, ok, got in _results + _sn_results:
                     st.write(("✅ " if ok else "❌ ") + f"{name} — {got}")
                 st.caption("Tolerances: dollar figures within $1, ratios within half a point. "
                            "Burry rounds published prices and share counts, so exact equality "
@@ -6251,6 +6381,12 @@ if years and ticker and st.session_state.get("tk") == ticker:
     _trend = (f"  ·  revenue {growth:.1%} latest vs {_c3:.1%} 3-yr"
               if _c3 is not None else "")
     c1.caption(f"Net cash {d(net_cash,0)}M  ·  {d(cash,0)}M cash less {d(debt,0)}M debt{_trend}")
+
+    # ── the seed cycle note (FLAG session job 2, 28 Sep 2026): adjacent
+    #    to the seed it qualifies, never a verdict change.
+    _scn = seed_cycle_note({y.fy: y.N for y in years}, pre.get("rev_by_fy", {}))
+    if _scn:
+        st.warning(_scn)
 
     with st.expander("Model settings — what these do"):
         st.caption(
