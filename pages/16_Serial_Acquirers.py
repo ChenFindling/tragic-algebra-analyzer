@@ -6285,6 +6285,43 @@ SA_YEAR_END_CAVEAT = (
     "income — the conservative direction for a page about acquirers, "
     "stated rather than smoothed.")
 
+SA_READING_KEY = (
+    "rising goodwill with a held or rising return on deal-counted "
+    "capital means the acquisitions are earning the premiums paid for "
+    "them; rising spend with a falling return means the roll-up is "
+    "diluting its own returns as it buys; deal-currency issuance "
+    "beside heavy spend means the growth was bought partly with your "
+    "shares, which the main page's dilution measure deliberately does "
+    "not see. This page will not draw the conclusion for you; these "
+    "are the shapes it exists to make visible.")
+
+SA_STRIP_CAPTION = ("A summary, not a verdict — every figure above is "
+                    "assembled from the columns below.")
+
+
+def sa_summary(window: list[int], ser: dict, gw_cells: list,
+               rows: list[dict]) -> dict:
+    """The strip's four assemblies, every one a recomputation of
+    figures the tables below print — the page's own arithmetic
+    surfaced, never an opinion added. Spend totals SIGNED (a negative
+    year nets), goodwill runs first-shown to latest of the RENDERED
+    cells, the share is one division on the latest computed row, and
+    the returns are that row's own."""
+    vals = [ser[fy] for fy in window if fy in ser]
+    out = {"spend_total": sum(vals) if vals else None,
+           "spend_n": len(vals), "spend_m": len(window),
+           "gw_first": None, "gw_last": None, "share": None,
+           "roic_last": None, "adj_last": None, "fy_last": None}
+    shown = [v for v in gw_cells if v is not None]
+    if shown:
+        out["gw_first"], out["gw_last"] = shown[0], shown[-1]
+    for r in rows:
+        if r.get("roic") is not None:
+            out["roic_last"], out["adj_last"] = r["roic"], r["adj"]
+            out["fy_last"] = r["fy"]
+            out["share"] = (r["gw"] + r["int"]) / r["cap_in"]
+    return out
+
 
 def sa_dated_instant(facts: dict, tag: str) -> dict[str, float]:
     """{end date: $M} for one instant element, ANNUAL FORMS ONLY, latest
@@ -6976,7 +7013,8 @@ def sa_self_test() -> list[tuple[str, bool, str]]:
     # ── wordings: the banned strings and the route names ──
     _all_text = " ".join([SA_REFUSAL, SA_TENSION, SA_CONTRAST,
                           SA_NEG_ACQ, SA_DELTA_BUNDLE, SA_PARTIAL_INT,
-                          SA_YEAR_END_CAVEAT, _c1, _c2,
+                          SA_YEAR_END_CAVEAT, SA_READING_KEY,
+                          SA_STRIP_CAPTION, _c1, _c2,
                           sa_acq_zero_state({}),
                           sa_tagged_line({2021: 1.0}, [2020, 2021])])
     ok(("No rendered sentence prints an organic-growth figure or the "
@@ -7023,6 +7061,29 @@ def sa_self_test() -> list[tuple[str, bool, str]]:
         "16" in _doc and "Serial Acquirers" in _doc
         and "pages/16_Serial_Acquirers.py" in _self,
         "a page that is not on Home and in the README does not exist"))
+
+    # ── Deploy 2 (29 Sep 2026): the strip and the key ──
+    _sm = sa_summary([2024, 2025], {2024: 10.0, 2025: -5.0},
+                     [None, 200.0, 300.0],
+                     [{"fy": 2025, "roic": 0.10, "adj": None,
+                       "gw": 100.0, "int": 50.0, "cap_in": 500.0}])
+    ok(("The summary strip is assembly, not opinion: every figure "
+        "recomputes from the columns (signed spend sum, first-shown "
+        "goodwill, one share division, the latest row's own returns)",
+        _sm["spend_total"] == 5.0 and _sm["spend_n"] == 2
+        and _sm["gw_first"] == 200.0 and _sm["gw_last"] == 300.0
+        and abs(_sm["share"] - 0.30) < 1e-12
+        and _sm["roic_last"] == 0.10 and _sm["fy_last"] == 2025,
+        "a summary, not a verdict — the doctrine line of Deploy 2"))
+    ok(("The reading key teaches shapes generically: no per-ticker "
+        "word, no verdict word, the signature sentence pinned",
+        "will not draw the conclusion" in SA_READING_KEY
+        and "organic" not in SA_READING_KEY
+        and not any(v in SA_READING_KEY.lower()
+                    for v in ("fat pitch", "cheap", "buy ",
+                              "undervalued", "verdict:"))
+        and "shapes it exists to make visible" in SA_READING_KEY,
+        "the judgment-column philosophy applied to page design"))
 
     return out
 
@@ -7117,11 +7178,15 @@ if _sa_go and _tk:
     _rev = _meta.get("rev_by_fy", {})
     _rd = _rec["rdates"]
 
-    st.markdown(SA_REFUSAL)
+    _pct = st.number_input(
+        "Working cash floor, % of revenue (the shared convention; a "
+        "judgement box, not a filed figure)",
+        min_value=0.0, max_value=20.0,
+        value=MF_OP_CASH_PCT_DEFAULT * 100, step=0.5) / 100.0
+    _rows, _head = sa_roic_rows(_years, _meta, _rec["facts"], _gi, _pct)
 
-    # ── the juxtaposition table ──
-    _gw_vals = []
-    _tab = []
+    # ── build both tables' rows first (the strip assembles from them) ──
+    _tab1, _tab2, _gw_cells, _dcaps = [], [], [], []
     _prev_end = None
     for _y in _years:
         _fy = _y.fy
@@ -7130,27 +7195,58 @@ if _sa_go and _tk:
                 if _end and not _gi["gw_never"] else None)
         _dgw, _dwhy = (sa_delta_cell(_gi["gw"], _prev_end, _end)
                        if _end and not _gi["gw_never"] else (None, ""))
-        _g = sa_growth_cell(_rev, _fy)
-        _ex = _rec["excl_iss"].get(_fy)
-        _gw_vals.append(_gwv)
-        _tab.append({
+        _gw_cells.append(_gwv)
+        _tab1.append({
             "FY": _fy,
             "Revenue $M": sa_cell(_rev.get(_fy)),
-            "Growth %": sa_cell(_g),
+            "Growth %": sa_cell(sa_growth_cell(_rev, _fy)),
             "Acq spend $M": sa_cell(_acq["ser"].get(_fy)),
-            "Equity for deals $M": (f"{_y.A:,.1f}" if _y.A > 0 else "—"),
             "Goodwill $M": sa_cell(_gwv),
             "ΔGW $M": ("—*" if _dwhy else sa_cell(_dgw)),
-            "Excluded issuance M sh": sa_cell(_ex, 2),
+        })
+        _tab2.append({
+            "FY": _fy,
+            "Equity for deals $M": (f"{_y.A:,.1f}" if _y.A > 0 else "—"),
+            "Excluded issuance M sh": sa_cell(_rec["excl_iss"].get(_fy), 2),
             "Buybacks $M": f"{_y.T:,.1f}",
             "Engine mark": _y.excluded or "",
         })
         if _dwhy:
-            st.caption(f"ΔGW FY{_fy}: {_dwhy}.")
+            _dcaps.append(f"ΔGW FY{_fy}: {_dwhy}.")
         _prev_end = _end
-    st.dataframe(pd.DataFrame(_tab), hide_index=True,
-                 use_container_width=True)
 
+    # ── the summary strip: assembly, not opinion ──
+    _sm = sa_summary(_rec["window"], _acq["ser"], _gw_cells, _rows)
+    _s1, _s2, _s3, _s4 = st.columns(4)
+    _s1.metric("Acq spend, window total",
+               f"${_sm['spend_total']:,.0f}M"
+               if _sm["spend_total"] is not None else "n/a",
+               help=f"signed sum over {_sm['spend_n']} of "
+                    f"{_sm['spend_m']} tagged window years")
+    _s2.metric("Goodwill, first shown → latest",
+               (f"${_sm['gw_first']:,.0f}M → ${_sm['gw_last']:,.0f}M"
+                if _sm["gw_first"] is not None else
+                ("none tagged" if _gi["gw_never"] else "n/a")))
+    _s3.metric("Deal capital share of base",
+               f"{_sm['share'] * 100:,.0f}%"
+               if _sm["share"] is not None else "n/a",
+               help="goodwill plus intangibles over capital with deals "
+                    "counted, latest computed year")
+    _s4.metric(f"ROIC FY{_sm['fy_last']} (SBC-corrected)"
+               if _sm["fy_last"] else "ROIC, latest",
+               (f"{_sm['roic_last'] * 100:,.1f}% "
+                + (f"({_sm['adj_last'] * 100:,.1f}%)"
+                   if _sm["adj_last"] is not None else "(n/a)"))
+               if _sm["roic_last"] is not None else "n/a")
+    st.caption(SA_STRIP_CAPTION)
+    st.markdown("**How to read the shape:** " + SA_READING_KEY)
+    st.divider()
+
+    st.markdown(SA_REFUSAL)
+    st.dataframe(pd.DataFrame(_tab1), hide_index=True,
+                 use_container_width=True)
+    for _c in _dcaps:
+        st.caption(_c)
     st.caption(sa_tagged_line(_acq["ser"], _rec["window"]))
     if _acq["neg_years"]:
         st.caption("FY" + ", FY".join(str(f) for f in _acq["neg_years"])
@@ -7161,10 +7257,13 @@ if _sa_go and _tk:
     if _zs:
         st.info(_zs)
     st.caption(SA_DELTA_BUNDLE)
+
     st.markdown("**Deal currency.** " + SA_TENSION + " The column "
                 "combines the engine's exclusions on purpose: an "
                 "offering can fund a deal, and a per-category header "
                 "would call that financing something it is not.")
+    st.dataframe(pd.DataFrame(_tab2), hide_index=True,
+                 use_container_width=True)
 
     # ── ROIC with the goodwill counted ──
     st.subheader("Return on capital, with the goodwill counted")
@@ -7178,21 +7277,12 @@ if _sa_go and _tk:
     if _gi["gate_note"]:
         st.warning(_gi["gate_note"])
 
-    _pct = st.number_input(
-        "Working cash floor, % of revenue (the shared convention; a "
-        "judgement box, not a filed figure)",
-        min_value=0.0, max_value=20.0,
-        value=MF_OP_CASH_PCT_DEFAULT * 100, step=0.5) / 100.0
-
-    _rows, _head = sa_roic_rows(_years, _meta, _rec["facts"], _gi, _pct)
     _rt = []
     for _r in _rows:
         _rt.append({
             "FY": _r["fy"],
             "EBIT $M": sa_cell(_r["ebit"]),
             "Tangible capital $M": sa_cell(_r["cap_ex"]),
-            "+ Goodwill": sa_cell(_r["gw"]),
-            "+ Intangibles": sa_cell(_r["int"], 2),
             "Capital, deals counted (the addition)":
                 _r["arith"] or "—",
             "ROIC %": (f"{_r['roic'] * 100:,.1f}"
