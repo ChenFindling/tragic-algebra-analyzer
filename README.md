@@ -53,6 +53,7 @@ read or failed to find.
 | **Dividends** | The filed dividend record, and its coverage against both reported earnings and owners' earnings after stock comp |
 | **Altman Z-Score** | Altman's bankruptcy score: five filed ratios, his coefficients, his zone labels with attribution, the model selected by SIC |
 | **Serial Acquirers** | Growth bought versus grown: acquisition spend, goodwill, deal currency issuance, and return on capital with the goodwill counted |
+| **Runway & Dilution** | Months of cash at the filed burn rate, and the as-filed record of equity issuance priced per share |
 | **Return Calculator** | Plain compound-return arithmetic, deliberately last in the menu |
 
 ---
@@ -630,6 +631,61 @@ instead. Years the engine excluded as capital events still render, with the excl
 marked, because the deal year is this page's subject. Financials route to the Financials
 Checker; foreign filers to the Non-US Checker. No score, no verdict, no per deal
 analysis: deal level returns need disclosure the tags do not carry.
+
+## ⏳ Runway & Dilution
+
+Every valuation page in this toolkit refuses a company that burns cash, and every one
+of them is right to. There is no earnings power to capitalize, no owners' earnings to
+haircut, no margin to normalize. That refusal is honest and it is also a hole, because
+the filers it refuses are real and the questions they raise have filed answers.
+
+This page asks the two that do. How much cash is on hand, how fast it is leaving, and
+how many months the last reported rate would cover. And what each year's equity
+issuance brought in beside the shares it took from the holders who were already there,
+priced per share on the share basis the filings themselves used rather than a split
+restated one.
+
+The cash position is read at the latest annual balance date, keyed to that exact date,
+with cash equivalents and short term investments counted and long term investments
+deliberately left out, because money parked long term is not runway money at the
+horizon this page measures; where that matters the position reads smaller than the
+main page's net cash numerator, and the direction is named. Debt is shown at the same
+date and never netted in, because a months figure is cash against burn, not net cash,
+and maturities are not visible to it. The burn is the filed operating cash flow for
+the year that balance date closes, with capital spending printed beside it so free
+burn is visible, and the months figure is anchored on free burn because the
+alternative can only overstate how long the cash lasts. Where a filer has never
+tagged a capital spending line the page says so and anchors on operating cash flow
+alone, with the one way that figure can err stated plainly. The arithmetic is shown,
+so the division reconciles by hand, and the months figure never prints from a stale
+cash date or from a burn and a balance of different vintages.
+
+One sentence sits next to the months figure and cannot be separated from it. The
+filed rate is last year's rate. A company that is burning cash is usually changing
+that rate on purpose, cutting or spending into a trial or a build, and the filings do
+not say what the next year's rate will be. The months figure is the arithmetic of a
+reported rate against a reported balance, which is what it is and nothing more. This
+page prints no judgement about whether a company can keep going, because that
+judgement is not in the filings and the page will not manufacture one.
+
+The issuance column is deliberately not called money raised. The elements that carry
+these dollars can also carry employee option and purchase plan proceeds where a filer
+tags both under one name, and the filings do not split them, so the column is
+labelled equity issuance proceeds as filed and the page explains the difference
+instead of guessing it: proceeds beside near zero excluded share issuance is payroll
+cadence money moving through employee plans, while proceeds beside event sized
+issuance is a raise, and the dollars per share arithmetic is the price of it. The
+ladder of elements is filled across with each year's serving element named, never
+summed within a year, because an offering usually appears inside more than one
+element and summing them would count the same money twice. A year no element carries
+shows a dash, which is an absent fact and never a zero.
+
+A filer that generates cash is not refused here. It gets a clean answer saying
+operating cash flow was positive in the latest year and that runway is not its
+question, with its cash position shown anyway. A filer whose operating cash flow is
+positive while free cash flow is negative gets both figures and the page says which
+is which. Financials route to the Financials Checker; foreign filers to the Non-US
+Checker.
 
 ## 📈 Return Calculator
 
