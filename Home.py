@@ -6,7 +6,8 @@ Streamlit turns every file in pages/ into a nav item automatically, ordered by
 the numeric prefix. THE MENU MAP IS FROZEN (toolkit pass, 12 Sep 2026;
 9 added 13 Sep 2026; 10 added 17 Sep 2026; 11 added 18 Sep 2026;
 12 added 20 Sep 2026; 13 added 21 Sep 2026; 14 added 25 Sep
-2026; 15 added 27 Sep 2026; 16 added 29 Sep 2026):
+2026; 15 added 27 Sep 2026; 16 added 29 Sep 2026;
+17 added 30 Sep 2026):
 
     1   Tragic Algebra Analyzer
     2   Hundred Bagger Checker      (renders "100-Bagger Checker" on the page)
@@ -23,6 +24,7 @@ the numeric prefix. THE MENU MAP IS FROZEN (toolkit pass, 12 Sep 2026;
     14  Dividends                   (added 25 Sep 2026)
     15  Altman Z-Score              (added 27 Sep 2026)
     16  Serial Acquirers            (added 29 Sep 2026)
+    17  Runway & Dilution           (added 30 Sep 2026)
     99  Return Calculator           (structurally last for the life of the kit)
 
 3 is retired and is never reused; 8 is reserved. Never reuse a number. The
@@ -55,6 +57,7 @@ MENU: list[tuple[str, str, str]] = [
     ("pages/14_Dividends.py",              "🪙", "Dividends"),
     ("pages/15_Altman.py",                 "🌡️", "Altman Z-Score"),
     ("pages/16_Serial_Acquirers.py",       "🧲", "Serial Acquirers"),
+    ("pages/17_Runway.py",                 "⏳", "Runway & Dilution"),
     ("pages/99_Return_Calculator.py",      "📈", "Return Calculator"),
 ]
 
@@ -184,6 +187,23 @@ PAGE_BLURBS: dict[str, str] = {
         "page's return on tangible capital is the deliberate contrast, and the page "
         "names it. Michael Burry's essay on serial acquirers names the shape; the "
         "surfaces are this toolkit's own design, and the page says so."
+    ),
+    "Runway & Dilution": (
+        "How long the cash lasts at the rate the filings report, and what past equity "
+        "issuance cost the holders who were already there. Every valuation page in this "
+        "kit refuses a company that burns cash, and rightly: there is no earnings power "
+        "to capitalize. What can still be asked from filings alone is the cash position "
+        "at the latest balance date, last year's burn with capital spending named beside "
+        "it, the months the filed rate would cover, and, per year, the equity issuance "
+        "proceeds as the filings tag them beside the shares issued, priced per share on "
+        "the as-filed count basis. The months figure never prints without the sentence "
+        "that is part of it: the filed rate is last year's rate, a burning company is "
+        "usually changing that rate on purpose, and the filings do not say what next "
+        "year's rate will be. The proceeds column is labelled as filed, never as money "
+        "raised, because the tagged elements can also carry employee plan issuance and "
+        "the filings do not split them. A filer that generates cash gets a clean answer "
+        "saying so, with its cash position still shown. No survival verdict is printed "
+        "here, ever, and none is implied."
     ),
     "Return Calculator": (
         "A plain compound-return calculator: ending amount, required return, years to "
