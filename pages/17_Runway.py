@@ -6021,7 +6021,10 @@ RW_READING_KEY = (
     "filed balance, and the sentence beside it is not a disclaimer "
     "but part of the figure; issuance proceeds beside near-zero "
     "excluded share issuance is payroll-cadence money moving through "
-    "employee plans, while proceeds beside event-sized excluded "
+    "employee plans, unless the engine marks the year as a capital "
+    "event, in which case the zero says only that no event-share "
+    "fact was tagged, not that no event happened, while proceeds "
+    "beside event-sized excluded "
     "issuance is a raise, and the dollars-per-share arithmetic is the "
     "price of it; a cash position that fell across years whose "
     "proceeds cells are dashes is the shape of burning without "
@@ -6051,6 +6054,17 @@ RW_CAPEX_SIBLING = (
     "flattered. The direction is named and never sized; PDEX's FY2021 "
     "building is the banked case.")
 
+RW_EXCL_CAPTION = (
+    "Excluded issuance is the engine's own identity on returned "
+    "series — the raw count change minus the engine's compensation "
+    "dS, which counts the shares the filer TAGGED under the deal, "
+    "offering and conversion elements: a zero beside an engine mark "
+    "is absence of tagging, not absence of an event. Deals, "
+    "event-sized offerings and conversions stay combined because an "
+    "offering can fund a deal and a per-category header would "
+    "mislabel it. Dollars per share divides the as-filed proceeds by "
+    "the as-filed share delta, or refuses.")
+
 RW_S2 = ("Operating cash flow was positive in the latest filed year; "
          "runway is not this filer's question. The cash position is "
          "shown above anyway.")
@@ -6073,15 +6087,25 @@ def rw_capex_never_sent() -> str:
 
 
 def rw_capex_dark_sent(fy: int, capex: dict) -> str:
+    """The short per-year dash reason (no anchor claim — that clause
+    belongs only to the headline case, the PDEX run's lesson)."""
     near = max((f for f in capex if f < fy), default=None)
-    tail = (f"; last full-year fact FY{near} at "
+    tail = (f"; nearest full-year fact FY{near} at "
             f"{capex[near] / 1e6:,.3f}M" if near is not None
             else "; no earlier full-year fact exists")
-    return (f"capital spending is tagged for other years but no "
-            f"full-year fact exists for FY{fy}" + tail
-            + ". The months figure is anchored on operating cash flow "
-            "alone for the headline, with the dark year named rather "
-            "than served as zero.")
+    return (f"FY{fy}: capital spending is tagged for other years but "
+            f"carries no full-year fact" + tail
+            + " — an absent fact, never a zero")
+
+
+def rw_capex_dark_headline(fy: int, capex: dict) -> str:
+    """The headline-year form, the only one entitled to the anchor
+    clause, because only the headline's dash changes what the months
+    figure stands on."""
+    return (rw_capex_dark_sent(fy, capex)
+            + ". The months figure is anchored on operating cash "
+            "flow alone for the headline, with the dark year named "
+            "rather than served as zero.")
 
 
 def rw_sti_absent_note(fys: list[int]) -> str:
@@ -6233,14 +6257,18 @@ def rw_flow(facts: dict, tags: list[str], fill: bool
     return {fy: float(v[2]) for fy, v in ser.items()}, src, origin
 
 
-def rw_cfo_fill_note(origin: dict[int, str]) -> str:
+def rw_cfo_fill_note(origin: dict[int, str],
+                     window: list[int]) -> str:
     """Fires when the CFO pair's two elements both answered (page 13's
     note, adapted verbatim in substance)."""
     tags = set(origin.values())
     if len(tags) < 2:
         return ""
     cont = RW_CFO_TAGS[1]
-    filled = sorted(fy for fy, t in origin.items() if t == cont)
+    filled = sorted(fy for fy, t in origin.items()
+                    if t == cont and fy in window)
+    if not filled:
+        return ""
     return ("Operating cash flow was filled across two elements: the "
             "total answered most years and " + cont + " filled "
             + ", ".join(f"FY{y}" for y in filled)
@@ -6249,12 +6277,16 @@ def rw_cfo_fill_note(origin: dict[int, str]) -> str:
             "than hidden.")
 
 
-def rw_capex_fill_note(origin: dict[int, str]) -> str:
+def rw_capex_fill_note(origin: dict[int, str],
+                       window: list[int]) -> str:
     tags = set(origin.values())
     if len(tags) < 2:
         return ""
     sib = RW_CAPEX_TAGS[1]
-    filled = sorted(fy for fy, t in origin.items() if t == sib)
+    filled = sorted(fy for fy, t in origin.items()
+                    if t == sib and fy in window)
+    if not filled:
+        return ""
     return ("Capital spending was filled across two elements: "
             + ", ".join(f"FY{y}" for y in filled) + " served from "
             + sib + ", whose definition is BROADER (it can include "
@@ -6390,7 +6422,7 @@ def rw_excluded_issuance(years, shares_by_fy: dict) -> dict:
 
 
 def rw_pershare(dollars, exc_m, fy: int, shares_by: dict,
-                asfiled: dict):
+                asfiled: dict, mark: str = ""):
     """Dollars per share issued, on the AS-FILED basis, or (None,
     why). Proceeds are as-filed dollars, so the share delta they
     divide must be on the as-filed basis or the price of the raise is
@@ -6421,6 +6453,11 @@ def rw_pershare(dollars, exc_m, fy: int, shares_by: dict,
                       "price across it would mix bases")
     exc_asfiled = exc_m * 1e6 / k_cur
     if exc_asfiled <= 5_000:
+        if mark:
+            return None, ("an engine-marked capital event (" + mark
+                          + ") with no tagged event-share fact — the "
+                          "denominator is unfiled, not zero, and this "
+                          "is not the payroll shape")
         return None, ("proceeds with near-zero excluded issuance "
                       "beside them — payroll-cadence money moving "
                       "through employee plans, not a raise; see the "
@@ -6434,15 +6471,28 @@ def rw_pershare(dollars, exc_m, fy: int, shares_by: dict,
 
 # ── position, burn, months ──────────────────────────────────────────
 
+def rw_dp(vals, dp: int) -> int:
+    """dp when any rendered value actually carries a fractional part
+    at that precision, else 0 — whole-million filers print clean
+    integers while VKTX keeps its committed 165.810 (the MSFT run's
+    lesson)."""
+    for v in vals:
+        if v is None:
+            continue
+        if abs(v - round(v)) >= 0.5 * 10 ** (-dp):
+            return dp
+    return 0
+
+
 def rw_pos_arith(parts: list[float]) -> str:
     """cash + sti = total at the coarsest precision, floor THREE
     decimals, where the displayed terms reproduce the displayed total
     (mf_arith's rule with the census's committed 3dp floor: VKTX
     prints 165.810 + 539.929 = 705.739)."""
-    nd0 = 3
+    nd0 = rw_dp(parts, 3)
     for p in parts:
         if p != 0:
-            while nd0 < 6 and float(f"{abs(p):.{nd0}f}") == 0.0:
+            while nd0 < 6 and float(f"{abs(p):.{max(nd0, 1)}f}") == 0.0:
                 nd0 += 1
     for nd in range(nd0, 7):
         fs = [f"{p:,.{nd}f}" for p in parts]
@@ -6549,7 +6599,8 @@ def rw_months_line(pos_m: float, burn_m: float) -> str:
     """The printed arithmetic. burn_m is the (negative) free burn in
     $M; the division reproduces by hand from the displayed figures."""
     months = pos_m / abs(burn_m) * 12
-    return (f"{pos_m:,.3f} ÷ {abs(burn_m):,.3f} × 12 = "
+    _dp = rw_dp([pos_m, abs(burn_m)], 3)
+    return (f"{pos_m:,.{_dp}f} ÷ {abs(burn_m):,.{_dp}f} × 12 = "
             f"{months:,.1f} months")
 
 
@@ -6844,10 +6895,13 @@ def _rw_sentence_registry() -> list[str]:
         RW_CAPEX_SIBLING, RW_S2, RW_S3, RW_PROCEEDS_LABEL,
         rw_capex_never_sent(),
         rw_capex_dark_sent(2026, {2025: 1_246_000}),
+        rw_capex_dark_headline(2026, {2025: 1_246_000}),
         rw_sti_absent_note([2016]),
-        rw_cfo_fill_note({2016: RW_CFO_TAGS[1], 2017: RW_CFO_TAGS[0]}),
+        rw_cfo_fill_note({2016: RW_CFO_TAGS[1],
+                          2017: RW_CFO_TAGS[0]}, [2016, 2017]),
         rw_capex_fill_note({2020: RW_CAPEX_TAGS[1],
-                            2021: RW_CAPEX_TAGS[0]}),
+                            2021: RW_CAPEX_TAGS[0]}, [2020, 2021]),
+        RW_EXCL_CAPTION,
         rw_proceeds_dash_note(
             [2019, 2020, 2021],
             {2018: 1.0},
@@ -6863,6 +6917,9 @@ def _rw_sentence_registry() -> list[str]:
         rw_burn({2018: -18_755_000.0}, 2025)[1],
         rw_pershare(1.0, 0.001, 2024, {2024: 100.0, 2023: 100.0},
                     {2024: 100.0, 2023: 100.0})[1],
+        rw_pershare(1.0, 0.001, 2024, {2024: 100.0, 2023: 100.0},
+                    {2024: 100.0, 2023: 100.0},
+                    "share-funded acquisition")[1],
     ]
 
 
@@ -6996,7 +7053,7 @@ def rw_self_test() -> list[tuple[str, bool, str]]:
                    _rw_f("2017-01-01", "2017-12-31", -14_757_767,
                          "k17", "2018-03-07")]))
     _c9, _s9, _o9 = rw_flow(_f9, RW_CFO_TAGS, True)
-    _n9 = rw_cfo_fill_note(_o9)
+    _n9 = rw_cfo_fill_note(_o9, [2016, 2017, 2018])
     ok(("RW 09 CFO pair fills FY2016 with origin; note names both",
         _c9.get(2016) == -11_071_263.0
         and _c9.get(2017) == -14_758_000.0
@@ -7266,6 +7323,42 @@ def rw_self_test() -> list[tuple[str, bool, str]]:
     ok(("RW 36 firing order: gate, foreign, discovery, load, reads",
         _ixs == sorted(_ixs), str(_ixs)))
 
+    # RW 37 — an engine-marked year never receives the payroll-shape
+    # reason (the VKTX FY2018 catch: the year of the $296.6M raise).
+    _v37a, _w37a = rw_pershare(296_607_000.0, 0.0, 2018,
+                               {2018: 71.0, 2017: 35.0},
+                               {2018: 71.0, 2017: 35.0},
+                               "listing year")
+    _v37b, _w37b = rw_pershare(296_607_000.0, 0.0, 2018,
+                               {2018: 71.0, 2017: 35.0},
+                               {2018: 71.0, 2017: 35.0})
+    ok(("RW 37 marked year: capital-event reason, never payroll",
+        _v37a is None and "capital event" in _w37a
+        and "listing year" in _w37a
+        and "payroll-cadence money" not in _w37a
+        and "payroll-cadence" in _w37b, _w37a[:70]))
+
+    # RW 38 — the carve-out is in the reading key AND the excluded
+    # column's caption: a zero beside a mark is absence of tagging.
+    ok(("RW 38 carve-out in key and caption",
+        "unless the engine marks the year" in RW_READING_KEY
+        and "absence of tagging, not absence of an event"
+        in RW_EXCL_CAPTION
+        and "TAGGED" in RW_EXCL_CAPTION, RW_EXCL_CAPTION[:60]))
+
+    # RW 39 — conditional decimals: VKTX keeps its committed 3dp
+    # arithmetic; a whole-million filer prints integers (MSFT).
+    _a39 = rw_pos_arith([20_935.0, 55_908.0])
+    ok(("RW 39 conditional decimals: MSFT integers, VKTX 3dp intact",
+        _a39 == "20,935 + 55,908 = 76,843"
+        and rw_pos_arith([165.810, 539.929])
+        == "165.810 + 539.929 = 705.739"
+        and rw_dp([39_507.0, 115_948.0], 3) == 0
+        and rw_dp([165.810, 539.929], 3) == 3
+        and globals()["rw_month" + "s_line"](
+            76_843.0, -66_987.0).startswith(
+            "76,843 ÷ 66,987"), _a39))
+
     return out
 
 
@@ -7312,7 +7405,7 @@ def _page_footer():
                 "Two suites. The engine checks are the Tragic "
                 "Algebra Analyzer's own — this page carries its "
                 "reader and must prove it unchanged. The Runway "
-                "checks (RW 01–36) pin this page's arithmetic on "
+                "checks (RW 01–39) pin this page's arithmetic on "
                 "the 30 Sep 2026 census's filed shapes: the "
                 "nested-event proceeds set, the stale-rung dashes, "
                 "the as-filed per-share basis, the months vintage "
@@ -7407,7 +7500,7 @@ if _rw_go and _tk:
     _state, _state_sent = rw_state(_b, _free)
 
     _months_val = None
-    _months_basis = ""
+    _months_basis = "CFO positive" if _state == "S2" else ""
     if (_b is not None and not _mgate and _pos["total"] is not None
             and _state not in ("S2",) and _free is not None
             and _free < 0):
@@ -7442,8 +7535,9 @@ if _rw_go and _tk:
     if _pos["refusal"]:
         st.error(_pos["refusal"])
     else:
+        _dph = rw_dp([_pos["cash"], _pos["sti"]], 3)
         st.markdown(f"**At {_hend}:** "
-                    + (d(_pos['total'], 3) + "M")
+                    + (d(_pos['total'], _dph) + "M")
                     + (" — cash plus short term investments, the "
                        "addition below" if _pos["sti"] is not None
                        else " — cash alone, labelled"))
@@ -7462,16 +7556,21 @@ if _rw_go and _tk:
     if _ltd_map or _std_map:
         st.markdown("**Debt at the same date** (shown, never "
                     "netted): long-term "
-                    + (d(_ltd_v, 1) + "M" if _ltd_v is not None
-                       else "—")
+                    + (d(_ltd_v, rw_dp([_ltd_v], 1)) + "M"
+                       if _ltd_v is not None else "—")
                     + " · short-term "
-                    + (d(_std_v, 1) + "M" if _std_v is not None
-                       else "—"))
+                    + (d(_std_v, rw_dp([_std_v], 1)) + "M"
+                       if _std_v is not None else "—"))
     st.caption(RW_DEBT_NOTE)
 
     # position history
     _t1 = []
     _sti_abs_years = []
+    _dp1 = rw_dp(
+        [(_cash_map.get(_fy2d.get(f)) or 0) / 1e6 for f in _window
+         if _fy2d.get(f) in _cash_map]
+        + [(_sti_map.get(_fy2d.get(f)) or 0) / 1e6 for f in _window
+           if _sti_map and _fy2d.get(f) in _sti_map], 3)
     for _fy in _window:
         _e = _fy2d.get(_fy)
         _cv = (_cash_map.get(_e) / 1e6
@@ -7483,9 +7582,9 @@ if _rw_go and _tk:
         _tot = (None if _cv is None
                 else (_cv + _sv if _sv is not None else _cv))
         _t1.append({"FY": _fy, "Balance date": _e or "—",
-                    "Cash $M": rw_cell(_cv, 3),
-                    "STI $M": rw_cell(_sv, 3),
-                    "Position $M": rw_cell(_tot, 3)
+                    "Cash $M": rw_cell(_cv, _dp1),
+                    "STI $M": rw_cell(_sv, _dp1),
+                    "Position $M": rw_cell(_tot, _dp1)
                     + ("*" if _sv is None and _cv is not None
                        and _sti_map else "")})
     st.dataframe(pd.DataFrame(_t1), hide_index=True,
@@ -7499,20 +7598,24 @@ if _rw_go and _tk:
     st.subheader("Burn, as filed")
     if _brefusal:
         st.error(_brefusal)
-    _fn = rw_cfo_fill_note(_rec["cfo_origin"])
+    _fn = rw_cfo_fill_note(_rec["cfo_origin"], _window)
     if _fn:
         st.info(_fn)
-    _cfn = rw_capex_fill_note(_rec["capex_origin"])
+    _cfn = rw_capex_fill_note(_rec["capex_origin"], _window)
     if _cfn:
         st.info(_cfn)
     if _cmode == "never":
         st.warning(rw_capex_never_sent())
     if _cmode == "dark":
-        st.warning("Free burn for the headline year: "
-                   + rw_capex_dark_sent(_hfy, _capex))
+        st.warning("Free burn for the headline year — "
+                   + rw_capex_dark_headline(_hfy, _capex))
     _dark_capex = [f for f in _window
                    if _capex and f not in _capex and f in _cfo]
     _t2 = []
+    _dp2 = rw_dp(
+        [_cfo[f] / 1e6 for f in _window if f in _cfo]
+        + [_capex[f] / 1e6 for f in _window
+           if _capex and f in _capex], 3)
     for _fy in _window:
         _cf = _cfo.get(_fy)
         _cx = _capex.get(_fy) if _capex else None
@@ -7527,20 +7630,20 @@ if _rw_go and _tk:
         _t2.append({"FY": _fy,
                     "CFO $M": rw_cell(_cf / 1e6
                                       if _cf is not None else None,
-                                      3),
+                                      _dp2),
                     "Capex $M": rw_cell(_cx / 1e6
                                         if _cx is not None else None,
-                                        3),
+                                        _dp2),
                     ("Free burn $M" if _capex
                      else "Free burn $M (= CFO; no capex line)"):
                         rw_cell(_fb / 1e6 if _fb is not None
-                                else None, 3)})
+                                else None, _dp2)})
     st.dataframe(pd.DataFrame(_t2), hide_index=True,
                  use_container_width=True)
     if _capex and _dark_capex:
-        st.caption("Capex dashes: "
+        st.caption("Capex dashes — "
                    + "; ".join(rw_capex_dark_sent(f, _capex)
-                               for f in _dark_capex))
+                               for f in _dark_capex) + ".")
     if _capex:
         st.caption(RW_CAPEX_SIBLING)
     st.divider()
@@ -7567,20 +7670,31 @@ if _rw_go and _tk:
     st.subheader("The dilution record — " + RW_PROCEEDS_LABEL)
     st.markdown(RW_COLLISION)
     _counts, _asf = _rec["counts"], _rec["asfiled"]
+    _marks = {_y.fy: (_y.excluded or "") for _y in _years}
     _t3 = []
+    _dp3 = rw_dp([_pro["ser"][f] / 1e6 for f in _window
+                  if f in _pro["ser"]], 3)
+    _dpc = rw_dp(
+        [(_counts[f] - _counts[f - 1]) / 1e6 for f in _window
+         if f in _counts and (f - 1) in _counts]
+        + [_rec["excl"][f] for f in _window
+           if _rec["excl"].get(f) is not None], 2)
     for _fy in _window:
         _pv = _pro["ser"].get(_fy)
         _ex = _rec["excl"].get(_fy)
         _raw = ((_counts[_fy] - _counts[_fy - 1]) / 1e6
                 if _fy in _counts and (_fy - 1) in _counts else None)
-        _pps, _why = rw_pershare(_pv, _ex, _fy, _counts, _asf)
+        _pps, _why = rw_pershare(_pv, _ex, _fy, _counts, _asf,
+                                 _marks.get(_fy, ""))
         _t3.append({
             "FY": _fy,
             "Proceeds $M": rw_cell(_pv / 1e6
-                                   if _pv is not None else None, 3),
+                                   if _pv is not None else None,
+                                   _dp3),
             "Serves from": (_pro["origin"].get(_fy, "—")),
-            "Raw Δcount M": rw_cell(_raw, 2),
-            "Excluded issuance M": rw_cell(_ex, 2),
+            "Raw Δcount M": rw_cell(_raw, _dpc),
+            "Excluded issuance M": rw_cell(_ex, _dpc),
+            "Engine mark": _marks.get(_fy, ""),
             "$ / share issued": (f"{_pps:,.2f}"
                                  if _pps is not None else "—"),
             "— because": _why if _pps is None and _pv is not None
@@ -7593,14 +7707,7 @@ if _rw_go and _tk:
         st.caption(_dn)
     if _pro["seam"]:
         st.caption(_pro["seam"])
-    st.caption("Excluded issuance is the engine's own identity on "
-               "returned series — the raw count change minus the "
-               "engine's compensation dS: deals, event-sized "
-               "offerings and conversions combined, because an "
-               "offering can fund a deal and a per-category header "
-               "would mislabel it. Dollars per share divides the "
-               "as-filed proceeds by the as-filed share delta, or "
-               "refuses.")
+    st.caption(RW_EXCL_CAPTION)
 
     with st.expander("Notes and detail"):
         for _n in _rec["notes"]:
