@@ -6401,6 +6401,24 @@ def sa_cell(v, dp: int = 1) -> str:
     return "—" if v is None else f"{v:,.{dp}f}"
 
 
+def sa_bmoney(v: float) -> str:
+    """Compact strip money: $X.XB at a billion and above, else $XM —
+    metric-widget-sized so nothing ever clips again (Deploy 4)."""
+    s = "-" if v < 0 else ""
+    a = abs(v)
+    return s + (f"${a / 1000:,.1f}B" if a >= 1000 else f"${a:,.0f}M")
+
+
+def sa_roic_trend(rows: list[dict]):
+    """(+pp change, first FY) between the first and last computed ROIC
+    rows — the direction of the story in the metric's delta slot,
+    colored off because direction is not a verdict."""
+    comp = [r for r in rows if r.get("roic") is not None]
+    if len(comp) < 2:
+        return None
+    return ((comp[-1]["roic"] - comp[0]["roic"]) * 100, comp[0]["fy"])
+
+
 def sa_acq_read(facts: dict) -> dict:
     """The acquisition-spend column: SIGNED, filled across the ladder
     with per-year origin. The sign rule is CRM FY2015's catch: a
@@ -7085,6 +7103,20 @@ def sa_self_test() -> list[tuple[str, bool, str]]:
         and "shapes it exists to make visible" in SA_READING_KEY,
         "the judgment-column philosophy applied to page design"))
 
+    # ── Deploy 4 (30 Sep 2026): the strip goes fleet-native ──
+    _t2 = sa_roic_trend([{"fy": 2017, "roic": 0.174},
+                         {"fy": 2025, "roic": 0.232}])
+    ok(("Compact strip money and the off-colored trend: X.XB at a "
+        "billion and above, XM below, sign kept; the delta is the "
+        "first-to-last computed ROIC change",
+        sa_bmoney(11187.1) == "$11.2B" and sa_bmoney(419.0) == "$419M"
+        and sa_bmoney(-38.071) == "-$38M"
+        and sa_bmoney(5745.3) == "$5.7B"
+        and _t2 is not None and abs(_t2[0] - 5.8) < 1e-9
+        and _t2[1] == 2017
+        and sa_roic_trend([{"fy": 2025, "roic": 0.232}]) is None,
+        "direction is not a verdict, so the delta renders gray"))
+
     return out
 
 
@@ -7217,38 +7249,35 @@ if _sa_go and _tk:
 
     # ── the summary strip: assembly, not opinion ──
     _sm = sa_summary(_rec["window"], _acq["ser"], _gw_cells, _rows)
+    _tr = sa_roic_trend(_rows)
     _s1, _s2, _s3, _s4 = st.columns(4)
-    with _s1:
-        st.caption("Acq spend, window total")
-        st.markdown("### " + (d(_sm["spend_total"], 0) + "M"
-                              if _sm["spend_total"] is not None
-                              else "n/a"))
-        st.caption(f"signed sum, {_sm['spend_n']} of "
-                   f"{_sm['spend_m']} window years tagged")
-    with _s2:
-        st.caption("Goodwill, first shown → latest")
-        st.markdown("### " + (d(_sm["gw_first"], 0) + "M → "
-                              + d(_sm["gw_last"], 0) + "M"
-                              if _sm["gw_first"] is not None else
-                              ("none tagged" if _gi["gw_never"]
-                               else "n/a")))
-    with _s3:
-        st.caption("Deal capital share of base")
-        st.markdown("### " + (f"{_sm['share'] * 100:,.0f}%"
-                              if _sm["share"] is not None else "n/a"))
-        st.caption("goodwill + intangibles over capital with deals "
-                   "counted, latest computed year")
-    with _s4:
-        st.caption(f"ROIC FY{_sm['fy_last']} (SBC-corrected)"
-                   if _sm["fy_last"] else "ROIC, latest")
-        st.markdown("### " + ((f"{_sm['roic_last'] * 100:,.1f}% "
-                               + (f"({_sm['adj_last'] * 100:,.1f}%)"
-                                  if _sm["adj_last"] is not None
-                                  else "(n/a)"))
-                              if _sm["roic_last"] is not None
-                              else "n/a"))
+    _s1.metric("Acq spend, window",
+               sa_bmoney(_sm["spend_total"])
+               if _sm["spend_total"] is not None else "n/a",
+               help=f"signed sum, {_sm['spend_n']} of "
+                    f"{_sm['spend_m']} window years tagged")
+    _s2.metric("Goodwill, first → latest",
+               (sa_bmoney(_sm["gw_first"]) + " → "
+                + sa_bmoney(_sm["gw_last"]))
+               if _sm["gw_first"] is not None else
+               ("none tagged" if _gi["gw_never"] else "n/a"))
+    _s3.metric("Deal capital / base",
+               f"{_sm['share'] * 100:,.0f}%"
+               if _sm["share"] is not None else "n/a",
+               help="goodwill + intangibles over capital with deals "
+                    "counted, latest computed year")
+    _s4.metric(f"ROIC FY{_sm['fy_last']} (SBC)"
+               if _sm["fy_last"] else "ROIC, latest",
+               (f"{_sm['roic_last'] * 100:,.1f}% "
+                + (f"({_sm['adj_last'] * 100:,.1f}%)"
+                   if _sm["adj_last"] is not None else "(n/a)"))
+               if _sm["roic_last"] is not None else "n/a",
+               delta=(f"{_tr[0]:+,.1f}pp since FY{_tr[1]}"
+                      if _tr else None),
+               delta_color="off")
     st.caption(SA_STRIP_CAPTION)
-    st.markdown("**How to read the shape:** " + SA_READING_KEY)
+    with st.expander("How to read the shape"):
+        st.markdown(SA_READING_KEY[0].upper() + SA_READING_KEY[1:])
     st.divider()
 
     st.markdown(SA_REFUSAL)
@@ -7312,7 +7341,7 @@ if _sa_go and _tk:
 
     with st.expander("Notes and detail"):
         for _n in _rec["notes"]:
-            st.markdown("- " + str(_n))
+            st.info(str(_n))
         st.markdown("**What was read from the filings (this page's own "
                     "lines)**")
         st.dataframe(pd.DataFrame(sa_tag_panel_rows(_rec)),
