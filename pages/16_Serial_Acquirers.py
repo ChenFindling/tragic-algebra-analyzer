@@ -6381,8 +6381,18 @@ def sa_gap_days(a: str, b: str) -> int:
 def sa_add_arith(parts: list[float]) -> str:
     """a + b + c printed at the coarsest precision where the DISPLAYED
     terms reproduce the DISPLAYED total exactly — mf_arith's rule on
-    addition, for the capital line the page exists to print."""
-    for nd in range(0, 7):
+    addition, for the capital line the page exists to print — WITH the
+    floor PDEX FY2017 forced (30 Sep 2026): no NONZERO term may
+    display as zero, because on this page a printed 0 means a filed
+    zero, and "7 + 0 + 0 = 7" over goodwill of 0.112 asserts absence
+    the filings deny. True zeros keep their 0 (NFLX's never-tagged
+    lines really do enter at 0.0)."""
+    nd0 = 0
+    for p in parts:
+        if p != 0:
+            while nd0 < 6 and float(f"{abs(p):.{nd0}f}") == 0.0:
+                nd0 += 1
+    for nd in range(nd0, 7):
         fs = [f"{p:,.{nd}f}" for p in parts]
         tot = sum(parts)
         ft = f"{tot:,.{nd}f}"
@@ -7231,6 +7241,18 @@ def sa_self_test() -> list[tuple[str, bool, str]]:
         and sa_bmoney(17.194) == "$17M"
         and sa_bmoney(-38.071) == "-$38M",
         "each fixture is a shape a graded run produced this session"))
+
+    # ── Deploy 7 (30 Sep 2026): the addition's zero floor ──
+    ok(("No nonzero addend ever displays as zero, true zeros stay 0: "
+        "PDEX FY2017 renders its goodwill and intangibles, NFLX's "
+        "never-tagged lines keep their honest 0",
+        sa_add_arith([6.6, 0.112, 0.149]) == "6.60 + 0.11 + 0.15 = 6.86"
+        and sa_add_arith([1323.4, 0.0, 0.0])
+        == "1,323 + 0 + 0 = 1,323"
+        and sa_add_arith([37.847, 6.525, 0.686])
+        == "37.847 + 6.525 + 0.686 = 45.058",
+        "a printed 0 means a filed zero on this page — the display "
+        "now obeys the page's own doctrine"))
 
     return out
 
