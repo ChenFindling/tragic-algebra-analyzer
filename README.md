@@ -679,7 +679,11 @@ excluded issuance column counts the shares the filer tagged under the deal, offe
 and conversion elements, and the page carries the engine's own capital event mark
 beside it, because a filer can stop tagging those elements while still raising. When
 a year carries the mark, a zero in the column means only that no event share fact was
-tagged, and the page says that instead of calling the year payroll money. The
+tagged, and the page says that instead of calling the year payroll money. The payroll
+reading itself belongs only to the cash flow proceeds element; when a year is served
+from the equity rollforward new issues element, which is event issuance by its own
+definition, a zero means the share count of the issue was not tagged, and the page
+says that too. The
 ladder of elements is filled across with each year's serving element named, never
 summed within a year, because an offering usually appears inside more than one
 element and summing them would count the same money twice. A year no element carries
