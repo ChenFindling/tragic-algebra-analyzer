@@ -6023,8 +6023,11 @@ RW_READING_KEY = (
     "excluded share issuance is payroll-cadence money moving through "
     "employee plans, unless the engine marks the year as a capital "
     "event, in which case the zero says only that no event-share "
-    "fact was tagged, not that no event happened, while proceeds "
-    "beside event-sized excluded "
+    "fact was tagged, not that no event happened; the payroll "
+    "reading itself belongs to the cash-flow proceeds element alone, "
+    "a new-issues rollforward value being event issuance by its own "
+    "definition, so a zero beside one means the issue's share count "
+    "is unfiled; proceeds beside event-sized excluded "
     "issuance is a raise, and the dollars-per-share arithmetic is the "
     "price of it; a cash position that fell across years whose "
     "proceeds cells are dashes is the shape of burning without "
@@ -6422,7 +6425,7 @@ def rw_excluded_issuance(years, shares_by_fy: dict) -> dict:
 
 
 def rw_pershare(dollars, exc_m, fy: int, shares_by: dict,
-                asfiled: dict, mark: str = ""):
+                asfiled: dict, mark: str = "", rung: str = ""):
     """Dollars per share issued, on the AS-FILED basis, or (None,
     why). Proceeds are as-filed dollars, so the share delta they
     divide must be on the as-filed basis or the price of the raise is
@@ -6458,6 +6461,12 @@ def rw_pershare(dollars, exc_m, fy: int, shares_by: dict,
                           + ") with no tagged event-share fact — the "
                           "denominator is unfiled, not zero, and this "
                           "is not the payroll shape")
+        if rung and rung != RW_PROCEEDS_TAGS[0]:
+            return None, ("a new-issues rollforward value with no "
+                          "tagged event-share fact beside it — event "
+                          "issuance by the element's own definition, "
+                          "so the count of the issue is unfiled, not "
+                          "zero, and this is not the payroll shape")
         return None, ("proceeds with near-zero excluded issuance "
                       "beside them — payroll-cadence money moving "
                       "through employee plans, not a raise; see the "
@@ -6920,6 +6929,9 @@ def _rw_sentence_registry() -> list[str]:
         rw_pershare(1.0, 0.001, 2024, {2024: 100.0, 2023: 100.0},
                     {2024: 100.0, 2023: 100.0},
                     "share-funded acquisition")[1],
+        rw_pershare(1.0, 0.001, 2024, {2024: 100.0, 2023: 100.0},
+                    {2024: 100.0, 2023: 100.0}, "",
+                    RW_PROCEEDS_TAGS[1])[1],
     ]
 
 
@@ -7359,6 +7371,29 @@ def rw_self_test() -> list[tuple[str, bool, str]]:
             76_843.0, -66_987.0).startswith(
             "76,843 ÷ 66,987"), _a39))
 
+    # RW 40 — the per-share refusal reason is rung-conditioned: the
+    # payroll reading belongs to the cash-flow rung alone (PDEX
+    # FY2018's shape); a rung-2 year with zero tagged event shares is
+    # an unfiled issue count (VKTX FY2024: $643.8M served from the
+    # new-issues rollforward, count up ~3.5%, no engine mark); an
+    # engine mark takes precedence over both.
+    _b40 = ({2024: 341.0, 2023: 330.0}, {2024: 341.0, 2023: 330.0})
+    _, _w40a = rw_pershare(2_262_000.0, 0.0, 2018,
+                           {2018: 3.9, 2017: 3.6},
+                           {2018: 3.9, 2017: 3.6}, "",
+                           RW_PROCEEDS_TAGS[0])
+    _, _w40b = rw_pershare(643_797_000.0, 0.0, 2024, _b40[0],
+                           _b40[1], "", RW_PROCEEDS_TAGS[1])
+    _, _w40c = rw_pershare(643_797_000.0, 0.0, 2024, _b40[0],
+                           _b40[1], "share-funded acquisition",
+                           RW_PROCEEDS_TAGS[1])
+    ok(("RW 40 per-share reason rung-conditioned; mark precedes",
+        "payroll-cadence" in _w40a
+        and "unfiled" in _w40b and "rollforward" in _w40b
+        and "payroll-cadence" not in _w40b
+        and "capital event" in _w40c and "rollforward" not in _w40c,
+        _w40b[:70]))
+
     return out
 
 
@@ -7405,7 +7440,7 @@ def _page_footer():
                 "Two suites. The engine checks are the Tragic "
                 "Algebra Analyzer's own — this page carries its "
                 "reader and must prove it unchanged. The Runway "
-                "checks (RW 01–39) pin this page's arithmetic on "
+                "checks (RW 01–40) pin this page's arithmetic on "
                 "the 30 Sep 2026 census's filed shapes: the "
                 "nested-event proceeds set, the stale-rung dashes, "
                 "the as-filed per-share basis, the months vintage "
@@ -7685,7 +7720,8 @@ if _rw_go and _tk:
         _raw = ((_counts[_fy] - _counts[_fy - 1]) / 1e6
                 if _fy in _counts and (_fy - 1) in _counts else None)
         _pps, _why = rw_pershare(_pv, _ex, _fy, _counts, _asf,
-                                 _marks.get(_fy, ""))
+                                 _marks.get(_fy, ""),
+                                 _pro["origin"].get(_fy, ""))
         _t3.append({
             "FY": _fy,
             "Proceeds $M": rw_cell(_pv / 1e6
