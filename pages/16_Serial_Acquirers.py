@@ -6369,7 +6369,7 @@ def sa_lapse_reason(label: str, fy: int, end: str,
     FY2017's \\$0.11M and FY2026's APM deal; CRM: an intangibles hole
     at FY2014-15 inside an otherwise served series)."""
     near = sa_nearest(dated, end)
-    tail = (f"; last filed {near[0]} at " + d(near[1], 2) + "M"
+    tail = (f"; last filed {near[0]} at ${near[1]:,.2f}M"
             if near else "; no filed value exists at all")
     return (f"no {label} fact at FY{fy}'s balance date ({end})" + tail)
 
@@ -7253,6 +7253,16 @@ def sa_self_test() -> list[tuple[str, bool, str]]:
         == "37.847 + 6.525 + 0.686 = 45.058",
         "a printed 0 means a filed zero on this page — the display "
         "now obeys the page's own doctrine"))
+
+    # ── Deploy 8 (30 Sep 2026): reasons are plain text for cells ──
+    _wp = sa_lapse_reason("Goodwill", 2020, "2020-06-30",
+                          {"2017-06-30": 0.112})
+    ok(("Refusal reasons carry plain dollars, never markdown escapes: "
+        "dataframe cells are plain text, so the d() backslash printed "
+        "literally on PDEX's photographed column",
+        "$0.11M" in _wp and chr(92) not in _wp,
+        "the escape belongs to markdown surfaces only — wrong tool "
+        "for the surface, caught on camera 30 Sep"))
 
     return out
 
