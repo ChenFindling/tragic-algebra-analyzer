@@ -6406,7 +6406,11 @@ def sa_bmoney(v: float) -> str:
     metric-widget-sized so nothing ever clips again (Deploy 4)."""
     s = "-" if v < 0 else ""
     a = abs(v)
-    return s + (f"${a / 1000:,.1f}B" if a >= 1000 else f"${a:,.0f}M")
+    if a >= 1000:
+        return s + f"${a / 1000:,.1f}B"
+    if a >= 10:
+        return s + f"${a:,.0f}M"
+    return s + f"${a:,.1f}M"
 
 
 def sa_roic_trend(rows: list[dict]):
@@ -6419,7 +6423,7 @@ def sa_roic_trend(rows: list[dict]):
     return ((comp[-1]["roic"] - comp[0]["roic"]) * 100, comp[0]["fy"])
 
 
-SA_METRIC_VALUE_MAX, SA_METRIC_DELTA_MAX, SA_METRIC_LABEL_MAX = 12, 20, 19
+SA_METRIC_VALUE_MAX, SA_METRIC_DELTA_MAX, SA_METRIC_LABEL_MAX = 8, 20, 19
 
 
 def sa_strip_display(sm: dict, gw_never: bool, trend) -> dict:
@@ -6445,9 +6449,10 @@ def sa_strip_display(sm: dict, gw_never: bool, trend) -> dict:
         "label": "Goodwill, latest",
         "value": (sa_bmoney(sm["gw_last"])
                   if sm["gw_last"] is not None else
-                  ("none tagged" if gw_never else "n/a")),
+                  ("—" if gw_never else "n/a")),
         "delta": (sa_bmoney(sm["gw_first"]) + " first shown"
-                  if sm["gw_first"] is not None else None),
+                  if sm["gw_first"] is not None else
+                  ("none tagged" if gw_never else None)),
         "help": "at the year's own balance date; the per-year run and "
                 "its changes are the table's"}
     m["share"] = {
@@ -7204,12 +7209,28 @@ def sa_self_test() -> list[tuple[str, bool, str]]:
         and _sd["roic"]["delta"] == "+5.8pp since FY2017"
         and _sd["sbc_caption"].startswith(
             "SBC-corrected ROIC FY2025: 21.5%")
-        and "none tagged" in sa_strip_display(
+        and sa_strip_display(
             {"spend_total": None, "spend_n": 0, "spend_m": 10,
              "gw_first": None, "gw_last": None, "share": None,
              "roic_last": None, "adj_last": None, "fy_last": None},
-            True, None)["gw"]["value"],
+            True, None)["gw"] | {"help": ""}
+        == {"label": "Goodwill, latest", "value": "—",
+            "delta": "none tagged", "help": ""},
         "the 30 Sep bracket failure, made structurally unrepeatable"))
+
+    # ── Deploy 6 (30 Sep 2026): NFLX/CRM/PDEX live catches ──
+    ok(("A state is not a value: never-tagged goodwill strips as a "
+        "dash with 'none tagged' in the delta; the negative-spend "
+        "caption fires only for rendered years (CRM's FY2015 is true "
+        "but off-page); sub-ten-million money keeps a decimal "
+        "(PDEX's \u0024 0.11M first-shown must not print as zero)",
+        [f for f in [2015] if f in list(range(2017, 2027))] == []
+        and [f for f in [2015] if f in [2014, 2015, 2016]] == [2015]
+        and sa_bmoney(6.493) == "$6.5M"
+        and sa_bmoney(0.112) == "$0.1M"
+        and sa_bmoney(17.194) == "$17M"
+        and sa_bmoney(-38.071) == "-$38M",
+        "each fixture is a shape a graded run produced this session"))
 
     return out
 
@@ -7364,8 +7385,9 @@ if _sa_go and _tk:
     for _c in _dcaps:
         st.caption(_c)
     st.caption(sa_tagged_line(_acq["ser"], _rec["window"]))
-    if _acq["neg_years"]:
-        st.caption("FY" + ", FY".join(str(f) for f in _acq["neg_years"])
+    _negw = [f for f in _acq["neg_years"] if f in _rec["window"]]
+    if _negw:
+        st.caption("FY" + ", FY".join(str(f) for f in _negw)
                    + ": " + SA_NEG_ACQ)
     if _acq["seam"]:
         st.caption(_acq["seam"])
