@@ -6419,6 +6419,66 @@ def sa_roic_trend(rows: list[dict]):
     return ((comp[-1]["roic"] - comp[0]["roic"]) * 100, comp[0]["fy"])
 
 
+SA_METRIC_VALUE_MAX, SA_METRIC_DELTA_MAX, SA_METRIC_LABEL_MAX = 12, 20, 19
+
+
+def sa_strip_display(sm: dict, gw_never: bool, trend) -> dict:
+    """The strip's exact display strings, pure and testable — built
+    after the Deploy-4 bracket FAILED on two widget facts learned the
+    hard way: st.metric renders markdown, so a PAIR of dollar signs in
+    one string becomes a LaTeX span that eats the dollars (the green
+    pill of 30 Sep 2026); and a quarter-width metric truncates values
+    past ~12 characters and deltas past ~20. So: one short value and
+    one long fact per metric, the long fact in the delta slot, at most
+    ONE dollar sign per string, budgets pinned by the suite. The SBC
+    twin fits no slot and lives in the caption beneath."""
+    m = {}
+    m["spend"] = {
+        "label": "Acq spend, window",
+        "value": (sa_bmoney(sm["spend_total"])
+                  if sm["spend_total"] is not None else "n/a"),
+        "delta": (f"{sm['spend_n']} of {sm['spend_m']} yrs tagged"
+                  if sm["spend_total"] is not None else None),
+        "help": "signed sum of the tagged window years; dashes in the "
+                "table are absent facts, not zeros"}
+    m["gw"] = {
+        "label": "Goodwill, latest",
+        "value": (sa_bmoney(sm["gw_last"])
+                  if sm["gw_last"] is not None else
+                  ("none tagged" if gw_never else "n/a")),
+        "delta": (sa_bmoney(sm["gw_first"]) + " first shown"
+                  if sm["gw_first"] is not None else None),
+        "help": "at the year's own balance date; the per-year run and "
+                "its changes are the table's"}
+    m["share"] = {
+        "label": "Deal capital / base",
+        "value": (f"{sm['share'] * 100:,.0f}%"
+                  if sm["share"] is not None else "n/a"),
+        "delta": None,
+        "help": "goodwill + intangibles over capital with deals "
+                "counted, latest computed year"}
+    m["roic"] = {
+        "label": (f"ROIC FY{sm['fy_last']}" if sm["fy_last"]
+                  else "ROIC, latest"),
+        "value": (f"{sm['roic_last'] * 100:,.1f}%"
+                  if sm["roic_last"] is not None else "n/a"),
+        "delta": (f"{trend[0]:+,.1f}pp since FY{trend[1]}"
+                  if trend else None),
+        "help": "on capital including goodwill and acquired "
+                "intangibles, the addition printed per year below"}
+    if sm["roic_last"] is None:
+        sbc = ""
+    elif sm["adj_last"] is not None:
+        sbc = (f"SBC-corrected ROIC FY{sm['fy_last']}: "
+               f"{sm['adj_last'] * 100:,.1f}% — the kit's signature "
+               "twin; its per-year column sits in the table below.")
+    else:
+        sbc = (f"SBC-corrected ROIC FY{sm['fy_last']}: n/a — the "
+               "reason is named in the table below.")
+    m["sbc_caption"] = sbc
+    return m
+
+
 def sa_acq_read(facts: dict) -> dict:
     """The acquisition-spend column: SIGNED, filled across the ladder
     with per-year origin. The sign rule is CRM FY2015's catch: a
@@ -7117,6 +7177,40 @@ def sa_self_test() -> list[tuple[str, bool, str]]:
         and sa_roic_trend([{"fy": 2025, "roic": 0.232}]) is None,
         "direction is not a verdict, so the delta renders gray"))
 
+    # ── Deploy 5 (30 Sep 2026): the strip's widget budgets, pinned ──
+    _sd = sa_strip_display(
+        {"spend_total": 11187.1, "spend_n": 10, "spend_m": 10,
+         "gw_first": 5745.3, "gw_last": 10612.0, "share": 0.7829,
+         "roic_last": 0.232, "adj_last": 0.215, "fy_last": 2025},
+        False, (5.8, 2017))
+    _strs = [(_sd[k]["label"], _sd[k]["value"], _sd[k]["delta"])
+             for k in ("spend", "gw", "share", "roic")]
+    _flat = [s for t in _strs for s in t if s]
+    ok(("Strip strings obey the metric widget's budgets and can never "
+        "form a LaTeX pair: at most one dollar sign per string, "
+        "labels/values/deltas within pinned lengths, TDG's shapes "
+        "exact",
+        all(s.count("$") <= 1 for s in _flat)
+        and all(len(_sd[k]["value"]) <= SA_METRIC_VALUE_MAX
+                and len(_sd[k]["label"]) <= SA_METRIC_LABEL_MAX
+                and (len(_sd[k]["delta"] or "") <= SA_METRIC_DELTA_MAX)
+                for k in ("spend", "gw", "share", "roic"))
+        and _sd["spend"]["value"] == "$11.2B"
+        and _sd["spend"]["delta"] == "10 of 10 yrs tagged"
+        and _sd["gw"]["value"] == "$10.6B"
+        and _sd["gw"]["delta"] == "$5.7B first shown"
+        and _sd["share"]["value"] == "78%"
+        and _sd["roic"]["value"] == "23.2%"
+        and _sd["roic"]["delta"] == "+5.8pp since FY2017"
+        and _sd["sbc_caption"].startswith(
+            "SBC-corrected ROIC FY2025: 21.5%")
+        and "none tagged" in sa_strip_display(
+            {"spend_total": None, "spend_n": 0, "spend_m": 10,
+             "gw_first": None, "gw_last": None, "share": None,
+             "roic_last": None, "adj_last": None, "fy_last": None},
+            True, None)["gw"]["value"],
+        "the 30 Sep bracket failure, made structurally unrepeatable"))
+
     return out
 
 
@@ -7250,31 +7344,15 @@ if _sa_go and _tk:
     # ── the summary strip: assembly, not opinion ──
     _sm = sa_summary(_rec["window"], _acq["ser"], _gw_cells, _rows)
     _tr = sa_roic_trend(_rows)
+    _sd = sa_strip_display(_sm, _gi["gw_never"], _tr)
     _s1, _s2, _s3, _s4 = st.columns(4)
-    _s1.metric("Acq spend, window",
-               sa_bmoney(_sm["spend_total"])
-               if _sm["spend_total"] is not None else "n/a",
-               help=f"signed sum, {_sm['spend_n']} of "
-                    f"{_sm['spend_m']} window years tagged")
-    _s2.metric("Goodwill, first → latest",
-               (sa_bmoney(_sm["gw_first"]) + " → "
-                + sa_bmoney(_sm["gw_last"]))
-               if _sm["gw_first"] is not None else
-               ("none tagged" if _gi["gw_never"] else "n/a"))
-    _s3.metric("Deal capital / base",
-               f"{_sm['share'] * 100:,.0f}%"
-               if _sm["share"] is not None else "n/a",
-               help="goodwill + intangibles over capital with deals "
-                    "counted, latest computed year")
-    _s4.metric(f"ROIC FY{_sm['fy_last']} (SBC)"
-               if _sm["fy_last"] else "ROIC, latest",
-               (f"{_sm['roic_last'] * 100:,.1f}% "
-                + (f"({_sm['adj_last'] * 100:,.1f}%)"
-                   if _sm["adj_last"] is not None else "(n/a)"))
-               if _sm["roic_last"] is not None else "n/a",
-               delta=(f"{_tr[0]:+,.1f}pp since FY{_tr[1]}"
-                      if _tr else None),
-               delta_color="off")
+    for _col, _k in ((_s1, "spend"), (_s2, "gw"),
+                     (_s3, "share"), (_s4, "roic")):
+        _col.metric(_sd[_k]["label"], _sd[_k]["value"],
+                    delta=_sd[_k]["delta"], delta_color="off",
+                    help=_sd[_k]["help"])
+    if _sd["sbc_caption"]:
+        st.caption(_sd["sbc_caption"])
     st.caption(SA_STRIP_CAPTION)
     with st.expander("How to read the shape"):
         st.markdown(SA_READING_KEY[0].upper() + SA_READING_KEY[1:])
