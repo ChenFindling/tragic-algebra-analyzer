@@ -675,6 +675,11 @@ labelled equity issuance proceeds as filed and the page explains the difference
 instead of guessing it: proceeds beside near zero excluded share issuance is payroll
 cadence money moving through employee plans, while proceeds beside event sized
 issuance is a raise, and the dollars per share arithmetic is the price of it. The
+excluded issuance column counts the shares the filer tagged under the deal, offering
+and conversion elements, and the page carries the engine's own capital event mark
+beside it, because a filer can stop tagging those elements while still raising. When
+a year carries the mark, a zero in the column means only that no event share fact was
+tagged, and the page says that instead of calling the year payroll money. The
 ladder of elements is filled across with each year's serving element named, never
 summed within a year, because an offering usually appears inside more than one
 element and summing them would count the same money twice. A year no element carries
