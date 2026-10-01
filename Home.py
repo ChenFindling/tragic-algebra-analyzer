@@ -106,8 +106,11 @@ PAGE_BLURBS: dict[str, str] = {
         "growth that makes IV15 equal the price at your tier and required return, and the "
         "year-15 exit the price implies at the seeded growth, then puts that implied "
         "path against the company's own best filed stretches and a pinned base-rate "
-        "table of how many names this kit reads ever sustained such rates. Rappaport and "
-        "Mauboussin's *Expectations Investing*, on that page's engine inverted."
+        "table of how many names this kit reads ever sustained such rates. Below the "
+        "evidence, the page also prices the record itself: IV15 at every five, seven "
+        "and nine year growth stretch the filer actually delivered, with today's price "
+        "placed inside that set as a count. Rappaport and Mauboussin's *Expectations "
+        "Investing*, on that page's engine inverted."
     ),
     "EPV": (
         "Bruce Greenwald's Earnings Power Value: what the business is worth assuming zero "
