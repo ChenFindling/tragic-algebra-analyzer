@@ -17,9 +17,9 @@ SECOND Cloud app pointing at this file. Two consequences of that:
     harmless and known, not a bug.
 
 Layout of this file:
-  lines up to the BASELINES banner — tool 1's engine, reader and 176-check
+  lines up to the BASELINES banner — tool 1's engine, reader and 202-check
   self-test, copied VERBATIM from the deployed 1_Tragic_Algebra_Analyzer.py
-  (its lines 1-5204; only this docstring replaced, tool 1's UI dropped).
+  (its lines 1-5901; only this docstring replaced, tool 1's UI dropped).
   The doctrine: what this page checks is what the pages run. A reader
   change in the page files is a reader change here — sync it like
   pages 2, 4, 5 and 6.
@@ -5908,8 +5908,12 @@ def self_test() -> list[tuple[str, bool, str]]:
 # ══════════════════════════════════════════════════════════════════════
 #  BASELINES — everything below this line is this page's own code.
 #  Everything above it is tool 1's engine and reader, copied verbatim
-#  (lines 1–5204 of the deployed 1_Tragic_Algebra_Analyzer.py, 176
-#  checks; only the module docstring was replaced). Re-copied 12 Sep
+#  (lines 1–5901 of the deployed 1_Tragic_Algebra_Analyzer.py, 202
+#  checks; only the module docstring was replaced). Span figures in
+#  this banner and the docstring brought current 1 Oct 2026 by the
+#  plumbing session (BP-BRIEF): the recopies after 13 Sep had carried
+#  the span without patching the three count/line comment mentions —
+#  the §TP recipe's patch step, now done. Re-copied 12 Sep
 #  2026 (third recopy that day) for the precision-merge rule — an older,
 #  finer, agreeing duration fact upgrades the resolution (the ADBE
 #  FY2018 rounding artifact) — after F3: the parent Ce tag with the gate
@@ -6277,6 +6281,56 @@ def summary_line(rows: list[Row]) -> str:
              "WINDOW MISMATCH", "NOT COMPARABLE", "FETCH FAILED", "NOT PINNED"]
     counts = {v: sum(1 for r in rows if r.verdict == v) for v in order}
     return ", ".join(f"{n} {v.lower()}" for v, n in counts.items() if n)
+
+
+# ── Row families (BP-BRIEF, 1 Oct 2026) ──────────────────────────────
+#
+# pin_set is the FAMILY key, formalized. Two things changed, neither of
+# them a stored byte of any pin:
+#   1. Evaluation dispatches through EVALUATORS — one dict entry per
+#      family. A future family (a page-7 row family, a promoted AVUV
+#      name) registers an evaluator here and the Run loop never changes.
+#      A pin whose family has no entry fails LOUDLY at evaluation, by
+#      name — never a silent skip (the matched-nothing lesson, §9.3).
+#   2. The headline sentence — the clean line, this app's most protected
+#      artifact — is scoped to HEADLINE_FAMILIES. Today that scoping is
+#      VACUOUS by construction (every pin in the table is internal or
+#      master; a self-test proves it), so the sentence cannot move. The
+#      day a new family lands, its rows render in their own section with
+#      their own sentence, and the standing clean line still counts
+#      exactly the rows it has always counted.
+# The AVUV runner's consumption story (the schema this session lays):
+# batch rows are NOT pins and never enter PINS — the headline machinery
+# is structurally unable to see them. The only door into the clean line
+# is a session deliberately pasting a capture block into PINS, and the
+# family it lands in has an evaluator or the Run says so out loud.
+
+HEADLINE_FAMILIES = ("internal", "master")
+
+
+def headline_rows(rows: list[Row]) -> list[Row]:
+    """The rows the clean line counts: HEADLINE_FAMILIES only. Used by
+    the banner, the red/green verdict AND the scoping self-tests, so the
+    UI and the proof filter through the same function."""
+    return [r for r in rows if r.pin_set in HEADLINE_FAMILIES]
+
+
+EVALUATORS = {
+    "internal": evaluate_internal,
+    "master": lambda pin, s, err, today: evaluate_master(pin, s, err),
+}
+
+
+def evaluate_row(pin: Pin, s: Summary | None, err: str, today: str) -> Row:
+    """Family dispatch. Unknown family = a loud, named failure before
+    any comparison runs — a row the line cannot count must never be a
+    row the Run silently dropped."""
+    fn = EVALUATORS.get(pin.pin_set)
+    if fn is None:
+        raise ValueError(
+            f"pin {pin.ticker!r}: family {pin.pin_set!r} has no registered "
+            "evaluator — add it to EVALUATORS before adding rows to PINS")
+    return fn(pin, s, err, today)
 
 
 # ── The pins ──────────────────────────────────────────────────────────
@@ -8295,6 +8349,48 @@ def baselines_self_test() -> list[tuple[str, bool, str]]:
                 and not mf_capital_artifact(50.0, None)
                 and not mf_capital_artifact(50.0, -5.0),
                 "1% trigger"))
+
+    # 33. Row families (BP-BRIEF, 1 Oct 2026) — the scoping is VACUOUS on
+    #     the standing table: every live pin's family is a headline family
+    #     (so the clean line counts exactly the rows it always counted),
+    #     and on a rows list covering every verdict bucket the scoped and
+    #     unscoped sentences are character-identical.
+    _fam_rows = [Row("a", "internal", "", "PASS"), Row("b", "master", "", "FAIL"),
+                 Row("c", "internal", "", "REFUSED AS PINNED"),
+                 Row("d", "master", "", "WINDOW MISMATCH"),
+                 Row("e", "master", "", "NOT COMPARABLE")]
+    out.append(("Families: scoping vacuous — all live pins headline, sentences identical",
+                all(p.pin_set in HEADLINE_FAMILIES for p in PINS)
+                and summary_line(headline_rows(_fam_rows)) == summary_line(_fam_rows)
+                and headline_rows(_fam_rows) == _fam_rows,
+                f"{len(PINS)} pins, all in {'+'.join(HEADLINE_FAMILIES)}"))
+
+    # 34. ...and a third-family row never enters the headline sentence:
+    #     a FAIL filed under a non-headline family leaves the scoped line
+    #     character-identical while the unscoped line moves — the clean
+    #     line is structurally blind to future families (the AVUV story).
+    _fam_plus = _fam_rows + [Row("z", "demo", "", "FAIL")]
+    out.append(("Families: a non-headline FAIL leaves the clean line untouched",
+                summary_line(headline_rows(_fam_plus)) == summary_line(_fam_rows)
+                and summary_line(_fam_plus) != summary_line(_fam_rows),
+                "scoped identical; unscoped moves — the filter is real"))
+
+    # 35. Family dispatch: evaluate_row reproduces both direct evaluators'
+    #     verdicts on real shapes, and an unregistered family raises BY
+    #     NAME before any comparison — loud, never a silent skip.
+    _d_int = evaluate_row(pin, s, "", today)
+    _d_mas = evaluate_row(googl, s, "", today)
+    try:
+        evaluate_row(Pin(ticker="ZZZ", pin_set="unregistered"), s, "", today)
+        _d_loud = ""
+    except ValueError as _de:
+        _d_loud = str(_de)
+    out.append(("Families: dispatch matches direct calls; unknown family raises by name",
+                _d_int.verdict == evaluate_internal(pin, s, "", today).verdict
+                and _d_mas.verdict == evaluate_master(googl, s, "").verdict
+                and "'unregistered'" in _d_loud and "'ZZZ'" in _d_loud
+                and "EVALUATORS" in _d_loud,
+                f"internal {_d_int.verdict}, master {_d_mas.verdict}, loud on unknown"))
     return out
 
 
@@ -8341,16 +8437,20 @@ if st.button("Run", type="primary"):
             summaries[t], errors[t] = None, f"{type(e).__name__}: {e}"
     prog.progress(1.0, text="Done.")
     today = dt.date.today().isoformat()
-    rows = [evaluate_internal(p, summaries[p.ticker], errors.get(p.ticker, ""), today)
-            if p.pin_set == "internal"
-            else evaluate_master(p, summaries[p.ticker], errors.get(p.ticker, ""))
+    # Family dispatch (BP-BRIEF, 1 Oct 2026): one registry, no if/else —
+    # a future family is a dict entry, never a Run-loop rewrite.
+    rows = [evaluate_row(p, summaries[p.ticker], errors.get(p.ticker, ""), today)
             for p in PINS]
     st.session_state["baseline_rows"] = rows
 
 rows = st.session_state.get("baseline_rows")
 if rows:
-    bad = any(r.verdict == "FAIL" for r in rows)
-    (st.error if bad else st.success)("**" + summary_line(rows) + ".**")
+    # The clean line counts HEADLINE_FAMILIES only (vacuous today — every
+    # pin is internal or master, self-test 33 — so the sentence cannot
+    # move); the table below still shows every row the Run produced.
+    _hd = headline_rows(rows)
+    bad = any(r.verdict == "FAIL" for r in _hd)
+    (st.error if bad else st.success)("**" + summary_line(_hd) + ".**")
     st.dataframe(pd.DataFrame(
         [{"Ticker": r.ticker, "Set": r.pin_set, "Vintage": r.vintage,
           "Verdict": r.verdict, "Detail": r.detail} for r in rows]),
