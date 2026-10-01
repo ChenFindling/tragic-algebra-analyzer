@@ -6773,6 +6773,173 @@ PINS: list[Pin] = [
 
 
 # ══════════════════════════════════════════════════════════════════════
+#  AVUV BATCH SCHEMA — the runner's row contract (BP-BRIEF, 1 Oct 2026)
+# ══════════════════════════════════════════════════════════════════════
+#
+# The row schema the AVUV paste-in runner (the next and final committed
+# session) writes into. PURE PARTS ONLY — no UI, no fetches, nothing at
+# Run reads this section, so the clean line above is indifferent to it
+# existing; the runner session adds the tail expander and the throttled
+# fetch loop AROUND these functions and nothing else.
+#
+# The design of record (Chen, 19 Sep 2026, amended 1 Oct): tickers
+# pasted in ~50-name batches straight from Excel — no CSV parsing, no
+# resume machinery, he chunks by hand; rows = ticker / resolved / gate
+# class + route / ΔE + omega_sum + refusal reasons; downloadable results
+# CSV; private surface only. Columns settled 1 Oct: + omega_sum (the
+# kit's own ranking of how much the SBC question matters per name),
+# NO current price (it ages — a timestamp disguised as a column).
+# Duplicates across pastes: SKIP AND NAME, never refresh — batches are
+# STRICTLY APPENDABLE and no existing row is ever touched.
+#
+# Batch rows are NOT pins. They never enter PINS, the headline machinery
+# is structurally unable to see them (headline_rows above), and the only
+# door into the clean line is a session deliberately pasting a capture
+# block. Rows are built from the reader's own outputs (Summary + load's
+# meta/notes), so a batch row can never drift from what the pages print;
+# a load() refusal becomes a ROW carrying its reason, never an abort —
+# the MF-census lesson: a refusal-shaped name cannot abort a sweep.
+
+BATCH_COLUMNS = ("ticker", "resolved", "class", "route",
+                 "dE_3y", "dE_full", "omega_sum", "refusals", "error")
+
+
+@dataclass(frozen=True)
+class BatchRow:
+    ticker: str                     # as pasted (uppercased)
+    resolved: str = ""              # the reader's resolved ticker; "" on refusal/error
+    fin_class: str = ""             # financial_class verdict ("ordinary", "insurer", …)
+    route: str = ""                 # the kit's routing outcome, one string
+    dE_3y: float | None = None
+    dE_full: float | None = None
+    omega_sum: float | None = None
+    refusals: tuple[str, ...] = ()  # refusal keys, load refusals carrying their reason
+    error: str = ""                 # network/parse failure ONLY — a refusal is not an error
+
+
+_BATCH_TOKEN_CHARS = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-")
+
+
+def parse_ticker_paste(text: str) -> tuple[list[str], list[str]]:
+    """(tickers, rejected tokens) from a raw paste. An Excel column paste
+    is newline-separated; tabs and spaces are admitted the same way — any
+    whitespace splits. Tokens are uppercased; a valid ticker is 1–10
+    chars of A–Z, 0–9, dot or hyphen and contains at least one letter
+    (a pure number is an Excel row index, not a ticker — rejected by
+    name). Dedupe preserves first-seen order on both lists. No CSV
+    machinery, by the decision of record."""
+    tickers: list[str] = []
+    rejected: list[str] = []
+    for tok in text.split():
+        up = tok.upper()
+        ok = (1 <= len(up) <= 10 and set(up) <= _BATCH_TOKEN_CHARS
+              and any(c.isalpha() for c in up))
+        target = tickers if ok else rejected
+        if (up if ok else tok) not in target:
+            target.append(up if ok else tok)
+    return tickers, rejected
+
+
+def batch_route(resolved: str, fin_class: str, notes: list[str],
+                up_c_basis) -> str:
+    """The kit's routing outcome as one string — the triage column: for
+    ~800 small-caps it answers 'which of these does the kit read at all'
+    before anyone looks at a ΔE. Parts, in order: the class destination
+    (ordinary, or '<class> → Financials Checker', or the IFRS route),
+    then 'Up-C (as-exchanged)' where the basis applies, then 'XBRL route
+    (registered)' where the per-filing registry covers the name."""
+    parts: list[str] = []
+    if any(_FOREIGN_MARK in n for n in notes):
+        parts.append("IFRS → Non-US Checker")
+    elif fin_class and fin_class != "ordinary":
+        parts.append(f"{fin_class} → Financials Checker")
+    else:
+        parts.append("ordinary")
+    if up_c_basis:
+        parts.append("Up-C (as-exchanged)")
+    if resolved and resolved in XBRL_REGISTRY:
+        parts.append("XBRL route (registered)")
+    return " · ".join(parts)
+
+
+def batch_row_from(ticker: str, s: Summary, meta: dict | None,
+                   notes: list[str]) -> BatchRow:
+    """One name's batch row from the reader's own outputs. Two shapes:
+    an ordinary Summary (meta and notes from the same load() call), and
+    a refused_summary (load raised — meta is None, the refusal IS the
+    row, its first-sentence reason carried in the refusals column)."""
+    if meta is None:
+        refs = tuple(f"{r} — {s.load_error}" if r == REFUSAL_LOAD else r
+                     for r in s.refusals)
+        return BatchRow(ticker=ticker.upper(), refusals=refs)
+    return BatchRow(
+        ticker=ticker.upper(),
+        resolved=meta.get("ticker", ""),
+        fin_class=meta.get("fin_class", ""),
+        route=batch_route(meta.get("ticker", ""), meta.get("fin_class", ""),
+                          notes, meta.get("up_c_basis")),
+        dE_3y=s.core.get("dE_3y"),
+        dE_full=s.core.get("dE_full"),
+        omega_sum=s.core.get("omega_sum"),
+        refusals=s.refusals)
+
+
+def batch_row_error(ticker: str, err: str) -> BatchRow:
+    """Network/parse failure: the row says so and the sweep continues —
+    FETCH FAILED is never silence and never an abort."""
+    return BatchRow(ticker=ticker.upper(), error=err)
+
+
+def _batch_csv_field(v) -> str:
+    """One CSV field: None prints empty, floats at full repr (pins carry
+    exact figures; display rounds — Excel can round, this file cannot),
+    and any field containing a comma, quote or newline is quoted with
+    internal quotes doubled."""
+    if v is None:
+        s = ""
+    elif isinstance(v, float):
+        s = repr(v)
+    elif isinstance(v, tuple):
+        s = "; ".join(v)
+    else:
+        s = str(v)
+    if any(c in s for c in ',"\n'):
+        s = '"' + s.replace('"', '""') + '"'
+    return s
+
+
+def batch_csv_lines(rows: list[BatchRow]) -> str:
+    """The downloadable results CSV, header + one line per row, column
+    order = BATCH_COLUMNS exactly."""
+    out = [",".join(BATCH_COLUMNS)]
+    for r in rows:
+        out.append(",".join(_batch_csv_field(v) for v in (
+            r.ticker, r.resolved, r.fin_class, r.route,
+            r.dE_3y, r.dE_full, r.omega_sum, r.refusals, r.error)))
+    return "\n".join(out)
+
+
+def append_batch(existing: list[BatchRow], new_rows: list[BatchRow]
+                 ) -> tuple[list[BatchRow], list[str]]:
+    """(combined, skipped tickers). STRICTLY APPENDABLE: the result is
+    the existing rows — untouched, same objects, same order — plus the
+    new rows whose tickers are not already present; a duplicate is
+    SKIPPED AND NAMED, never refreshed (Chen, 1 Oct 2026). Sixteen
+    pastes of ~50 build the ~800 because nothing ever needs resuming,
+    only appending."""
+    have = {r.ticker for r in existing}
+    added: list[BatchRow] = []
+    skipped: list[str] = []
+    for r in new_rows:
+        if r.ticker in have:
+            skipped.append(r.ticker)
+            continue
+        have.add(r.ticker)
+        added.append(r)
+    return existing + added, skipped
+
+
+# ══════════════════════════════════════════════════════════════════════
 #  BASE-RATE CAPTURE — for pages/9_Expectations.py (13 Sep 2026)
 # ══════════════════════════════════════════════════════════════════════
 #
@@ -8391,6 +8558,92 @@ def baselines_self_test() -> list[tuple[str, bool, str]]:
                 and "'unregistered'" in _d_loud and "'ZZZ'" in _d_loud
                 and "EVALUATORS" in _d_loud,
                 f"internal {_d_int.verdict}, master {_d_mas.verdict}, loud on unknown"))
+
+    # 36. AVUV batch schema (BP-BRIEF, 1 Oct 2026) — the paste parser on
+    #     an Excel-shaped paste: newline-separated column with stray tabs,
+    #     spaces and case, deduped in first-seen order; a pure number (an
+    #     Excel row index), an overlong token and a bad-charactered token
+    #     all rejected BY NAME; a dotted class share admitted; and a
+    #     generated 50-name column parses to exactly 50 — the batch size
+    #     of record.
+    _pt, _pr = parse_ticker_paste(
+        "aapl\nMSFT\tbrk.b\n  123\n\nAAPL\nTOOLONGTOKEN11\ngoog!\n msft \nTGTX")
+    _p50 = parse_ticker_paste("\n".join(f"T{i:03d}X" for i in range(50)))
+    out.append(("Batch parse: Excel paste — case, dedupe-in-order, rejects named, 50-shape",
+                _pt == ["AAPL", "MSFT", "BRK.B", "TGTX"]
+                and _pr == ["123", "TOOLONGTOKEN11", "goog!"]
+                and len(_p50[0]) == 50 and _p50[1] == [],
+                f"{_pt} / rejected {_pr}"))
+
+    # 37. Batch rows from the reader's own shapes: the ordinary fixture
+    #     carries class, route, both ΔE figures and omega_sum from the
+    #     same Summary the pins compare; a registered ticker's route says
+    #     so; an insurer routes to the Financials Checker; the real
+    #     foreign-filer wording routes to the Non-US Checker; an Up-C
+    #     basis is named; and a refused_summary becomes a ROW carrying
+    #     the load refusal's reason — never a raise, never an abort.
+    _b_ord = batch_row_from("goog-fixture", s, meta, [])
+    _b_reg = batch_row_from("GOOGL", s, {**meta, "ticker": "GOOGL"}, [])
+    _b_ins = batch_row_from("KNSL", s, {**meta, "ticker": "KNSL",
+                                        "fin_class": "insurer"}, [])
+    _b_for = batch_row_from("GRAB", s, {**meta, "ticker": "GRAB"},
+                            [foreign_filer_note("ProfitLoss", ["shares"])])
+    _b_upc = batch_row_from("RYAN", s, {**meta, "ticker": "RYAN-X",
+                                        "up_c_basis": {"identity": "x"}}, [])
+    _b_ref = batch_row_from("zzzq", refused_summary("ZZZQ",
+                            "Only 3 year(s) of annual figures could be read for ZZZQ. Rest."),
+                            None, [])
+    out.append(("Batch rows: class/route/ΔE/Ω carried; registry, insurer, IFRS, Up-C "
+                "routes named; a load refusal is a row, never a raise",
+                _b_ord.route == "ordinary" and _b_ord.fin_class == "ordinary"
+                and _b_ord.dE_full == s.core["dE_full"]
+                and _b_ord.dE_3y == s.core["dE_3y"]
+                and _b_ord.omega_sum == s.core["omega_sum"]
+                and _b_ord.ticker == "GOOG-FIXTURE" and _b_ord.error == ""
+                and _b_reg.route == "ordinary · XBRL route (registered)"
+                and _b_ins.route == "insurer → Financials Checker"
+                and _b_for.route == "IFRS → Non-US Checker"
+                and "Up-C (as-exchanged)" in _b_upc.route
+                and _b_ref.refusals == ("load_refused — Only 3 year(s) of annual "
+                                        "figures could be read for ZZZQ",)
+                and _b_ref.resolved == "" and _b_ref.error == "",
+                f"{_b_ord.route} / {_b_reg.route} / {_b_ins.route} / {_b_for.route}"))
+
+    # 38. The results CSV: header = BATCH_COLUMNS verbatim, floats at full
+    #     repr (Excel can round, this file cannot), None prints empty, a
+    #     comma-carrying field quotes with internal quotes doubled, and
+    #     refusal tuples join with semicolons.
+    _csv = batch_csv_lines([
+        _b_ord,
+        BatchRow(ticker="Q", route='a, "b"', refusals=("r1", "r2"),
+                 error="E: boom, twice")])
+    _cl = _csv.split("\n")
+    _f1 = _cl[1].split(",")          # no quoted fields in the fixture row
+    out.append(("Batch CSV: header verbatim, repr floats, empty None, quoting, "
+                "semicolon refusals",
+                _cl[0] == ",".join(BATCH_COLUMNS) == "ticker,resolved,class,route,"
+                "dE_3y,dE_full,omega_sum,refusals,error"
+                and _f1[4] == repr(s.core["dE_3y"])
+                and _f1[6] == repr(s.core["omega_sum"])
+                and _cl[2].startswith('Q,,,"a, ""b""",,,,')
+                and _cl[2].endswith('r1; r2,"E: boom, twice"'),
+                _cl[2]))
+
+    # 39. Append discipline — STRICTLY APPENDABLE: a later paste's
+    #     duplicate is skipped AND named, the existing rows come through
+    #     as the SAME objects in the same order, and the addition lands
+    #     after them. No existing row is ever touched.
+    _e1 = [BatchRow(ticker="AAA"), BatchRow(ticker="BBB")]
+    _c1, _sk = append_batch(_e1, [BatchRow(ticker="BBB", error="refreshed?"),
+                                  BatchRow(ticker="CCC"),
+                                  BatchRow(ticker="CCC")])
+    out.append(("Batch append: duplicates skipped and named, prior rows untouched, "
+                "order preserved",
+                _sk == ["BBB", "CCC"] and [r.ticker for r in _c1] == ["AAA", "BBB", "CCC"]
+                and _c1[0] is _e1[0] and _c1[1] is _e1[1]
+                and _c1[1].error == "" and _e1 == [BatchRow(ticker="AAA"),
+                                                  BatchRow(ticker="BBB")],
+                f"skipped {_sk}, rows {[r.ticker for r in _c1]}"))
     return out
 
 
