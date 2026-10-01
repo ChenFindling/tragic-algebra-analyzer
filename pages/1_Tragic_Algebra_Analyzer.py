@@ -5975,8 +5975,16 @@ def seed_cycle_note(n_by_fy: dict, rev_by_fy: dict) -> str | None:
             "ladder inherits it. The filings do not say which level is normal.")
 
 
+SEED_CYCLE_VERDICT_CAVEAT = (
+    "**This verdict is priced at a cycle's margin level.** The seed note above "
+    "fired: the latest net margin sits far above this filer's own long-window "
+    "median, the owners' earnings seed is built from earnings at that level, "
+    "and the IV15 and the verdict inherit it. The filings do not say which "
+    "level is normal, and this page does not normalize to one.")
+
+
 def seed_note_self_test() -> list[tuple[str, bool, str]]:
-    """The Seed-note suite — five checks, printed by the footer beside
+    """The Seed-note suite — seven checks, printed by the footer beside
     the engine's own line."""
     out: list[tuple[str, bool, str]] = []
     _rev8 = {fy: 1000.0 for fy in range(2018, 2026)}
@@ -6031,6 +6039,25 @@ def seed_note_self_test() -> list[tuple[str, bool, str]]:
                 and "which level is normal" in _msg
                 and 0 <= _ai < _bi and (_bi - _ai) < 900,
                 "the fixture sentence exact; own-source scan: note adjacent to the inputs row"))
+
+    # ── checks 6-7 (1 Oct 2026, the GSL/ESEA exhibit): the caveat beside
+    #    a favorable verdict when the note fired — the FLAG
+    #    caveat-beside-favorable-verdict pattern, gated on the kit's own
+    #    margin evidence instead of a SIC table.
+    _vi = _ssc.find('getattr(st, kind)' + '(verdict)')
+    _gi = _ssc.find('if _scn and kind in ' + '("success", "info")')
+    _ci = _ssc.find('st.warning(SEED_CYCLE_VERDICT' + '_CAVEAT)')
+    out.append(("Seed-cycle caveat sits adjacent to a favorable verdict, gated both ways",
+                0 <= _vi < _gi < _ci and (_ci - _vi) < 700,
+                "own-source scan: caveat after the verdict render, behind the note-fired "
+                "and favorable-kind gate, inside the non-financial branch"))
+    out.append(("Seed-cycle caveat wording: names the inheritance, refuses to normalize",
+                "cycle's margin level" in SEED_CYCLE_VERDICT_CAVEAT
+                and "does not normalize" in SEED_CYCLE_VERDICT_CAVEAT
+                and "inherit" in SEED_CYCLE_VERDICT_CAVEAT
+                and "safe" not in SEED_CYCLE_VERDICT_CAVEAT.lower()
+                and "cheap" not in SEED_CYCLE_VERDICT_CAVEAT.lower(),
+                "the caveat claims only what the note proved and normalizes nothing"))
 
     return out
 
@@ -6674,6 +6701,12 @@ if years and ticker and st.session_state.get("tk") == ticker:
     }[kind]
     if not pre.get("financial"):
         getattr(st, kind)(verdict)
+        # ── seed-cycle adjacency (1 Oct 2026, GSL/ESEA): when the seed
+        #    note fired, the caveat renders beside the verdict a reader
+        #    screenshots, not two screens above it. Favorable kinds only;
+        #    peak earnings plus expensive needs no protection.
+        if _scn and kind in ("success", "info"):
+            st.warning(SEED_CYCLE_VERDICT_CAVEAT)
 
     st.write("**Entry bands** — set alerts at each")
     st.dataframe(
