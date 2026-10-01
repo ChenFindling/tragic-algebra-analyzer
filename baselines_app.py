@@ -6939,6 +6939,53 @@ def append_batch(existing: list[BatchRow], new_rows: list[BatchRow]
     return existing + added, skipped
 
 
+# ── The runner's own two helpers (AVUV session, 1 Oct 2026) — UI-side ──
+# additions AROUND the shipped schema above, which is taken as-is.
+
+
+def _batch_fetch_one(ticker: str, _load=None, _summarize=None) -> BatchRow:
+    """One pasted name to one BatchRow — NEVER a raise, whatever happens
+    (the MF-census lesson pinned at the loop layer: one refusal-shaped or
+    broken name must not abort a 50-name sweep). Three ways out, the main
+    Run's own wiring: a success rides the reader's outputs; load()'s own
+    ValueError is the reader refusing — a refusal ROW carrying the
+    sentence (an unknown ticker lands here: a final answer from the
+    reader, not a retryable fault); anything else is a network/parse
+    failure — the error row. _load/_summarize are injectable for the
+    no-network self-test only."""
+    _load = load if _load is None else _load
+    _summarize = summarize if _summarize is None else _summarize
+    try:
+        years, notes, meta = _load(ticker)
+        return batch_row_from(ticker, _summarize(years, notes, meta), meta, notes)
+    except ValueError as e:                  # load()'s own refusal — a row
+        return batch_row_from(ticker, refused_summary(ticker, str(e)), None, [])
+    except Exception as e:                   # network / throttle / parse
+        return batch_row_error(ticker, f"{type(e).__name__}: {e}")
+
+
+def retry_errors(rows: list[BatchRow], _fetch=None
+                 ) -> tuple[list[BatchRow], list[str]]:
+    """(rows with every error row replaced by a fresh fetch, retried
+    tickers). The deliberate second attempt (Chen, 1 Oct 2026): an error
+    row is a recorded ABSENCE, not a result — skip-and-name protects
+    results from refresh, and replacing an absence with its first actual
+    result (success, refusal, or a fresh error) completes the discipline
+    rather than bending it. Only error rows are touched; every other row
+    comes through as the SAME object in the same position, and is never
+    refetched."""
+    _fetch = _batch_fetch_one if _fetch is None else _fetch
+    out: list[BatchRow] = []
+    retried: list[str] = []
+    for r in rows:
+        if r.error:
+            retried.append(r.ticker)
+            out.append(_fetch(r.ticker))
+        else:
+            out.append(r)
+    return out, retried
+
+
 # ══════════════════════════════════════════════════════════════════════
 #  BASE-RATE CAPTURE — for pages/9_Expectations.py (13 Sep 2026)
 # ══════════════════════════════════════════════════════════════════════
@@ -8644,6 +8691,74 @@ def baselines_self_test() -> list[tuple[str, bool, str]]:
                 and _c1[1].error == "" and _e1 == [BatchRow(ticker="AAA"),
                                                   BatchRow(ticker="BBB")],
                 f"skipped {_sk}, rows {[r.ticker for r in _c1]}"))
+
+    # 40. The runner's per-name step (AVUV session, 1 Oct 2026) — the
+    #     loop's three-way wiring, NEVER a raise: a success rides the
+    #     reader's outputs into an ordinary row; load()'s ValueError is
+    #     the reader refusing and becomes a refusal ROW carrying the
+    #     sentence; any other exception is the error row. The MF-census
+    #     lesson pinned at the layer the runner adds.
+    def _f_ok(_t):
+        return ("Y", [], {**meta, "ticker": "OKAY"})
+
+    def _f_ref(_t):
+        raise ValueError(
+            "Only 3 year(s) of annual figures could be read for VERR. Rest.")
+
+    def _f_boom(_t):
+        raise RuntimeError("boom")
+
+    _w_ok = _batch_fetch_one("okay", _load=_f_ok, _summarize=lambda *_a: s)
+    _w_ref = _batch_fetch_one("VERR", _load=_f_ref)
+    _w_err = _batch_fetch_one("NETX", _load=_f_boom)
+    out.append(("Batch fetch-one: success/refusal/error each a ROW, never a raise",
+                _w_ok.resolved == "OKAY" and _w_ok.route == "ordinary"
+                and _w_ok.dE_full == s.core["dE_full"] and _w_ok.error == ""
+                and _w_ref.error == "" and _w_ref.resolved == ""
+                and _w_ref.refusals == ("load_refused — Only 3 year(s) of annual "
+                                        "figures could be read for VERR",)
+                and _w_err.error == "RuntimeError: boom" and _w_err.refusals == (),
+                f"{_w_ok.route} / {_w_ref.refusals} / {_w_err.error}"))
+
+    # 41. Belt and braces on the clean line (the AVUV session's own proof
+    #     on top of checks 33–34): a BatchRow carries no family and no
+    #     verdict — the headline machinery cannot even SEE one — an
+    #     accumulated batch contains no Row, and building and appending
+    #     batch rows leaves the clean-line sentence over the family
+    #     fixture byte-identical.
+    _line0 = summary_line(headline_rows(_fam_rows))
+    _bacc, _ = append_batch([], [_w_ok, _w_ref, _w_err, _b_ord, _b_ref])
+    out.append(("Batch rows: no pin_set, no verdict, never Rows — clean line untouched",
+                "pin_set" not in BatchRow.__dataclass_fields__
+                and "verdict" not in BatchRow.__dataclass_fields__
+                and len(_bacc) == 5
+                and not any(isinstance(r, Row) for r in _bacc)
+                and summary_line(headline_rows(_fam_rows)) == _line0,
+                f"{len(_bacc)} batch rows accumulated, sentence unchanged"))
+
+    # 42. Retry discipline (Chen, 1 Oct 2026): an error row is a recorded
+    #     absence, not a result — retry_errors replaces ONLY error rows,
+    #     in place by position; every non-error row comes through as the
+    #     SAME object and is never refetched; a retried name lands as its
+    #     fresh result with the error gone.
+    _r_a = BatchRow(ticker="AAA", resolved="AAA")
+    _r_b = BatchRow(ticker="BBB", error="E1")
+    _r_c = BatchRow(ticker="CCC", refusals=("r",))
+    _r_d = BatchRow(ticker="DDD", error="E2")
+    _calls: list[str] = []
+
+    def _f_fresh(_t):
+        _calls.append(_t)
+        return BatchRow(ticker=_t, resolved=_t)
+
+    _rr, _ret = retry_errors([_r_a, _r_b, _r_c, _r_d], _fetch=_f_fresh)
+    out.append(("Batch retry: only error rows replaced, in place; others same objects",
+                _ret == ["BBB", "DDD"] and _calls == ["BBB", "DDD"]
+                and [r.ticker for r in _rr] == ["AAA", "BBB", "CCC", "DDD"]
+                and _rr[0] is _r_a and _rr[2] is _r_c
+                and _rr[1].error == "" and _rr[1].resolved == "BBB"
+                and _rr[3].error == "" and _rr[3].resolved == "DDD",
+                f"retried {_ret}, order preserved"))
     return out
 
 
@@ -8935,6 +9050,77 @@ with st.expander("MF capture — reference table + screener acceptance (for the 
                  "evidence for the record, pinned nowhere.")
         st.code(mf_accept_block(_macc, _maccdrop, _merrs, _mtoday),
                 language="text")
+
+st.divider()
+with st.expander("Batch runner — paste tickers, get the triage CSV (AVUV sweep)"):
+    st.caption(
+        "Paste one column of tickers (about 50) into the box and press Run batch. "
+        "When the run finishes, the table holds every name pasted so far, with "
+        "rejected tokens and skipped duplicates listed by name above it. After each "
+        "batch, press Download results CSV and save it over the previous file — the "
+        "download always contains everything accumulated. This section fetches only "
+        "when its own button is pressed, reads no pin, writes no pin and moves no "
+        "figure — the clean line above is indifferent to it."
+    )
+    _bt_text = st.text_area("Tickers — one column, pasted straight from Excel",
+                            height=160, key="batch_paste")
+    if st.button("Run batch", type="primary", key="batch_run"):
+        _bt_tk, _bt_rej = parse_ticker_paste(_bt_text)
+        if not _bt_tk:
+            st.session_state["batch_last"] = (0, _bt_rej, [],
+                                              dt.date.today().isoformat())
+        else:
+            _bt_new: list[BatchRow] = []
+            _bt_prog = st.progress(0.0, text="")
+            for _bi, _btk in enumerate(_bt_tk):
+                _bt_prog.progress(_bi / len(_bt_tk),
+                                  text=f"Fetching {_btk} ({_bi + 1} of {len(_bt_tk)})…")
+                _bt_new.append(_batch_fetch_one(_btk))
+            _bt_prog.progress(1.0, text="Done.")
+            _bt_prev = st.session_state.get("batch_rows", [])
+            _bt_rows, _bt_skip = append_batch(_bt_prev, _bt_new)
+            st.session_state["batch_rows"] = _bt_rows
+            st.session_state["batch_last"] = (len(_bt_rows) - len(_bt_prev),
+                                              _bt_rej, _bt_skip,
+                                              dt.date.today().isoformat())
+    if "batch_last" in st.session_state:
+        _bl_add, _bl_rej, _bl_skip, _bl_day = st.session_state["batch_last"]
+        _bl_bits = [f"last batch ({_bl_day}): {_bl_add} row(s) added"]
+        if _bl_skip:
+            _bl_bits.append("duplicates skipped and named: " + ", ".join(_bl_skip))
+        if _bl_rej:
+            _bl_bits.append("rejected tokens: " + ", ".join(_bl_rej))
+        (st.warning if (_bl_rej or _bl_skip) else st.info)("; ".join(_bl_bits) + ".")
+    _bt_acc = st.session_state.get("batch_rows", [])
+    if _bt_acc:
+        _bt_nerr = sum(1 for r in _bt_acc if r.error)
+        if _bt_nerr and st.button(f"Retry error rows ({_bt_nerr})", key="batch_retry"):
+            with st.spinner("Retrying error rows…"):
+                _bt_acc, _bt_ret = retry_errors(_bt_acc)
+            st.session_state["batch_rows"] = _bt_acc
+            st.info("Retried: " + ", ".join(_bt_ret) + ".")
+        st.write(f"**{len(_bt_acc)} names accumulated.**")
+        st.dataframe(pd.DataFrame([{
+            "Ticker": r.ticker, "Resolved": r.resolved or "—",
+            "Class": r.fin_class or "—", "Route": r.route or "—",
+            "ΔE 3y": r.dE_3y, "ΔE full": r.dE_full, "Ω sum": r.omega_sum,
+            "Refusals": "; ".join(r.refusals) or "—",
+            "Error": r.error or "—"} for r in _bt_acc]),
+            width='stretch', hide_index=True,
+            height=min(38 * len(_bt_acc) + 40, 1200))
+        st.download_button("Download results CSV", data=batch_csv_lines(_bt_acc),
+                           file_name="batch_results.csv", mime="text/csv",
+                           key="batch_dl")
+        _bt_sure = st.checkbox("Confirm clearing every accumulated row",
+                               key="batch_clear_ok")
+        if st.button("Clear accumulated rows", key="batch_clear"):
+            if _bt_sure:
+                st.session_state.pop("batch_rows", None)
+                st.session_state.pop("batch_last", None)
+                st.success("Cleared — every accumulated row is gone; the next "
+                           "paste starts a fresh accumulation.")
+            else:
+                st.warning("Tick the confirm box first — nothing was cleared.")
 
 st.divider()
 with st.expander("Verify the logic"):
