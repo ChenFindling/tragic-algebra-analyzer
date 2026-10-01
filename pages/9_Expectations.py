@@ -9,7 +9,10 @@ implies when the cash flows are bought and the business sold in year 15. The
 implied path is stated as the tier actually shapes it, then put against two
 panels of filed evidence: the company's own best stretches, and a pinned
 base-rate table of the names this kit already reads. One paragraph of
-arithmetic; no adjective, and a self-test holds it to that.
+arithmetic; no adjective, and a self-test holds it to that. Below the
+evidence, the page prices the record itself: IV15 at every 5/7/9-year
+owners'-earnings stretch the filer delivered, today's price placed inside
+that set as a count (the record-priced values, added 1 Oct 2026).
 
 THE MENU MAP (the frozen map of 12 Sep 2026, plus this page — 13 Sep 2026)
 --------------------------------------------------------------------------
@@ -6310,6 +6313,94 @@ def own_history(ticker: str, years: list) -> dict:
             "rev_full": full_window_cagr(rev)}
 
 
+
+# ── The record-priced values (page-9 extension, 1 Oct 2026) ───────────
+#
+# The record as the assumption menu: the page's own IV15 run at every
+# five-, seven- and nine-year owners'-earnings growth stretch the filer
+# actually delivered, on the ONE basis set above the solves — the same
+# base, tier and required return; no new knobs. The endpoint law is
+# best_stretch_cagr's, inherited verbatim: both endpoints positive,
+# excluded years barred, interior years free (endpoints decide
+# everything). The MRVL window lesson is the cited precedent: a growth
+# rate from a non-positive base is not a rate. k = 10 is deliberately
+# absent — a ten-year stretch needs eleven priced years and this page
+# reads ten, the base-rate caption's own arithmetic — so the ladder is
+# 5/7/9, with 9 the longest stretch the read can contain (its only
+# window is first-to-last, the full-window cell's own pair; a self-test
+# pins the agreement). Three populations, counted out loud: possible
+# stretches (every k-apart pair in the read window), admissible
+# (endpoints pass; the rate is filed truth and prints), and priced
+# (rate at or under the growth-box ceiling; past 60% the rate shows and
+# no value is priced — this page's own ceiling doctrine, mirrored). The
+# position sentence counts PRICED values only, and says so by printing M.
+
+RPV_KS = (5, 7, 9)            # the stretch ladder; see the argument above
+RPV_MIN_PRICED_YEARS = 8      # under this, at most two stretches exist and
+                              # both are five-year — a distribution there is
+                              # a relabeling of the best-5y evidence cell
+
+
+def stretch_census(series: dict[int, float], excluded, read_fys,
+                   ks: tuple[int, ...] = RPV_KS):
+    """Every k-apart endpoint pair in the read window, admitted or refused
+    by name.
+
+    Returns (admissible, refused): admissible as (fy0, fy1, rate) with the
+    endpoint CAGR; refused as (fy0, fy1, reason), reasons per endpoint in
+    window order, deduplicated. The endpoint law is best_stretch_cagr's:
+    present, priced, positive, not excluded; interior years cannot refuse
+    a stretch — endpoints decide everything.
+    """
+    lo, hi = min(read_fys), max(read_fys)
+    admissible: list[tuple[int, int, float]] = []
+    refused: list[tuple[int, int, str]] = []
+    for k in ks:
+        for fy in range(lo, hi - k + 1):
+            fy2 = fy + k
+            reasons = []
+            for e in (fy, fy2):
+                if e in excluded:
+                    reasons.append(f"FY{e} excluded as a capital event")
+                elif e not in read_fys:
+                    reasons.append(f"FY{e} not in the filed read")
+                elif e not in series:
+                    reasons.append(f"FY{e} has no price, so owners' "
+                                   "earnings there is not a measurement")
+                elif series[e] <= 0:
+                    reasons.append(f"FY{e} owners' earnings not positive — "
+                                   "a stretch with a non-positive endpoint "
+                                   "states no rate")
+            if reasons:
+                refused.append((fy, fy2, "; ".join(dict.fromkeys(reasons))))
+            else:
+                admissible.append(
+                    (fy, fy2, (series[fy2] / series[fy]) ** (1.0 / k) - 1.0))
+    return admissible, refused
+
+
+def record_priced_value(base: "IVParams", rr: float, rate: float) -> float:
+    """IV15 at one delivered rate — literally the engine call the growth
+    solve bisects on, with growth set to the rate. A self-test pins the
+    equality, so this can never quietly become a second engine."""
+    return intrinsic_value(IVParams(**{**base.__dict__, "growth": rate}), rr)
+
+
+def rpv_price_partition(admissible, base: "IVParams", rr: float):
+    """Split admissible stretches at the growth-box ceiling: (priced, over).
+    priced = (fy0, fy1, rate, value); over = (fy0, fy1, rate) — the rate is
+    filed and shows, the value is refused past G_CEILING."""
+    priced = [(a, b, r, record_priced_value(base, rr, r))
+              for a, b, r in admissible if r <= G_CEILING]
+    over = [(a, b, r) for a, b, r in admissible if r > G_CEILING]
+    return priced, over
+
+
+def position_count(price: float, values) -> int:
+    """How many record-priced values sit strictly below today's price."""
+    return sum(1 for v in values if v < price)
+
+
 # ── The sentences ─────────────────────────────────────────────────────
 #
 # Every user-facing sentence this page's solves produce is built here,
@@ -6487,13 +6578,88 @@ def foreign_stop_sentence() -> str:
     )
 
 
+
+RPV_SELF_AUDIT = (
+    "The solve above asks what growth the price demands, and the panels ask "
+    "whether anyone ever delivered it; this section runs the same machinery "
+    "in the other direction — what the record itself would have paid, "
+    "pricing each stretch the filer actually delivered on the same base, "
+    "tier and required return set above."
+)
+
+RPV_READING_KEY = (
+    "- A price above every record-priced value: the market is paying for "
+    "something the record never contained — the solve above says how much "
+    "more.\n"
+    "- A price below the middle value: more than half the delivered "
+    "stretches would have priced above today — the record itself would "
+    "have paid more.\n"
+    "- A wide spread between lowest and highest is the record disagreeing "
+    "with itself across windows; a best stretch can start at a trough, and "
+    "the window rides with every figure.\n"
+    "- A thin count is information too: the refusal list says which years "
+    "the record cannot price from, and why.\n\n"
+    "The middle is the sorted list's value at index M//2, the page's own "
+    "median convention. Shapes, not conclusions — a summary, never a "
+    "verdict."
+)
+
+
+def rpv_position_sentence(tk: str, price: float, n: int, m: int) -> str:
+    """The close: today's price inside the record's own values, as a count —
+    never a probability or a percentile."""
+    return (
+        f"**At {d(price)}, {tk}'s price is above {n} of the {m} "
+        "record-priced values** — each one this page's IV15 at a growth "
+        "rate the record delivered, on the base, tier and required return "
+        "set above."
+    )
+
+
+def rpv_floor_sentence(tk: str, priced_years: int) -> str:
+    return (
+        f"**No record-priced values are printed — {tk}'s owners'-earnings "
+        f"series holds {priced_years} priced years, under the "
+        f"{RPV_MIN_PRICED_YEARS} this section needs.** The shortest stretch "
+        "here is five years; under eight priced years the record holds at "
+        "most two stretches, both five-year, and the best of those already "
+        "stands in the evidence panel above. Every other surface on this "
+        "page stands."
+    )
+
+
+def rpv_thinning_line(n_priced: int, n_possible: int, refused,
+                      n_over: int) -> str:
+    """The three-population count, out loud: possible = priced + refused +
+    above-the-ceiling; refusals grouped by reason with every window named."""
+    bits = [f"{n_priced} of {n_possible} possible stretches are priced"]
+    if refused:
+        groups: dict[str, list[str]] = {}
+        for a, b, why in refused:
+            groups.setdefault(why, []).append(f"FY{a}→FY{b}")
+        bits.append(f"{len(refused)} refused: "
+                    + "; ".join(f"{', '.join(ws)} ({why})"
+                                for why, ws in groups.items()))
+    if n_over:
+        bits.append(f"{n_over} delivered above {G_CEILING:.0%} a year — the "
+                    "rate is filed and shown, and no value is priced past "
+                    "the growth-box ceiling")
+    return "; ".join(bits) + "."
+
+
+def rpv_none_priced_sentence() -> str:
+    return ("No stretch could be priced; the line above says why. Every "
+            "other surface on this page stands.")
+
+
 # ── Self-tests ────────────────────────────────────────────────────────
 
 
 def expectations_self_test() -> list[tuple[str, bool, str]]:
     """This page's own suite — the inversion identities, the branch
-    sentences, the pinned base-rate data against its spot fragments, and
-    the no-adjective rule. The engine suite (176 checks) runs on the
+    sentences, the pinned base-rate data against its spot fragments, the
+    record-priced census and its one-basis identity, and the no-adjective
+    rule. The engine suite (176 checks) runs on the
     verbatim copy above, exactly as on every carrier file."""
     out: list[tuple[str, bool, str]] = []
     _syn = IVParams(OE=100.0, shares=10.0, tier="Chapel", growth=0.0,
@@ -6662,6 +6828,14 @@ def expectations_self_test() -> list[tuple[str, bool, str]]:
         financial_stop_sentence("an insurer", "Premium revenue was read."),
         inflection_route_sentence(-120.0, -44.0),
         foreign_stop_sentence(),
+        rpv_position_sentence("SYN", 61.20, 3, 7),
+        rpv_floor_sentence("SYN", 6),
+        rpv_thinning_line(5, 9, [(2017, 2022, "FY2017 owners' earnings not "
+                                  "positive — a stretch with a non-positive "
+                                  "endpoint states no rate")], 1),
+        rpv_none_priced_sentence(),
+        RPV_SELF_AUDIT,
+        RPV_READING_KEY,
     ]
     _hits = {w for s in _sentences for w in scan_for_adjectives(s)}
     out.append(("No adjective — and no only/just/merely — in any output sentence",
@@ -6686,7 +6860,118 @@ def expectations_self_test() -> list[tuple[str, bool, str]]:
                 "0.02" in _idr and "half-cent" in _idr
                 and "assumptions block" in _idr, _idr[:70]))
 
+    # ── the record-priced values (page-9 extension, 1 Oct 2026) ──────
+
+    # 19. The census: a synthetic ten-year window carrying one unpriced
+    #     year, one non-positive year and one excluded year yields the
+    #     exact admissible/refused split with every refusal named, and
+    #     possible = admissible + refused closes; a second window
+    #     exercises the unfiled-year reason.
+    _cs = {2016: 100.0, 2017: -5.0, 2018: 120.0, 2020: 150.0, 2021: 160.0,
+           2022: 170.0, 2023: 180.0, 2024: 190.0, 2025: 200.0}
+    _cadm, _cref = stretch_census(_cs, frozenset({2022}),
+                                  frozenset(_cs) | {2019})
+    _creasons = " | ".join(why for *_w, why in _cref)
+    _uadm, _uref = stretch_census({2010: 1.0, 2015: 2.0, 2016: 2.2},
+                                  frozenset(), frozenset({2010, 2015, 2016}),
+                                  (5,))
+    out.append(("Census: 6 admissible and 3 refused of 9 possible, every "
+                "refusal named, the unfiled year refused by name",
+                len(_cadm) == 6 and len(_cref) == 3
+                and len(_cadm) + len(_cref) == 9
+                and any(a == 2016 and b == 2025
+                        and abs(r - (2.0 ** (1.0 / 9) - 1.0)) < 1e-12
+                        for a, b, r in _cadm)
+                and "FY2017 owners' earnings not positive" in _creasons
+                and "FY2022 excluded as a capital event" in _creasons
+                and "FY2019 has no price" in _creasons
+                and len(_uadm) == 1 and len(_uref) == 1
+                and "FY2011 not in the filed read" in _uref[0][2],
+                f"{len(_cadm)} admissible, {len(_cref)} refused, "
+                f"unfiled: {_uref[0][2] if _uref else 'missing'}"))
+
+    # 20. The floor's own arithmetic: seven priced years hold two
+    #     stretches, both five-year — a relabeling of the best-5y cell —
+    #     while eight hold four with a seven-year member; the floor
+    #     sentence names the count and the bar.
+    _s7 = {y: float(y - 2018) for y in range(2019, 2026)}
+    _a7, _r7 = stretch_census(_s7, frozenset(), frozenset(_s7))
+    _s8 = {y: float(y - 2017) for y in range(2018, 2026)}
+    _a8, _r8 = stretch_census(_s8, frozenset(), frozenset(_s8))
+    _fs = rpv_floor_sentence("SYN", 7)
+    out.append(("Floor arithmetic: 7 priced years → two 5y stretches, "
+                "8 → four with a 7y member; the sentence names the bar",
+                len(_a7) == 2 and not _r7
+                and all(b - a == 5 for a, b, _rr_ in _a7)
+                and len(_a8) == 4 and not _r8
+                and any(b - a == 7 for a, b, _rr_ in _a8)
+                and RPV_MIN_PRICED_YEARS == 8
+                and "7 priced years" in _fs and "under the 8" in _fs,
+                f"{len(_a7)} at seven years, {len(_a8)} at eight"))
+
+    # 21. One basis: the record-priced value IS the engine call the solve
+    #     bisects on — exact equality at two rates and two required
+    #     returns, so this can never quietly become a second engine.
+    out.append(("One basis: record_priced_value equals the engine call "
+                "exactly",
+                record_priced_value(_syn, 15.0, 0.12)
+                == intrinsic_value(IVParams(**{**_syn.__dict__,
+                                               "growth": 0.12}), 15.0)
+                and record_priced_value(_syn, 10.0, 0.07)
+                == intrinsic_value(IVParams(**{**_syn.__dict__,
+                                               "growth": 0.07}), 10.0),
+                "two rates, two required returns, exact"))
+
+    # 22. Position duality — the self-audit as arithmetic: values below
+    #     the price count exactly as delivered rates below g*, because
+    #     IV15 rises strictly with growth (check 4's property).
+    _dp = intrinsic_value(IVParams(**{**_syn.__dict__, "growth": 0.10}), 15)
+    _dk, _dg = solve_price_growth(_dp, _syn, 15)
+    _drates = (0.02, 0.05, 0.08, 0.20, 0.30)
+    _dvals = [record_priced_value(_syn, 15.0, r) for r in _drates]
+    out.append(("Position duality: values below the price = rates below g*",
+                _dk == "solved"
+                and position_count(_dp, _dvals)
+                == sum(1 for r in _drates if r < _dg) == 3,
+                f"3 of 5 both ways, g*={_dg:.4%}" if _dk == "solved" else _dk))
+
+    # 23. The ceiling partition: a delivered rate above 60% keeps its rate
+    #     and loses its value; the thinning line counts all three
+    #     populations and states the refusal law.
+    _padm = [(2016, 2021, 0.30), (2018, 2023, 0.65)]
+    _ppriced, _pover = rpv_price_partition(_padm, _syn, 15.0)
+    _tl = rpv_thinning_line(len(_ppriced), 3,
+                            [(2016, 2023,
+                              "FY2016 excluded as a capital event")],
+                            len(_pover))
+    out.append(("Ceiling partition: a rate above 60% shows, its value is "
+                "refused; the thinning line counts all three populations",
+                len(_ppriced) == 1 and len(_pover) == 1
+                and _pover[0][2] == 0.65
+                and _ppriced[0][3] == record_priced_value(_syn, 15.0, 0.30)
+                and "1 of 3 possible" in _tl and "1 refused" in _tl
+                and "above 60% a year" in _tl
+                and "no value is priced" in _tl,
+                _tl[:90]))
+
+    # 24. The ladder's top: the 9-year stretch equals the full-window rate
+    #     on a clean ten-year read — the cross-surface agreement that
+    #     replaced the brief's structurally empty k=10.
+    _cl = {2016 + i: 100.0 * (1.07 ** i) for i in range(10)}
+    _cladm, _clref = stretch_census(_cl, frozenset(), frozenset(_cl))
+    _cl9 = next((r for a, b, r in _cladm if b - a == 9), None)
+    _clfw = full_window_cagr(_cl)
+    out.append(("Ladder top: the 9-year stretch equals the full-window "
+                "rate on a clean ten-year read",
+                _cl9 is not None and _clfw is not None and not _clref
+                and len(_cladm) == 9
+                and abs(_cl9 - _clfw[0]) < 1e-12
+                and (_clfw[1], _clfw[2]) == (2016, 2025),
+                f"{_cl9:.6%} both ways"
+                if _cl9 is not None and _clfw else "no 9y stretch"))
+
     return out
+
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -6718,7 +7003,11 @@ def _page_footer() -> None:
                 "with every figure.\\n\\n"
                 "**Owners' earnings** — reported profit less the true cost of stock "
                 "compensation, measured the way the Tragic Algebra Analyzer measures it; "
-                "the base here seeds from that page's rules and is yours to override."
+                "the base here seeds from that page's rules and is yours to override.\\n\\n"
+                "**Record-priced values** — the same IV15 run at every five-, seven- and "
+                "nine-year owners' earnings stretch the filer actually delivered, on the "
+                "solve's own base, tier and required return; today's price is placed "
+                "inside the set as a count."
             )
     with _r2:
         with st.expander("Verify this page"):
@@ -6728,7 +7017,8 @@ def _page_footer() -> None:
                 "which is the proof this page inverts what that page runs. "
                 "**Expectations** covers the inversions (each must reproduce the forward "
                 "identity to the cent), the branch sentences, the pinned base-rate data "
-                "against its raw spot fragments, and the no-adjective rule."
+                "against its raw spot fragments, the record-priced census and its "
+                "one-basis identity, and the no-adjective rule."
             )
             if st.button("Run checks"):
                 for _label, _fn in (("Engine (the copied suite)", self_test),
@@ -7119,6 +7409,53 @@ if years and ticker and st.session_state.get("exp_tk") == ticker:
             "self-test recomputes their figures with the identical function — the table "
             "cannot disagree with the filed series it was computed from."
         )
+
+    # ══ the record-priced values — the page-9 extension (1 Oct 2026) ═════
+    # Everything here runs on the ONE basis set above: the same IVParams
+    # the growth solve bisects on, the box's required return, no new
+    # knobs. Renders on every solve branch — the base exists past the
+    # stops above. The floor and the thinning refuse out loud; the strip
+    # is a summary and never a verdict (the Serial Acquirers ceiling);
+    # the close is a count, never a probability.
+    st.markdown("---")
+    st.subheader("The record-priced values")
+    st.caption(RPV_SELF_AUDIT)
+    _rpv_series = {y.fy: y.OE for y in years if y.price > 0}
+    _rpv_excl = frozenset(y.fy for y in years if y.excluded)
+    if len(_rpv_series) < RPV_MIN_PRICED_YEARS:
+        st.error(rpv_floor_sentence(tk, len(_rpv_series)))
+    else:
+        _rpv_read = frozenset(y.fy for y in years)
+        _rpv_adm, _rpv_ref = stretch_census(_rpv_series, _rpv_excl, _rpv_read)
+        _rpv_priced, _rpv_over = rpv_price_partition(_rpv_adm, base,
+                                                     required_return)
+        _rpv_possible = len(_rpv_adm) + len(_rpv_ref)
+        if _rpv_priced or _rpv_over:
+            st.dataframe(pd.DataFrame(
+                [{"Window": f"FY{a}→FY{b}", "Span": f"{b - a}y",
+                  "Delivered rate": r, "Record-priced value": v}
+                 for a, b, r, v in sorted(_rpv_priced, key=lambda t: t[3])]
+                + [{"Window": f"FY{a}→FY{b}", "Span": f"{b - a}y",
+                    "Delivered rate": r, "Record-priced value": None}
+                   for a, b, r in sorted(_rpv_over, key=lambda t: t[2])]
+            ).style.format({"Delivered rate": "{:.1%}",
+                            "Record-priced value": "${:,.2f}"}, na_rep="—"),
+                width='stretch', hide_index=True)
+        st.caption(rpv_thinning_line(len(_rpv_priced), _rpv_possible,
+                                     _rpv_ref, len(_rpv_over)))
+        if _rpv_priced:
+            _rpv_vals = sorted(v for *_w, v in _rpv_priced)
+            _rm1, _rm2, _rm3 = st.columns(3)
+            _rm1.metric("Lowest record-priced value",
+                        f"${_rpv_vals[0]:,.2f}")
+            _rm2.metric("Middle", f"${_rpv_vals[len(_rpv_vals) // 2]:,.2f}")
+            _rm3.metric("Highest", f"${_rpv_vals[-1]:,.2f}")
+            st.markdown(rpv_position_sentence(
+                tk, price, position_count(price, _rpv_vals), len(_rpv_vals)))
+            with st.expander("How to read this"):
+                st.markdown(RPV_READING_KEY)
+        else:
+            st.write(rpv_none_priced_sentence())
 
     # ══ notes and detail ═════════════════════════════════════════════════
     st.markdown("---")
