@@ -356,6 +356,22 @@ reaches about ten years for many filers, so the ten-year revenue column counts 8
 where the ten-year owners'-earnings column counts 21, and the table says so rather than
 pooling around it.
 
+Below the evidence panels the page prices the record itself. From the same owners'
+earnings series, it computes every five, seven and nine year growth stretch the filer
+actually delivered, endpoint arithmetic with both endpoints positive and no excluded
+year serving as an endpoint, and runs its own IV15 at each delivered rate on the one
+basis set above: the same base, tier and required return the solve uses. The result is
+a table of record-priced values, what the record itself would have paid, with a summary
+strip showing the lowest, middle and highest, and a closing sentence placing today's
+price inside the set as a count: above N of the M record-priced values, never a
+probability. Stretches the record cannot price are refused by name, with the year and
+the reason printed, and a rate delivered above the 60 percent growth box ceiling shows
+its rate but prices no value. The whole section stands down below eight priced years,
+because the shortest stretch is five years and a thinner record cannot hold a
+distribution worth the name. The implied growth solve asks what the price demands; this
+table answers what the record would have paid; the two are the same arithmetic run in
+opposite directions, and the page says so on its surface.
+
 It refuses everything the Tragic Algebra Analyzer refuses, and where that page withholds
 a verdict and still shows its measurements, this page prints no implied number at all:
 financials route to the Financials Checker, IFRS filers to the Non-US Checker, and
