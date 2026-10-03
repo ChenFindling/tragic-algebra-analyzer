@@ -17,9 +17,9 @@ SECOND Cloud app pointing at this file. Two consequences of that:
     harmless and known, not a bug.
 
 Layout of this file:
-  lines up to the BASELINES banner — tool 1's engine, reader and 202-check
+  lines up to the BASELINES banner — tool 1's engine, reader and 208-check
   self-test, copied VERBATIM from the deployed 1_Tragic_Algebra_Analyzer.py
-  (its lines 1-5901; only this docstring replaced, tool 1's UI dropped).
+  (its lines 1-6075; only this docstring replaced, tool 1's UI dropped).
   The doctrine: what this page checks is what the pages run. A reader
   change in the page files is a reader change here — sync it like
   pages 2, 4, 5 and 6.
@@ -4403,6 +4403,119 @@ def _xbrl_fold(entries: tuple, dead: set, merged: dict, meta: dict,
             up_c = up_c or entry.up_c
     return sho, up_c, notes
 
+
+# ══════════════════════════════════════════════════════════════════════
+#  IVPARAMS ASSEMBLY — the judgement-box defaults as engine code
+#  (the IVParams extraction, trio session, 2 Oct 2026 — BP-HANDOVER §3)
+# ══════════════════════════════════════════════════════════════════════
+#
+# Until this session the assembly lived inline in this page's UI: the
+# judgement boxes seeded their defaults from the reader's outputs, and the
+# construction sites below the SELF-TEST banner built IVParams by hand.
+# Nothing outside the UI could compute an IV15 without rebuilding that
+# logic and drifting from it (the 6-Sep doctrine). These helpers ARE the
+# assembly, inside the span, so every carrier computes the same IV15 from
+# the same defaults: the Baselines app pins iv15 as an ordinary core key,
+# and the Expectations page's solver threads through iv_at_growth — the
+# identical engine call its bisection has always wrapped inline.
+
+
+def iv_params(years: list["Year"], meta: dict,
+              overrides: dict | None = None) -> "IVParams":
+    """IVParams at the judgement-box DEFAULTS, overridden per field.
+
+    The defaults are the page's own at-load seeding, roundings included,
+    so a figure computed here is byte-stable against the page's
+    assumptions block at default judgement:
+
+      forward N     round(latest N, 1)
+      ΔE applied    pooled over the last 3 years (the radio's default),
+                    seed_dE-capped only when dE_projectable and a share
+                    count was read (sh_cov) — the gate the boxes use
+      OE            round(seed_owners_earnings(...), 1)
+      shares        round(meta shares, 1)
+      growth        round(seed * 100, 1) / 100 — the box's percent step
+      net cash      round(cash, 1) - round(debt, 1), the two boxes' step
+      tier          the selectbox default (index 2: Chapel)
+      exit multiple round(tier default, 2);  blend 0.5;  leg "dcf"
+      stage 0       0 years at the growth seed (ignored at 0 years; kept
+                    equal to the box default, which two-decimal-rounds a
+                    one-decimal percent — the same float)
+
+    overrides replaces fields by name — the boxes, when a caller has
+    them. A key that is not an IVParams field raises by name: an
+    override that matches nothing must say so, never be skipped.
+    """
+    pooled = pool(years)
+    recent = pool_recent(years, 3) if len(years) >= 3 else pooled
+    no_counts = meta.get("sh_cov", (1, 1))[0] == 0
+    use_dE = recent.dE
+    dE_ok = dE_projectable(recent) and not no_counts
+    applied_dE = seed_dE(use_dE) if dE_ok else use_dE
+    hist = sorted(y.OE for y in years[-5:])
+    median_OE = hist[len(hist) // 2] if hist else 0.0
+    fwd_N = float(round(years[-1].N, 1))
+    derived, _src = seed_owners_earnings(fwd_N, applied_dE, dE_ok, median_OE)
+    growth = round(meta["growth"] * 100, 1) / 100
+    tier = list(AICT)[2]
+    fields = dict(
+        OE=float(round(derived, 1)),
+        shares=float(round(meta["shares"], 1)),
+        tier=tier,
+        growth=growth,
+        net_cash=(float(round(meta.get("cash", 0.0), 1))
+                  - float(round(meta.get("debt", 0.0), 1))),
+        exit_multiple=round(AICT[tier].default_exit_multiple, 2),
+        blend=0.5,
+        m2_style="dcf",
+        stage0_years=0,
+        stage0_growth=growth,
+    )
+    for key, val in (overrides or {}).items():
+        if key not in IVParams.__dataclass_fields__:
+            raise ValueError(f"iv_params: {key!r} is not an IVParams field; "
+                             "an override that matches nothing must say so")
+        fields[key] = val
+    return IVParams(**fields)
+
+
+def iv15(p: "IVParams") -> float:
+    """intrinsic_value at the 15% rung — one line, so the pinned key can
+    never quietly become a second engine."""
+    return intrinsic_value(p, 15)
+
+
+def iv_at_growth(p: "IVParams", g: float, rr: float) -> float:
+    """The engine call every growth inversion wraps: IV at one rate, the
+    required return threaded. The Expectations page's solver, its live
+    identity proof and its record-priced values all take this path — the
+    same helper, so none of them can drift into a second engine."""
+    return intrinsic_value(IVParams(**{**p.__dict__, "growth": g}), rr)
+
+
+def solve_iv_growth(target: float, p: "IVParams", rr: float,
+                    lo: float = -0.30, hi: float = 1.00) -> float | None:
+    """The shared growth solver, required return threaded.
+
+    Op-for-op the bisection `solve_growth` has always run (which stays
+    byte-untouched above — it hard-codes 15 and serves this page's
+    calibration box; a self-test pins the two bit-equal at 15 so the
+    pair cannot drift apart). The Expectations page's solve keeps its
+    own branch sentences and delegates the bisection here.
+    """
+    f = lambda g: iv_at_growth(p, g, rr) - target
+    flo, fhi = f(lo), f(hi)
+    if flo != flo or fhi != fhi or flo * fhi > 0:
+        return None
+    for _ in range(200):
+        mid = (lo + hi) / 2
+        if f(lo) * f(mid) <= 0:
+            hi = mid
+        else:
+            lo = mid
+    return (lo + hi) / 2
+
+
 # ══════════════════════════════════════════════════════════════════════
 #  SELF-TEST
 # ══════════════════════════════════════════════════════════════════════
@@ -5902,14 +6015,77 @@ def self_test() -> list[tuple[str, bool, str]]:
                 and shd_input_seed(0.0, {}, 1.0) == (0.0, ""),
                 "GRAB stays refused: its IFRS-tagged average is invisible to this US-GAAP series"))
 
+    # ── the IVParams extraction (trio session, 2 Oct 2026, BP §3):
+    #    the judgement-box assembly is engine code now; these pin it. ──
+    _ivy = [Year(fy=f, N=10.04 if f == 2025 else 10.0, G=1.0, T=0.5,
+                 Cw=2.0, dS=-0.01, price=20.0) for f in range(2016, 2026)]
+    _ivm = {"shares": 10.04, "growth": 0.0834, "cash": 55.27, "debt": 5.06,
+            "sh_cov": (5, 5)}
+    _ivo = dict(OE=123.4, shares=9.9, tier="Stone", growth=0.11, net_cash=-7.5,
+                exit_multiple=11.0, blend=0.7, m2_style="hold",
+                stage0_years=2, stage0_growth=0.40)
+    out.append(("IVParams reroute identity: full overrides equal direct construction",
+                iv_params(_ivy, _ivm, _ivo) == IVParams(**_ivo),
+                "the three UI sites pass every box, so routing them through "
+                "iv_params is provably a no-op"))
+    _ivd = iv_params(_ivy, _ivm)
+    _ivr3 = pool_recent(_ivy, 3)
+    _ivexp = dict(
+        OE=float(round(seed_owners_earnings(float(round(_ivy[-1].N, 1)),
+                                            seed_dE(_ivr3.dE), True,
+                                            sorted(y.OE for y in _ivy[-5:])[2])[0], 1)),
+        shares=float(round(_ivm["shares"], 1)), tier="Chapel",
+        growth=round(_ivm["growth"] * 100, 1) / 100,
+        net_cash=float(round(_ivm["cash"], 1)) - float(round(_ivm["debt"], 1)),
+        exit_multiple=round(AICT["Chapel"].default_exit_multiple, 2),
+        blend=0.5, m2_style="dcf", stage0_years=0,
+        stage0_growth=round(round(_ivm["growth"] * 100, 1) / 100 * 100, 2) / 100.0)
+    out.append(("IVParams defaults equal the judgement boxes, roundings included",
+                _ivd == IVParams(**_ivexp)
+                and _ivd.OE == 8.7 and _ivd.shares == 10.0 and _ivd.growth == 0.083,
+                "the box formulas restated independently: seed 8.7 on capped-free "
+                "\u0394E, shares 10.0, growth 8.3%, Chapel at 14.5x"))
+    _iv1 = iv_params(_ivy, _ivm, {"growth": 0.20})
+    try:
+        iv_params(_ivy, _ivm, {"growht": 0.20})
+        _ivraised = ""
+    except ValueError as _ive:
+        _ivraised = str(_ive)
+    out.append(("IVParams override plumbing: one field moves alone, an unknown key raises by name",
+                _iv1.growth == 0.20
+                and {k: v for k, v in _iv1.__dict__.items() if k != "growth"}
+                == {k: v for k, v in _ivd.__dict__.items() if k != "growth"}
+                and "growht" in _ivraised,
+                "the matched-nothing lesson applied to parameters"))
+    _ivcrm = IVParams(OE=7300, shares=1073.3, tier="Chapel", growth=0.069,
+                      exit_multiple=21.8, blend=1.0)   # check 7's own banked fixture
+    out.append(("iv15 is intrinsic_value at 15 and reproduces the published-anchored CRM figure",
+                iv15(_ivcrm) == intrinsic_value(_ivcrm, 15)
+                and abs(iv15(_ivcrm) - 69.81) < 1.0,
+                f"${iv15(_ivcrm):.2f} — the pinnable key can never be a second engine"))
+    _ivtgt = intrinsic_value(IVParams(**{**_ivcrm.__dict__, "growth": 0.069}), 15)
+    _ivg = solve_iv_growth(_ivtgt, _ivcrm, 15, -0.30, 1.00)
+    out.append(("Shared solver at 15 bit-equals the untouched solve_growth, and round-trips",
+                _ivg is not None and _ivg == solve_growth(_ivtgt, _ivcrm)
+                and abs(iv_at_growth(_ivcrm, _ivg, 15) - _ivtgt) < 0.01,
+                f"{_ivg:.4%} both ways — duplication pinned, so it cannot drift"))
+    out.append(("iv_at_growth is the engine call itself, required return threaded",
+                iv_at_growth(_ivcrm, 0.12, 10)
+                == intrinsic_value(IVParams(**{**_ivcrm.__dict__, "growth": 0.12}), 10)
+                and iv_at_growth(_ivcrm, 0.0, 8)
+                == intrinsic_value(IVParams(**{**_ivcrm.__dict__, "growth": 0.0}), 8),
+                "bit-equal at 10% and 8% — the page-9 shape, not just the 15 rung"))
+
     return out
 
 
 # ══════════════════════════════════════════════════════════════════════
 #  BASELINES — everything below this line is this page's own code.
 #  Everything above it is tool 1's engine and reader, copied verbatim
-#  (lines 1–5901 of the deployed 1_Tragic_Algebra_Analyzer.py, 202
-#  checks; only the module docstring was replaced). Span figures in
+#  (lines 1–6075 of the deployed 1_Tragic_Algebra_Analyzer.py, 208
+#  checks; only the module docstring was replaced). Re-copied 2 Oct
+#  2026 (trio session: the IVParams extraction — iv_params/iv15 and the
+#  shared solver are span code now). Span figures in
 #  this banner and the docstring brought current 1 Oct 2026 by the
 #  plumbing session (BP-BRIEF): the recopies after 13 Sep had carried
 #  the span without patching the three count/line comment mentions —
@@ -6029,6 +6205,28 @@ def summarize(years, notes, meta) -> Summary:
             core["dE_3y"] = p3.dE * 100
     except ValueError:
         pass
+    # Trio session (2 Oct 2026, BP §3 item 4): iv15 as an ordinary core
+    # key — tool 1's IV15 at pure judgement-box defaults via the span's
+    # own iv_params/iv15 pair, so the figure is byte-stable against that
+    # page's assumptions block. MIRROR RULE: written only where the page
+    # would print the number — not financial (the page's gate, broker
+    # included), a share count read, any registered Up-C basis verified,
+    # and the value finite and non-negative (the page stops on NaN and
+    # on Not-investible). Existing pins compare pinned keys only (check
+    # 62), so nothing moves until a deliberate unpin → capture → re-pin.
+    _upc_blocked = (any(e.up_c for e in XBRL_REGISTRY.get(meta.get("ticker", ""), ()))
+                    and not (meta.get("up_c_basis") or {}).get("ok"))
+    if not meta.get("financial") and meta.get("shares", 0) > 0 and not _upc_blocked:
+        try:
+            _iv = iv15(iv_params(years, meta))
+            if _iv == _iv and not _iv < 0:
+                core["iv15"] = _iv
+        except (ValueError, KeyError):
+            # A meta without the seed inputs (growth, shares) is a read
+            # the page could not have priced — no key, exactly as the
+            # page would have had no boxes to seed. Caught by the dry
+            # run on a lean synthetic meta in check 13's fixture.
+            pass
     refusals = []
     if not meta.get("shares"):
         refusals.append(REFUSAL_SHARES)
@@ -8759,6 +8957,36 @@ def baselines_self_test() -> list[tuple[str, bool, str]]:
                 and _rr[1].error == "" and _rr[1].resolved == "BBB"
                 and _rr[3].error == "" and _rr[3].resolved == "DDD",
                 f"retried {_ret}, order preserved"))
+
+    # 61. Trio session (2 Oct 2026): the iv15 mirror rule — the key
+    #     exists exactly where tool 1's page would print the figure.
+    _ivy61 = [Year(fy=f, N=10.0, G=1.0, T=0.5, Cw=2.0, dS=-0.01, price=20.0)
+              for f in range(2016, 2026)]
+    _ivm61 = {"ticker": "IVFX", "shares": 10.0, "growth": 0.08, "cash": 50.0,
+              "debt": 0.0, "net_cash": 50.0, "sh_cov": (5, 5),
+              "financial": False, "fin_class": ""}
+    _s61 = summarize(_ivy61, [], _ivm61)
+    _s61f = summarize(_ivy61, [], {**_ivm61, "financial": True, "fin_class": "insurer"})
+    _s61n = summarize(_ivy61, [], {**_ivm61, "shares": 0})
+    out.append(("iv15 mirror rule: key on the ordinary read, absent for financial and no-count",
+                _s61.core.get("iv15") == iv15(iv_params(_ivy61, _ivm61))
+                and _s61.core["iv15"] > 0
+                and "iv15" not in _s61f.core and "iv15" not in _s61n.core,
+                f"iv15 {_s61.core.get('iv15', float('nan')):.4f} where the page prints; keyless where it stops"))
+
+    # 62. The deliberate-re-pin door, proven not assumed: a summary
+    #     carrying an iv15 no pin pinned compares IDENTICALLY — pinned
+    #     keys only, so the clean line cannot move until a re-pin cycle.
+    _p62 = Pin(ticker="IVFX", pin_set="internal", pinned="2026-10-02",
+               latest_fy=2025, window=tuple(range(2016, 2026)), core={"N": 10.0})
+    _s62a = Summary(ticker="IVFX", latest_fy=2025, window=tuple(range(2016, 2026)),
+                    core={"N": 10.0}, refusals=(), years=[], excluded={})
+    _s62b = Summary(ticker="IVFX", latest_fy=2025, window=tuple(range(2016, 2026)),
+                    core={"N": 10.0, "iv15": 79.44}, refusals=(), years=[], excluded={})
+    out.append(("New-key blindness: an unpinned iv15 changes no comparison verdict",
+                compare(_p62, _s62a) == compare(_p62, _s62b)
+                and all(ok for _, _, ok in compare(_p62, _s62b)),
+                "pinned keys only — the clean line's one door stays the deliberate re-pin"))
     return out
 
 
