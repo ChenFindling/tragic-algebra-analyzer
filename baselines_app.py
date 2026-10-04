@@ -6564,6 +6564,9 @@ def evaluate_row(pin: Pin, s: Summary | None, err: str, today: str) -> Row:
 # extracting that assembly into a testable helper. Every reader bug this
 # page hunts shows in Ω and ΔE before it shows in IV15.
 
+# iv15 re-pin cycle, 4 Oct 2026: all 14 internal pins re-pinned to their
+# own live captures (capture mode); iv15 joins 12 cores (KNSL and GRAB
+# excluded by the mirror rule: financial / no count). Masters untouched.
 PINS: list[Pin] = [
     # PDEX — re-pinned AGAIN 12 Sep 2026 from the F2 deploy's FAIL detail:
     # Pro-Dex files the successor Ce tag (annual 25/38/28/39/96/60/89/50/
@@ -6577,7 +6580,7 @@ PINS: list[Pin] = [
     # were pins of the defect (conservative-and-wrong is still wrong).
     # This same morning's pin minted the omega keys via the deliberate
     # queue E capture cycle (NFLX 7-Sep protocol).
-    Pin(ticker='PDEX', pin_set='internal', pinned='2026-09-12',
+    Pin(ticker='PDEX', pin_set='internal', pinned='2026-10-04',
         latest_fy=2026, window=(2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026),
         core={
             'G': 0.688,
@@ -6585,6 +6588,7 @@ PINS: list[Pin] = [
             'T': 3.408,
             'dE_3y': 107.21104952387547,
             'dE_full': 101.5245846434969,
+            'iv15': 79.44367171198704,
             'net_cash': -8.017000000000001,
             'omega:2017': 0.14657081473493577,
             'omega:2018': 2.268465630902291,
@@ -6601,7 +6605,7 @@ PINS: list[Pin] = [
             'shares': 3.186135,
         },
         refusals=()),
-    Pin(ticker='XPEL', pin_set='internal', pinned='2026-09-16',
+    Pin(ticker='XPEL', pin_set='internal', pinned='2026-10-04',
         latest_fy=2025, window=(2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025),
         core={
             'G': 2.753,
@@ -6609,13 +6613,21 @@ PINS: list[Pin] = [
             'T': 2.999,
             'dE_3y': 102.53257755622809,
             'dE_full': 101.65091290990038,
+            'iv15': 31.110326542023376,
             'net_cash': 50.405812,
+            'omega:2019': 0.0,
+            'omega:2020': 0.0,
+            'omega:2021': 0.24233463263225555,
+            'omega:2022': 0.03,
+            'omega:2023': 1.126202140586853,
+            'omega:2024': 1.1638669680493674,
+            'omega:2025': 1.513347558169365,
             'omega_sum': 4.075751299437841,
             'price': 36.55499982833862,
             'shares': 27.604183,
         },
         refusals=()),
-    Pin(ticker='CROX', pin_set='internal', pinned='2026-09-05',
+    Pin(ticker='CROX', pin_set='internal', pinned='2026-10-04',
         latest_fy=2025, window=(2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025),
         core={
             'G': 36.701,
@@ -6623,7 +6635,18 @@ PINS: list[Pin] = [
             'T': 582.32,
             'dE_3y': 100.92327592100871,
             'dE_full': 97.878400824446,
+            'iv15': 67.18100817826002,
             'net_cash': -1100.531,
+            'omega:2016': 6.198750046730041,
+            'omega:2017': 9.14799957275391,
+            'omega:2018': 17.670481159557028,
+            'omega:2019': 6.191999092102066,
+            'omega:2020': 82.04241703224181,
+            'omega:2021': 100.11566975911455,
+            'omega:2022': 0.0,
+            'omega:2023': 44.96200003051757,
+            'omega:2024': 38.5243337402344,
+            'omega:2025': 0.0,
             'omega_sum': 304.8536504332514,
             'price': 94.18416659037273,
             'shares': 50.2,
@@ -6636,14 +6659,22 @@ PINS: list[Pin] = [
     # pinned). dE_3y cross-checked: +100.00 on SN 483.234 reproduces
     # 77.3651 to the digit. The 5-Sep pin was a pin of the defect
     # (the AAPL/BBW precedent); every other key held through the deploy.
-    Pin(ticker='TGTX', pin_set='internal', pinned='2026-09-12',
+    Pin(ticker='TGTX', pin_set='internal', pinned='2026-10-04',
         latest_fy=2025, window=(2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025),
         core={
             'G': 64.67,
             'N': 447.179,
             'T': 91.24,
             'dE_3y': 77.36505869744084,
+            'iv15': 71.47947834941836,
             'net_cash': -44.539000000000016,
+            'omega:2016': 18.954551815369328,
+            'omega:2018': 111.18177059202154,
+            'omega:2021': 93.2488870319946,
+            'omega:2022': 23.466632735281625,
+            'omega:2023': 82.33430806884245,
+            'omega:2024': 100.87232331140828,
+            'omega:2025': 71.317100873758,
             'omega_sum': 501.3755744286758,
             'price': 34.7195831934611,
             'shares': 155.305953,
@@ -6673,7 +6704,7 @@ PINS: list[Pin] = [
     # dE_3y reproduced the retired 5-Sep reduced pin to the digit;
     # omega_sum and dE_full pinned from first full-precision capture.
     # Window tuple keeps the 2018 hole (no FY2018 10-K figures).
-    Pin(ticker='BBW', pin_set='internal', pinned='2026-09-08',
+    Pin(ticker='BBW', pin_set='internal', pinned='2026-10-04',
         latest_fy=2026, window=(2016, 2017, 2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026),
         core={
             'G': 2.93,
@@ -6681,7 +6712,18 @@ PINS: list[Pin] = [
             'T': 27.735,
             'dE_3y': 97.76456082219417,
             'dE_full': 100.32538446090302,
+            'iv15': 44.83521027829317,
             'net_cash': 28.212999999999997,
+            'omega:2016': 0.21525695029742664,
+            'omega:2017': 0.9743444650057156,
+            'omega:2019': 1.9981784526726651,
+            'omega:2020': 1.316453883715281,
+            'omega:2021': 2.395865113549679,
+            'omega:2022': 7.35733146572942,
+            'omega:2023': 0.0,
+            'omega:2024': 5.62491661933354,
+            'omega:2025': 0.5311347413428393,
+            'omega:2026': 4.542960789380707,
             'omega_sum': 24.956442481027274,
             'price': 51.747499783833824,
             'shares': 12.808954,
@@ -6702,20 +6744,28 @@ PINS: list[Pin] = [
     # outside the 3-year window. FY2021 onward reads the genuine narrow
     # withholding tag and stands (Variant B's first live mixed-shape
     # firing). The 8-Sep omega_sum was a pin of the defect.
-    Pin(ticker='PLTR', pin_set='internal', pinned='2026-09-16',
+    Pin(ticker='PLTR', pin_set='internal', pinned='2026-10-04',
         latest_fy=2025, window=(2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025),
         core={
             'G': 684.033,
             'N': 1625.033,
             'T': 74.985,
             'dE_3y': -378.88278539838456,
+            'dE_full': -6259.922056698911,
+            'iv15': 24.891720454473592,
             'net_cash': 7177.043000000001,
+            'omega:2020': 841.082936815587,
+            'omega:2021': 5210.180664109866,
+            'omega:2022': 608.1423619309664,
+            'omega:2023': 1168.7144193783201,
+            'omega:2024': 4309.535916666667,
+            'omega:2025': 7373.491108292897,
             'omega_sum': 19511.1474071943,
             'price': 140.20833460489908,
             'shares': 2391.192,
         },
         refusals=()),
-    Pin(ticker='KNSL', pin_set='internal', pinned='2026-09-05',
+    Pin(ticker='KNSL', pin_set='internal', pinned='2026-10-04',
         latest_fy=2025, window=(2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025),
         core={
             'G': 17.884,
@@ -6724,6 +6774,16 @@ PINS: list[Pin] = [
             'dE_3y': 92.67941468119245,
             'dE_full': 90.00631442308543,
             'net_cash': 0.0,
+            'omega:2016': 0.0,
+            'omega:2017': 1.4542600034077964,
+            'omega:2018': 9.672294185002643,
+            'omega:2019': 17.129940242767333,
+            'omega:2020': 37.69107798829334,
+            'omega:2021': 15.187393008293151,
+            'omega:2022': 27.033619828183497,
+            'omega:2023': 34.67275435463969,
+            'omega:2024': 56.219198233205155,
+            'omega:2025': 40.28968663998923,
             'omega_sum': 239.35022448378183,
             'price': 437.54500071207684,
             'shares': 23.145751,
@@ -6738,25 +6798,36 @@ PINS: list[Pin] = [
     # shares delivered are priced at the year's average instead of the
     # cost flooring at the GAAP charge. Values are the 9-Sep live run's
     # FAIL detail, full precision; every other key held to tolerance.
-    Pin(ticker='RDDT', pin_set='internal', pinned='2026-09-16',
+    Pin(ticker='RDDT', pin_set='internal', pinned='2026-10-04',
         latest_fy=2025, window=(2022, 2023, 2024, 2025),
         core={
             'G': 343.18,
             'N': 529.721,
             'T': 0.0,
+            'dE_3y': -2111.998208778742,
+            'dE_full': -2111.998208778742,
+            'iv15': 102.3539032415055,
             'net_cash': 2476.8109999999997,
+            'omega:2024': 205.601,
+            'omega:2025': 1944.4675859794993,
             'omega_sum': 2150.0685859794994,
             'price': 176.38916714986166,
             'shares': 190.892108,
         },
         refusals=()),
-    Pin(ticker='GRAB', pin_set='internal', pinned='2026-09-05',
+    Pin(ticker='GRAB', pin_set='internal', pinned='2026-10-04',
         latest_fy=2025, window=(2019, 2020, 2021, 2022, 2023, 2024, 2025),
         core={
             'G': 0.0,
             'N': 268.0,
             'T': 274.0,
             'net_cash': 0.0,
+            'omega:2020': 0.0,
+            'omega:2021': 0.0,
+            'omega:2022': 0.0,
+            'omega:2023': 0.0,
+            'omega:2024': 226.0,
+            'omega:2025': 274.0,
             'omega_sum': 500.0,
             'price': 5.090833306312561,
             'shares': 0.0,
@@ -6777,15 +6848,15 @@ PINS: list[Pin] = [
     # net_cash figures are first captures, not comparisons. Standing clean
     # line from this deploy on: "21 pass, 2 fail, 2 refused as pinned,
     # 6 window mismatch, 1 not comparable".
-    Pin(ticker='CVNA', pin_set='internal', pinned='2026-09-16',
+    Pin(ticker='CVNA', pin_set='internal', pinned='2026-10-04',
         latest_fy=2025, window=(2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025),
         core={
             'G': 96.0,
             'N': 1895.0,
             'T': 0.0,
             'dE_3y': -51.5241911053978,
+            'iv15': 53.427912879219896,
             'net_cash': -2714.0,
-            'omega:2016': 0.0,
             'omega:2017': 0.6559999999999999,
             'omega:2018': 470.78026509189607,
             'omega:2019': 421.93925969163575,
@@ -6800,7 +6871,7 @@ PINS: list[Pin] = [
             'shares': 1091.695,
         },
         refusals=()),
-    Pin(ticker='RYAN', pin_set='internal', pinned='2026-09-16',
+    Pin(ticker='RYAN', pin_set='internal', pinned='2026-10-04',
         latest_fy=2025, window=(2019, 2020, 2021, 2022, 2023, 2024, 2025),
         core={
             'G': 69.451,
@@ -6808,9 +6879,8 @@ PINS: list[Pin] = [
             'T': 0.0,
             'dE_3y': 81.39305798890413,
             'dE_full': 90.30975541014729,
+            'iv15': 5.471449005760032,
             'net_cash': -3193.3269999999998,
-            'omega:2019': 0.0,
-            'omega:2020': 0.0,
             'omega:2021': 78.256,
             'omega:2022': 31.12821054283301,
             'omega:2023': 33.336901357221606,
@@ -6829,7 +6899,7 @@ PINS: list[Pin] = [
     # $110.30 pre-split, Apple's actual 30 Sep 2015 close. dE_full moved
     # +0.01323 (93.63020948587395 → below); every other key reproduced
     # the 5-Sep pin to the digit through the deploy.
-    Pin(ticker='AAPL', pin_set='internal', pinned='2026-09-08',
+    Pin(ticker='AAPL', pin_set='internal', pinned='2026-10-04',
         latest_fy=2025, window=(2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025),
         core={
             'G': 12863.0,
@@ -6837,7 +6907,18 @@ PINS: list[Pin] = [
             'T': 90711.0,
             'dE_3y': 94.22577096520112,
             'dE_full': 93.64344079763465,
+            'iv15': 77.95100713584547,
             'net_cash': 41742.0,
+            'omega:2016': 5251.842432903584,
+            'omega:2017': 5757.275318779579,
+            'omega:2018': 6405.351984405526,
+            'omega:2019': 8264.819748676302,
+            'omega:2020': 10012.332984657878,
+            'omega:2021': 20178.824247387223,
+            'omega:2022': 19409.381447327833,
+            'omega:2023': 18755.855504976724,
+            'omega:2024': 15642.854668712622,
+            'omega:2025': 18466.248548551113,
             'omega_sum': 128144.78688637838,
             'price': 227.653078519381,
             'shares': 14773.26,
@@ -6852,7 +6933,7 @@ PINS: list[Pin] = [
     # figures; the six filed keys reproduce the 5-Sep reduced pin.
     # FY2025's own Ω (2,381) still display-precision only — omega:YYYY
     # pins wait on summarize emitting per-year Ω (§5 D).
-    Pin(ticker='NFLX', pin_set='internal', pinned='2026-09-07',
+    Pin(ticker='NFLX', pin_set='internal', pinned='2026-10-04',
         latest_fy=2025, window=(2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025),
         core={
             'G': 368.449,
@@ -6860,7 +6941,18 @@ PINS: list[Pin] = [
             'T': 9127.167,
             'dE_3y': 83.0884857501042,
             'dE_full': 82.6019642120668,
+            'iv15': 38.60816477810087,
             'net_cash': -5400.476999999999,
+            'omega:2016': 178.68929311949094,
+            'omega:2017': 470.92175149211084,
+            'omega:2018': 902.8551472137688,
+            'omega:2019': 653.9522870346451,
+            'omega:2020': 1607.8357000087356,
+            'omega:2021': 1252.142583884341,
+            'omega:2022': 348.81135951302053,
+            'omega:2023': 830.0853054429115,
+            'omega:2024': 2014.6810504715222,
+            'omega:2025': 2380.567733456547,
             'omega_sum': 10640.542211637094,
             'price': 110.55633290608723,
             'shares': 4222.16215,
@@ -6875,7 +6967,7 @@ PINS: list[Pin] = [
     # digit; every printed year's Omega now equals V (C = 0 throughout).
     # The corrected dE_full sits just above 100 honestly. The 5-Sep pin
     # was a pin of the defect.
-    Pin(ticker='CLMB', pin_set='internal', pinned='2026-09-12',
+    Pin(ticker='CLMB', pin_set='internal', pinned='2026-10-04',
         latest_fy=2025, window=(2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025),
         core={
             'G': 4.775,
@@ -6883,7 +6975,18 @@ PINS: list[Pin] = [
             'T': 2.05,
             'dE_3y': 99.76322133497267,
             'dE_full': 100.09919255178814,
+            'iv15': 39.09179054701104,
             'net_cash': 36.372,
+            'omega:2016': 2.8411070175762174,
+            'omega:2017': 1.222587954157591,
+            'omega:2018': 1.5803325152814387,
+            'omega:2019': 0.2040998286550045,
+            'omega:2020': 0.7769038459383646,
+            'omega:2021': 2.2068199735879896,
+            'omega:2022': 2.3794864184570312,
+            'omega:2023': 6.074014560539245,
+            'omega:2024': 3.926128705312729,
+            'omega:2025': 3.116604367851257,
             'omega_sum': 24.32808518735687,
             'price': 28.62291669845581,
             'shares': 18.442472,
