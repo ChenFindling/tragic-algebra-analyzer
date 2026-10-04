@@ -7203,9 +7203,14 @@ def retry_errors(rows: list[BatchRow], _fetch=None
 # a demanded number exactly where summarize writes the iv15 key, so the
 # ranker can never rank a name the app would not price.
 
-RANK_COLUMNS = ("ticker", "resolved", "price", "as_of", "route",
-                "demanded_g", "achieved_5y", "achieved_window",
-                "gap_pp", "cycle", "refusals", "error")
+RANK_COLUMNS = ("ticker", "resolved", "price", "as_of", "route", "class",
+                "demanded_g", "achieved_5y", "achieved_window", "gap_pp",
+                "dE_3y", "dE_full", "omega_sum", "cycle", "refusals", "error")
+# Superset, Chen's ruling 1 (4 Oct 2026): one paste gives the whole
+# picture per name — the ranking row carries the triage columns too,
+# from the SAME load()/summarize call. The durable triage CSV and its
+# contract are untouched; this file is the dated snapshot that holds
+# everything a decision needs.
 
 RANK_G_CEILING = 0.60      # page 9's growth-box ceiling, same doctrine
 RANK_BELOW = "below 0% demand"          # solved answer, not a failure:
@@ -7215,6 +7220,13 @@ RANK_BELOW = "below 0% demand"          # solved answer, not a failure:
 #   printed as a number.
 RANK_CEILING = "above 60% ceiling"      # no admissible growth returns 15%
 RANK_NO_STRETCH = "no positive 5y stretch"
+RANK_NOT_PRICEABLE = "not priceable at defaults"   # ruling C, 4 Oct 2026:
+#   an ordinary row the mirror gate declines to price (no iv15 key —
+#   Not-investible base, no count, unverified Up-C) SAYS SO, page 16's
+#   uniform-refusal doctrine applied to this file: a reader must never
+#   need the session transcript to tell a refusal from a bug. Financial
+#   rows keep the empty gap with their routing — the route column
+#   already explains those.
 
 # The cycle rule — tool 1's seed_cycle_note thresholds, copied by value
 # (that function is tool-1 page-local, not span code). SYNC NOTE: if
@@ -7261,6 +7273,10 @@ class RankRow:
     achieved_5y: float | None = None
     achieved_window: str = ""
     gap_pp: float | str | None = None        # achieved − demanded, in points, or a state
+    fin_class: str = ""                      # the triage columns ride along (ruling 1)
+    dE_3y: float | None = None
+    dE_full: float | None = None
+    omega_sum: float | None = None
     cycle: str = ""
     refusals: tuple[str, ...] = ()
     error: str = ""                  # network/parse/price-fetch ONLY
@@ -7298,12 +7314,21 @@ def rank_row_from(ticker: str, s: "Summary", meta: dict | None,
                         notes, meta.get("up_c_basis"))
     cycle = rank_cycle_flag({y.fy: y.N for y in years},
                             meta.get("rev_by_fy") or {})
+    triage = dict(fin_class=meta.get("fin_class", ""),
+                  dE_3y=s.core.get("dE_3y"), dE_full=s.core.get("dE_full"),
+                  omega_sum=s.core.get("omega_sum"))
     base_row = RankRow(ticker=ticker.upper(),
                        resolved=meta.get("ticker", ""),
                        price=price, as_of=as_of, route=route,
-                       cycle=cycle, refusals=s.refusals)
-    if "iv15" not in s.core or price is None:
-        return base_row                       # the mirror gate IS the rankability gate
+                       cycle=cycle, refusals=s.refusals, **triage)
+    if "iv15" not in s.core:                  # the mirror gate IS the rankability gate
+        if meta.get("financial"):
+            return base_row                   # the route column explains these
+        return RankRow(**{**base_row.__dict__,
+                          "demanded_g": RANK_NOT_PRICEABLE,
+                          "gap_pp": RANK_NOT_PRICEABLE})
+    if price is None:
+        return base_row                       # upstream turns this into an error row
     demanded = rank_demanded(iv_params(years, meta), price)
     oe_by_fy = {y.fy: y.OE for y in years if y.price > 0}
     best = best_stretch_cagr(oe_by_fy, 5, frozenset(s.excluded))
@@ -7313,11 +7338,9 @@ def rank_row_from(ticker: str, s: "Summary", meta: dict | None,
     else:
         ach, win = best[0], f"FY{best[1]}\u2192FY{best[1] + 5}"
         gap = demanded if isinstance(demanded, str) else (ach - demanded) * 100.0
-    return RankRow(ticker=base_row.ticker, resolved=base_row.resolved,
-                   price=price, as_of=as_of, route=route,
-                   demanded_g=demanded, achieved_5y=ach,
-                   achieved_window=win, gap_pp=gap, cycle=cycle,
-                   refusals=s.refusals)
+    return RankRow(**{**base_row.__dict__, "demanded_g": demanded,
+                      "achieved_5y": ach, "achieved_window": win,
+                      "gap_pp": gap})
 
 
 def rank_row_error(ticker: str, err: str) -> RankRow:
@@ -7333,7 +7356,7 @@ def rank_sort_key(r: RankRow):
     routing visible, errors last. Within a class, append order holds."""
     if r.error:
         return (5, 0.0)
-    if r.demanded_g is None:
+    if r.demanded_g == RANK_NOT_PRICEABLE or r.demanded_g is None:
         return (4, 0.0)
     if r.demanded_g == RANK_BELOW:
         return (0, 0.0)
@@ -7352,7 +7375,8 @@ def rank_csv_lines(rows: list[RankRow]) -> str:
     its accumulation are untouched by everything in this section."""
     out = [",".join(RANK_COLUMNS)]
     for r in sorted(rows, key=rank_sort_key):
-        out.append(",".join(_batch_csv_field(getattr(r, c)) for c in RANK_COLUMNS))
+        out.append(",".join(_batch_csv_field(
+            getattr(r, "fin_class" if c == "class" else c)) for c in RANK_COLUMNS))
     return "\n".join(out)
 
 
@@ -9250,10 +9274,13 @@ def baselines_self_test() -> list[tuple[str, bool, str]]:
                                          "fin_class": "insurer"}, [], _rky, _mid, "2026-10-03")
     out.append(("Rankability IS the mirror gate: a demanded number exists exactly "
                 "where summarize writes the iv15 key",
-                ("iv15" in _rks.core) == (_rkrow.demanded_g is not None)
-                and ("iv15" in _rkf.core) == (_rowf.demanded_g is not None)
-                and _rowf.demanded_g is None and _rowf.route.endswith("Financials Checker"),
-                "the ranker can never rank a name the app would not price"))
+                ("iv15" in _rks.core) == isinstance(_rkrow.demanded_g, float)
+                and _rowf.demanded_g is None and _rowf.route.endswith("Financials Checker")
+                and rank_row_from("rkfx", summarize(_rky, [], {**_rkm, "shares": 0}),
+                                  {**_rkm, "shares": 0}, [], _rky, _mid, "2026-10-03"
+                                  ).demanded_g == RANK_NOT_PRICEABLE,
+                "the ranker can never rank a name the app would not price — and an "
+                "ordinary decline SAYS SO (ruling C): refusal, never silence"))
     _below = rank_demanded(_rkbase, iv_at_growth(_rkbase, 0.0, 15) * 0.8)
     _ceil = rank_demanded(_rkbase, iv_at_growth(_rkbase, 0.60, 15) * 1.2)
     _g = rank_demanded(_rkbase, _mid)
@@ -9280,12 +9307,13 @@ def baselines_self_test() -> list[tuple[str, bool, str]]:
                RankRow(ticker="N", demanded_g=0.10, gap_pp=RANK_NO_STRETCH),
                RankRow(ticker="G1", demanded_g=0.10, achieved_5y=0.25, gap_pp=15.0),
                RankRow(ticker="G2", demanded_g=0.10, achieved_5y=0.12, gap_pp=2.0),
+               RankRow(ticker="P", demanded_g=RANK_NOT_PRICEABLE, gap_pp=RANK_NOT_PRICEABLE),
                RankRow(ticker="B", demanded_g=RANK_BELOW, gap_pp=RANK_BELOW)]
     _sorted67 = [r.ticker for r in sorted(_rows67, key=rank_sort_key)]
     out.append(("The gap and the ranking order: achieved minus demanded in points; "
                 "below-demand first, numeric gaps descending, states and errors behind",
                 _rkrow.gap_pp == (_rkrow.achieved_5y - _rkrow.demanded_g) * 100.0
-                and _sorted67 == ["B", "G1", "G2", "N", "C", "U", "E"],
+                and _sorted67 == ["B", "G1", "G2", "N", "C", "U", "P", "E"],
                 "the top of the file is the candidate list, by construction"))
     _flat = {f: 100.0 for f in range(2016, 2026)}
     _peakN = {f: (54.3 if f == 2025 else 26.8) for f in range(2016, 2026)}
@@ -9301,9 +9329,13 @@ def baselines_self_test() -> list[tuple[str, bool, str]]:
     out.append(("The ranking CSV: RANK_COLUMNS verbatim, sorted, repr floats, None empty — "
                 "and the triage CSV untouched",
                 _csv69[0] == ",".join(RANK_COLUMNS)
-                and _csv69[0] == "ticker,resolved,price,as_of,route,demanded_g,"
-                                 "achieved_5y,achieved_window,gap_pp,cycle,refusals,error"
+                and _csv69[0] == "ticker,resolved,price,as_of,route,class,demanded_g,"
+                                 "achieved_5y,achieved_window,gap_pp,dE_3y,dE_full,"
+                                 "omega_sum,cycle,refusals,error"
                 and repr(_mid) in _csv69[1] and _csv69[2].endswith("(Yahoo chart route)")
+                and _rkrow.dE_3y == _rks.core.get("dE_3y")
+                and _rkrow.omega_sum == _rks.core.get("omega_sum")
+                and batch_row_from("rkfx", _rks, _rkm, []).dE_3y == _rkrow.dE_3y
                 and batch_csv_lines([]).split("\n")[0] == ",".join(BATCH_COLUMNS),
                 "a dated snapshot with its date in every row; the durable triage file unchanged"))
     return out
@@ -9725,8 +9757,14 @@ with st.expander("Ranker — paste tickers, get the demand-vs-record CSV (AVUV s
         st.dataframe(pd.DataFrame([{
             "Ticker": r.ticker, "Resolved": r.resolved or "—",
             "Price": r.price, "As of": r.as_of or "—", "Route": r.route or "—",
-            "Demands": r.demanded_g, "Best 5y": r.achieved_5y,
-            "Window": r.achieved_window or "—", "Gap (pp)": r.gap_pp,
+            "Class": r.fin_class or "—",
+            "Demands": (f"{r.demanded_g:.2%}" if isinstance(r.demanded_g, float)
+                        else (r.demanded_g or "—")),
+            "Best 5y": (f"{r.achieved_5y:.2%}" if r.achieved_5y is not None else "—"),
+            "Window": r.achieved_window or "—",
+            "Gap (pp)": (f"{r.gap_pp:+.1f}" if isinstance(r.gap_pp, float)
+                         else (r.gap_pp or "—")),
+            "ΔE 3y": r.dE_3y, "ΔE full": r.dE_full, "Ω sum": r.omega_sum,
             "Cycle": r.cycle or "—",
             "Refusals": "; ".join(r.refusals) or "—",
             "Error": r.error or "—"} for r in _rk_show]),
