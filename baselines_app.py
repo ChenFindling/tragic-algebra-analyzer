@@ -7185,6 +7185,241 @@ def retry_errors(rows: list[BatchRow], _fetch=None
 
 
 # ══════════════════════════════════════════════════════════════════════
+#  RANKER — runner v2, the demand-vs-record ranking (3 Oct 2026)
+# ══════════════════════════════════════════════════════════════════════
+#
+# The inversion, not mass IV15 (Chen's vision of record, 1 Oct 2026):
+# per name, from the kit's own live price, the growth the price DEMANDS
+# to return 15% (solved by the span's shared helpers on iv_params
+# defaults — mechanical, no judgement input), beside the growth the
+# record ACHIEVED (the best filed 5-year OE stretch — g* is Chapel's
+# stage-1 five-year rate, so the comparator is a five-year delivered
+# rate: same horizon or the gap means nothing), and the GAP in points.
+# No judgement box is auto-filled; no verdict word appears in any CSV.
+# Input is the v1 ticker parser unchanged (coordinator's two-column
+# design corrected on the record, 3 Oct 2026: the kit already fetches
+# live prices — current_price, span code — and the ranker rides it
+# exactly as Evaluate does). RANKABILITY IS THE MIRROR GATE: a row gets
+# a demanded number exactly where summarize writes the iv15 key, so the
+# ranker can never rank a name the app would not price.
+
+RANK_COLUMNS = ("ticker", "resolved", "price", "as_of", "route",
+                "demanded_g", "achieved_5y", "achieved_window",
+                "gap_pp", "cycle", "refusals", "error")
+
+RANK_G_CEILING = 0.60      # page 9's growth-box ceiling, same doctrine
+RANK_BELOW = "below 0% demand"          # solved answer, not a failure:
+#   the price sits at or under the zero-growth value; whatever it
+#   demands is less than any solved row demands, so these sort TOP.
+#   Page 9's doctrine holds here too: a solved negative rate is never
+#   printed as a number.
+RANK_CEILING = "above 60% ceiling"      # no admissible growth returns 15%
+RANK_NO_STRETCH = "no positive 5y stretch"
+
+# The cycle rule — tool 1's seed_cycle_note thresholds, copied by value
+# (that function is tool-1 page-local, not span code). SYNC NOTE: if
+# tool 1's three constants ever move, these move in the same session;
+# check 68 pins the values so the pair cannot drift silently — the
+# solve_growth / solve_iv_growth pattern. A ranker without this column
+# systematically surfaces cyclicals at their peaks and must not ship
+# (binding, 1 Oct 2026): GSL-shaped rows say so IN THE FILE.
+RANK_CYCLE_MIN_YEARS = 8
+RANK_CYCLE_PP = 0.06
+RANK_CYCLE_RATIO = 1.5
+
+
+def rank_cycle_flag(n_by_fy: dict, rev_by_fy: dict) -> str:
+    """Tool 1's seed-cycle test, rendered CSV-short: "" when the seed is
+    not a cycle reading, else the flag naming margin, median and window.
+    Asserts nothing about which level is normal — the filings do not
+    say, and neither does this column."""
+    overlap = sorted(fy for fy in set(n_by_fy) & set(rev_by_fy)
+                     if rev_by_fy[fy] and rev_by_fy[fy] > 0)
+    if len(overlap) < RANK_CYCLE_MIN_YEARS:
+        return ""
+    margins = [n_by_fy[fy] / rev_by_fy[fy] for fy in overlap]
+    latest_fy, latest = overlap[-1], margins[-1]
+    _v = sorted(margins)
+    _n = len(_v)
+    med = _v[_n // 2] if _n % 2 else (_v[_n // 2 - 1] + _v[_n // 2]) / 2.0
+    if latest - med < RANK_CYCLE_PP:
+        return ""
+    if med > 0 and latest < RANK_CYCLE_RATIO * med:
+        return ""
+    return (f"CYCLE: FY{latest_fy} margin {latest:.1%} vs {med:.1%} "
+            f"median, {len(overlap)}y")
+
+
+@dataclass(frozen=True)
+class RankRow:
+    ticker: str
+    resolved: str = ""
+    price: float | None = None       # the kit's own live fetch at run time
+    as_of: str = ""                  # fetch date — a ranking is a dated snapshot
+    route: str = ""                  # the v1 triage string, same function
+    demanded_g: float | str | None = None   # g*, or a named state
+    achieved_5y: float | None = None
+    achieved_window: str = ""
+    gap_pp: float | str | None = None        # achieved − demanded, in points, or a state
+    cycle: str = ""
+    refusals: tuple[str, ...] = ()
+    error: str = ""                  # network/parse/price-fetch ONLY
+
+
+def rank_demanded(base: "IVParams", price: float) -> float | str:
+    """The growth the price demands to return 15% on the mirror-rule
+    base: a number on [0, 60%], or a named state. The two comparisons
+    prove the bracket before the solve runs, so solve_iv_growth cannot
+    return None here; if it ever does, the raise lands as an error row
+    by the loop's own discipline — never a silent number."""
+    if price <= iv_at_growth(base, 0.0, 15):
+        return RANK_BELOW
+    if price > iv_at_growth(base, RANK_G_CEILING, 15):
+        return RANK_CEILING
+    g = solve_iv_growth(price, base, 15, 0.0, RANK_G_CEILING)
+    if g is None:
+        raise RuntimeError("rank_demanded: bracket proven yet solve returned nothing")
+    return g
+
+
+def rank_row_from(ticker: str, s: "Summary", meta: dict | None,
+                  notes: list, years: list, price: float | None,
+                  as_of: str) -> RankRow:
+    """One name's rank row from the reader's own outputs — the two v1
+    shapes (ordinary Summary / refused_summary with meta None) plus the
+    rank arithmetic. Financial-gate and refusal rows RANK NOTHING: the
+    routing rides the route/refusals columns and every rank column stays
+    empty — the Financials Checker prices those names, not this frame."""
+    if meta is None:
+        refs = tuple(f"{r} — {s.load_error}" if r == REFUSAL_LOAD else r
+                     for r in s.refusals)
+        return RankRow(ticker=ticker.upper(), refusals=refs)
+    route = batch_route(meta.get("ticker", ""), meta.get("fin_class", ""),
+                        notes, meta.get("up_c_basis"))
+    cycle = rank_cycle_flag({y.fy: y.N for y in years},
+                            meta.get("rev_by_fy") or {})
+    base_row = RankRow(ticker=ticker.upper(),
+                       resolved=meta.get("ticker", ""),
+                       price=price, as_of=as_of, route=route,
+                       cycle=cycle, refusals=s.refusals)
+    if "iv15" not in s.core or price is None:
+        return base_row                       # the mirror gate IS the rankability gate
+    demanded = rank_demanded(iv_params(years, meta), price)
+    oe_by_fy = {y.fy: y.OE for y in years if y.price > 0}
+    best = best_stretch_cagr(oe_by_fy, 5, frozenset(s.excluded))
+    if best is None:
+        ach, win = None, ""
+        gap = demanded if isinstance(demanded, str) else RANK_NO_STRETCH
+    else:
+        ach, win = best[0], f"FY{best[1]}\u2192FY{best[1] + 5}"
+        gap = demanded if isinstance(demanded, str) else (ach - demanded) * 100.0
+    return RankRow(ticker=base_row.ticker, resolved=base_row.resolved,
+                   price=price, as_of=as_of, route=route,
+                   demanded_g=demanded, achieved_5y=ach,
+                   achieved_window=win, gap_pp=gap, cycle=cycle,
+                   refusals=s.refusals)
+
+
+def rank_row_error(ticker: str, err: str) -> RankRow:
+    """Network/parse/price failure: the row says so and the sweep
+    continues — FETCH FAILED is never silence and never an abort."""
+    return RankRow(ticker=ticker.upper(), error=err)
+
+
+def rank_sort_key(r: RankRow):
+    """The ranking order, one rule: below-0%-demand rows first (they
+    demand less than any solved row), numeric gaps descending, then
+    no-5y-stretch, then above-ceiling, then unrankable rows with their
+    routing visible, errors last. Within a class, append order holds."""
+    if r.error:
+        return (5, 0.0)
+    if r.demanded_g is None:
+        return (4, 0.0)
+    if r.demanded_g == RANK_BELOW:
+        return (0, 0.0)
+    if r.demanded_g == RANK_CEILING:
+        return (3, 0.0)
+    if r.gap_pp == RANK_NO_STRETCH:
+        return (2, 0.0)
+    return (1, -float(r.gap_pp))
+
+
+def rank_csv_lines(rows: list[RankRow]) -> str:
+    """The ranking CSV, SORTED by rank_sort_key: header = RANK_COLUMNS
+    verbatim, fields via the batch formatter (repr floats, None empty,
+    quoting) — a ranking is a dated snapshot, price and as_of in every
+    ranked row (the C-settle revision, 1 Oct 2026). The triage CSV and
+    its accumulation are untouched by everything in this section."""
+    out = [",".join(RANK_COLUMNS)]
+    for r in sorted(rows, key=rank_sort_key):
+        out.append(",".join(_batch_csv_field(getattr(r, c)) for c in RANK_COLUMNS))
+    return "\n".join(out)
+
+
+def append_rank(existing: list[RankRow], new_rows: list[RankRow]
+                ) -> tuple[list[RankRow], list[str]]:
+    """append_batch's discipline on the rank accumulation: STRICTLY
+    APPENDABLE — existing rows come through as the same objects in the
+    same order; a duplicate ticker is SKIPPED AND NAMED, never
+    refreshed. A re-rank at a new price is a deliberate fresh sweep,
+    never a silent refresh."""
+    have = {r.ticker for r in existing}
+    added: list[RankRow] = []
+    skipped: list[str] = []
+    for r in new_rows:
+        if r.ticker in have:
+            skipped.append(r.ticker)
+            continue
+        have.add(r.ticker)
+        added.append(r)
+    return existing + added, skipped
+
+
+def _rank_fetch_one(ticker: str, _load=None, _summarize=None,
+                    _price=None) -> RankRow:
+    """One pasted name to one RankRow — NEVER a raise (the MF-census
+    lesson at the loop layer). The v1 wiring plus the price leg: the
+    kit's own current_price per name, exactly as Evaluate fills the
+    Price box; a None price on an otherwise-read name is an ERROR row
+    by Chen's ruling (3 Oct 2026) — a recorded absence the Retry button
+    replaces, never a silent rank on no price."""
+    _load = load if _load is None else _load
+    _summarize = summarize if _summarize is None else _summarize
+    _price = current_price if _price is None else _price
+    try:
+        years, notes, meta = _load(ticker)
+        s = _summarize(years, notes, meta)
+        price = _price(meta.get("ticker") or ticker)
+        if price is None and "iv15" in s.core:
+            return rank_row_error(
+                ticker, "price fetch returned nothing (Yahoo chart route)")
+        return rank_row_from(ticker, s, meta, notes, years, price,
+                             dt.date.today().isoformat())
+    except ValueError as e:                  # load()'s own refusal — a row
+        return rank_row_from(ticker, refused_summary(ticker, str(e)),
+                             None, [], [], None, "")
+    except Exception as e:                   # network / throttle / parse
+        return rank_row_error(ticker, f"{type(e).__name__}: {e}")
+
+
+def retry_rank_errors(rows: list[RankRow], _fetch=None
+                      ) -> tuple[list[RankRow], list[str]]:
+    """retry_errors' discipline on rank rows: only error rows are
+    touched, in place; every other row comes through as the SAME object
+    in the same position, never refetched."""
+    _fetch = _rank_fetch_one if _fetch is None else _fetch
+    out: list[RankRow] = []
+    retried: list[str] = []
+    for r in rows:
+        if r.error:
+            retried.append(r.ticker)
+            out.append(_fetch(r.ticker))
+        else:
+            out.append(r)
+    return out, retried
+
+
+# ══════════════════════════════════════════════════════════════════════
 #  BASE-RATE CAPTURE — for pages/9_Expectations.py (13 Sep 2026)
 # ══════════════════════════════════════════════════════════════════════
 #
@@ -8987,6 +9222,90 @@ def baselines_self_test() -> list[tuple[str, bool, str]]:
                 compare(_p62, _s62a) == compare(_p62, _s62b)
                 and all(ok for _, _, ok in compare(_p62, _s62b)),
                 "pinned keys only — the clean line's one door stays the deliberate re-pin"))
+
+    # ── runner v2, the ranker (3 Oct 2026): checks 63–69. Fixtures keep
+    #    margins flat so the cycle column stays empty except where a
+    #    check builds a peak on purpose. ──
+    _rky = [Year(fy=f, N=10.04 if f == 2025 else 10.0, G=1.0, T=0.5,
+                 Cw=2.0, dS=-0.01, price=20.0) for f in range(2016, 2026)]
+    _rkm = {"ticker": "RKFX", "shares": 10.04, "growth": 0.0834,
+            "cash": 55.27, "debt": 5.06, "net_cash": 50.2,
+            "sh_cov": (5, 5), "financial": False, "fin_class": "",
+            "rev_by_fy": {f: 100.0 for f in range(2016, 2026)}}
+    _rks = summarize(_rky, [], _rkm)
+    _rkbase = iv_params(_rky, _rkm)
+    _mid = (iv_at_growth(_rkbase, 0.0, 15) + iv_at_growth(_rkbase, 0.60, 15)) / 2
+    _rkrow = rank_row_from("rkfx", _rks, _rkm, [], _rky, _mid, "2026-10-03")
+    _rkerr = rank_row_error("RKFX", "price fetch returned nothing (Yahoo chart route)")
+    _rt, _rn = retry_rank_errors([_rkrow, _rkerr],
+                                 _fetch=lambda t: rank_row_error(t, "still down"))
+    out.append(("Ranker price-row discipline: price and as_of ride every ranked row, "
+                "a dead price fetch is an error row, retry touches only error rows in place",
+                _rkrow.price == _mid and _rkrow.as_of == "2026-10-03"
+                and _rkerr.error != "" and _rkerr.price is None
+                and _rt[0] is _rkrow and _rt[1].error == "still down" and _rn == ["RKFX"],
+                "a ranking is a dated snapshot; an absent price is a recorded absence"))
+    _rkf = summarize(_rky, [], {**_rkm, "financial": True, "fin_class": "insurer"})
+    _rowf = rank_row_from("rkfx", _rkf, {**_rkm, "financial": True,
+                                         "fin_class": "insurer"}, [], _rky, _mid, "2026-10-03")
+    out.append(("Rankability IS the mirror gate: a demanded number exists exactly "
+                "where summarize writes the iv15 key",
+                ("iv15" in _rks.core) == (_rkrow.demanded_g is not None)
+                and ("iv15" in _rkf.core) == (_rowf.demanded_g is not None)
+                and _rowf.demanded_g is None and _rowf.route.endswith("Financials Checker"),
+                "the ranker can never rank a name the app would not price"))
+    _below = rank_demanded(_rkbase, iv_at_growth(_rkbase, 0.0, 15) * 0.8)
+    _ceil = rank_demanded(_rkbase, iv_at_growth(_rkbase, 0.60, 15) * 1.2)
+    _g = rank_demanded(_rkbase, _mid)
+    out.append(("Demanded growth: three honest outcomes, and the solved one round-trips",
+                _below == RANK_BELOW and _ceil == RANK_CEILING
+                and isinstance(_g, float)
+                and abs(iv_at_growth(_rkbase, _g, 15) - _mid) < 0.01,
+                f"solved {_g:.2%} reproduces the price; the states are named, never numbers"))
+    _ach = {2016: 5.0, 2017: -1.0, 2018: 6.0, 2021: 8.0, 2022: 7.5, 2023: 12.0}
+    _b66 = best_stretch_cagr(_ach, 5, frozenset({2016}))
+    out.append(("Achieved growth: the best filed 5-year OE stretch under the standing "
+                "endpoint law, window named",
+                _b66 is not None and _b66[1] == 2018
+                and abs(_b66[0] - ((12.0 / 6.0) ** 0.2 - 1)) < 1e-12
+                and best_stretch_cagr({2020: -3.0, 2025: -1.0}, 5) is None
+                and _rkrow.achieved_5y == best_stretch_cagr(
+                    {y.fy: y.OE for y in _rky if y.price > 0}, 5,
+                    frozenset(_rks.excluded))[0]
+                and _rkrow.achieved_window == "FY2020\u2192FY2025",
+                "negative and excluded endpoints bar a stretch; FY2018\u2192FY2023 wins here"))
+    _rows67 = [RankRow(ticker="E", error="x"),
+               RankRow(ticker="U"),
+               RankRow(ticker="C", demanded_g=RANK_CEILING, gap_pp=RANK_CEILING),
+               RankRow(ticker="N", demanded_g=0.10, gap_pp=RANK_NO_STRETCH),
+               RankRow(ticker="G1", demanded_g=0.10, achieved_5y=0.25, gap_pp=15.0),
+               RankRow(ticker="G2", demanded_g=0.10, achieved_5y=0.12, gap_pp=2.0),
+               RankRow(ticker="B", demanded_g=RANK_BELOW, gap_pp=RANK_BELOW)]
+    _sorted67 = [r.ticker for r in sorted(_rows67, key=rank_sort_key)]
+    out.append(("The gap and the ranking order: achieved minus demanded in points; "
+                "below-demand first, numeric gaps descending, states and errors behind",
+                _rkrow.gap_pp == (_rkrow.achieved_5y - _rkrow.demanded_g) * 100.0
+                and _sorted67 == ["B", "G1", "G2", "N", "C", "U", "E"],
+                "the top of the file is the candidate list, by construction"))
+    _flat = {f: 100.0 for f in range(2016, 2026)}
+    _peakN = {f: (54.3 if f == 2025 else 26.8) for f in range(2016, 2026)}
+    _cyc = rank_cycle_flag(_peakN, _flat)
+    out.append(("The cycle column: tool 1's seed-cycle thresholds by value, firing on a "
+                "peak and silent on a flat record",
+                (RANK_CYCLE_MIN_YEARS, RANK_CYCLE_PP, RANK_CYCLE_RATIO) == (8, 0.06, 1.5)
+                and _cyc.startswith("CYCLE: FY2025 margin 54.3% vs 26.8% median")
+                and rank_cycle_flag({f: 26.8 for f in range(2016, 2026)}, _flat) == ""
+                and _rkrow.cycle == "",
+                "a GSL-shaped row says so in the file itself — the non-negotiable column"))
+    _csv69 = rank_csv_lines([_rkrow, _rkerr]).split("\n")
+    out.append(("The ranking CSV: RANK_COLUMNS verbatim, sorted, repr floats, None empty — "
+                "and the triage CSV untouched",
+                _csv69[0] == ",".join(RANK_COLUMNS)
+                and _csv69[0] == "ticker,resolved,price,as_of,route,demanded_g,"
+                                 "achieved_5y,achieved_window,gap_pp,cycle,refusals,error"
+                and repr(_mid) in _csv69[1] and _csv69[2].endswith("(Yahoo chart route)")
+                and batch_csv_lines([]).split("\n")[0] == ",".join(BATCH_COLUMNS),
+                "a dated snapshot with its date in every row; the durable triage file unchanged"))
     return out
 
 
@@ -9345,6 +9664,83 @@ with st.expander("Batch runner — paste tickers, get the triage CSV (AVUV sweep
             if _bt_sure:
                 st.session_state.pop("batch_rows", None)
                 st.session_state.pop("batch_last", None)
+                st.success("Cleared — every accumulated row is gone; the next "
+                           "paste starts a fresh accumulation.")
+            else:
+                st.warning("Tick the confirm box first — nothing was cleared.")
+
+with st.expander("Ranker — paste tickers, get the demand-vs-record CSV (AVUV sweep v2)"):
+    st.caption(
+        "Paste one column of tickers (about 50) into the box and press Run ranker. "
+        "Each name gets the kit's live price, the growth that price demands to "
+        "return 15% a year on the page's own default base, the best growth the "
+        "filer's record delivered over any filed 5-year stretch, and the gap in "
+        "points — sorted so the top of the file is the candidate list; a CYCLE "
+        "flag names every row whose seed is a peak-margin reading. No judgement "
+        "box is filled and no verdict is printed: every candidate earns its "
+        "verdict in a real page run where you set the growth yourself. This "
+        "section fetches only when its own button is pressed, reads no pin, "
+        "writes no pin and moves no figure — the clean line above is indifferent "
+        "to it."
+    )
+    _rk_text = st.text_area("Tickers — one column, pasted straight from Excel",
+                            height=160, key="rank_paste")
+    if st.button("Run ranker", type="primary", key="rank_run"):
+        _rk_tk, _rk_rej = parse_ticker_paste(_rk_text)
+        if not _rk_tk:
+            st.session_state["rank_last"] = (0, _rk_rej, [],
+                                             dt.date.today().isoformat())
+        else:
+            _rk_new: list[RankRow] = []
+            _rk_prog = st.progress(0.0, text="")
+            for _ri, _rtk in enumerate(_rk_tk):
+                _rk_prog.progress(_ri / len(_rk_tk),
+                                  text=f"Fetching {_rtk} ({_ri + 1} of {len(_rk_tk)})…")
+                _rk_new.append(_rank_fetch_one(_rtk))
+            _rk_prog.progress(1.0, text="Done.")
+            _rk_prev = st.session_state.get("rank_rows", [])
+            _rk_rows, _rk_skip = append_rank(_rk_prev, _rk_new)
+            st.session_state["rank_rows"] = _rk_rows
+            st.session_state["rank_last"] = (len(_rk_rows) - len(_rk_prev),
+                                             _rk_rej, _rk_skip,
+                                             dt.date.today().isoformat())
+    if "rank_last" in st.session_state:
+        _rl_add, _rl_rej, _rl_skip, _rl_day = st.session_state["rank_last"]
+        _rl_bits = [f"last batch ({_rl_day}): {_rl_add} row(s) added"]
+        if _rl_skip:
+            _rl_bits.append("duplicates skipped and named: " + ", ".join(_rl_skip))
+        if _rl_rej:
+            _rl_bits.append("rejected tokens: " + ", ".join(_rl_rej))
+        (st.warning if (_rl_rej or _rl_skip) else st.info)("; ".join(_rl_bits) + ".")
+    _rk_acc = st.session_state.get("rank_rows", [])
+    if _rk_acc:
+        _rk_nerr = sum(1 for r in _rk_acc if r.error)
+        if _rk_nerr and st.button(f"Retry error rows ({_rk_nerr})", key="rank_retry"):
+            with st.spinner("Retrying error rows…"):
+                _rk_acc, _rk_ret = retry_rank_errors(_rk_acc)
+            st.session_state["rank_rows"] = _rk_acc
+            st.info("Retried: " + ", ".join(_rk_ret) + ".")
+        st.write(f"**{len(_rk_acc)} names accumulated.**")
+        _rk_show = sorted(_rk_acc, key=rank_sort_key)
+        st.dataframe(pd.DataFrame([{
+            "Ticker": r.ticker, "Resolved": r.resolved or "—",
+            "Price": r.price, "As of": r.as_of or "—", "Route": r.route or "—",
+            "Demands": r.demanded_g, "Best 5y": r.achieved_5y,
+            "Window": r.achieved_window or "—", "Gap (pp)": r.gap_pp,
+            "Cycle": r.cycle or "—",
+            "Refusals": "; ".join(r.refusals) or "—",
+            "Error": r.error or "—"} for r in _rk_show]),
+            width='stretch', hide_index=True,
+            height=min(38 * len(_rk_show) + 40, 1200))
+        st.download_button("Download ranking CSV", data=rank_csv_lines(_rk_acc),
+                           file_name="rank_results.csv", mime="text/csv",
+                           key="rank_dl")
+        _rk_sure = st.checkbox("Confirm clearing every accumulated row",
+                               key="rank_clear_ok")
+        if st.button("Clear accumulated rows", key="rank_clear"):
+            if _rk_sure:
+                st.session_state.pop("rank_rows", None)
+                st.session_state.pop("rank_last", None)
                 st.success("Cleared — every accumulated row is gone; the next "
                            "paste starts a fresh accumulation.")
             else:
