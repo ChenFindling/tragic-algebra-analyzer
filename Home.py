@@ -30,6 +30,12 @@ the numeric prefix. THE MENU MAP IS FROZEN (toolkit pass, 12 Sep 2026;
 3 is retired and is never reused; 8 is reserved. Never reuse a number. The
 self-test below pins this map: every page Home names must exist on disk at
 exactly the frozen path, so the menu's claims cannot drift from the repo.
+
+THE ROUTER (added 4 Oct 2026): a one-screen "which tool do I need" section
+above the in-depth list — one plain question per tool, grouped by intent,
+each a page link. ROUTER is pinned by its own checks: every menu entry
+appears in it exactly once, so a future page cannot ship without joining
+the router (the front-door rule, extended).
 """
 
 from pathlib import Path
@@ -59,6 +65,39 @@ MENU: list[tuple[str, str, str]] = [
     ("pages/16_Serial_Acquirers.py",       "🧲", "Serial Acquirers"),
     ("pages/17_Runway.py",                 "⏳", "Runway & Dilution"),
     ("pages/99_Return_Calculator.py",      "📈", "Return Calculator"),
+]
+
+# ══════════════════════════════════════════════════════════════════════
+#  THE ROUTER (4 Oct 2026): one question per tool, grouped by what the
+#  visitor is trying to do. Labels reference MENU labels; the self-test
+#  pins the two lists to each other exactly.
+# ══════════════════════════════════════════════════════════════════════
+
+ROUTER: list[tuple[str, list[tuple[str, str]]]] = [
+    ("Price it", [
+        ("Is this stock cheap at today's price?", "Tragic Algebra Analyzer"),
+        ("What growth does today's price demand?", "Expectations"),
+        ("What is it worth with zero growth assumed?", "EPV"),
+        ("Want to test your own DCF assumptions?", "DCF Evaluator"),
+    ]),
+    ("Check its health", [
+        ("Is the fundamental trend improving?", "Piotroski F-Score"),
+        ("How close is it to financial distress?", "Altman Z-Score"),
+        ("Is a loss-maker turning the corner?", "Inflection Checker"),
+        ("Good business at a cheap price, by the numbers?", "Magic Formula"),
+        ("Is the dividend real, covered, and growing?", "Dividends"),
+    ]),
+    ("Special shapes", [
+        ("Trading below liquidation value?", "Net-Nets"),
+        ("Does it grow by buying companies?", "Serial Acquirers"),
+        ("How long until a cash burner must dilute you?", "Runway & Dilution"),
+        ("Could it be a 100-bagger?", "100-Bagger Checker"),
+    ]),
+    ("Banks, insurers, foreign filers, and math", [
+        ("Is it a bank or an insurer?", "Financials Checker"),
+        ("Does it file outside the US?", "Non-US Checker"),
+        ("Just need compound-return math?", "Return Calculator"),
+    ]),
 ]
 
 PAGE_BLURBS: dict[str, str] = {
@@ -240,6 +279,19 @@ def self_test() -> list[tuple[str, bool, str]]:
         out.append((f"Menu: {label} exists at {path}",
                     p.is_file(),
                     "present" if p.is_file() else "MISSING: menu and repo disagree"))
+    # ── Router checks (4 Oct 2026): the one-screen router and the frozen
+    #    menu pin each other — a page cannot ship without joining the router.
+    _menu_labels = [label for _, _, label in MENU]
+    _router_labels = [lab for _, entries in ROUTER for _, lab in entries]
+    out.append(("Router covers every menu entry exactly once",
+                sorted(_router_labels) == sorted(_menu_labels),
+                f"{len(_router_labels)} router lines over {len(_menu_labels)} menu "
+                "entries, one each" if sorted(_router_labels) == sorted(_menu_labels)
+                else f"mismatch: {sorted(set(_router_labels) ^ set(_menu_labels))}"))
+    _qs = [q for _, entries in ROUTER for q, _ in entries]
+    out.append(("Router questions are distinct, non-empty, and question-shaped",
+                len(set(_qs)) == len(_qs) and all(q.strip().endswith("?") for q in _qs),
+                f"{len(_qs)} questions, all unique, all end with a question mark"))
     return out
 
 # ══════════════════════════════════════════════════════════════════════
@@ -278,6 +330,21 @@ design, where they do not.
 
 st.divider()
 
+# ── The router: one screen, one question per tool ──────────────────────
+st.subheader("Which tool do I need?")
+_by_label = {label: (path, icon) for path, icon, label in MENU}
+_cols = st.columns(2)
+for _gi, (_group, _entries) in enumerate(ROUTER):
+    with _cols[_gi % 2]:
+        st.markdown(f"**{_group}**")
+        for _q, _lab in _entries:
+            _p, _ic = _by_label[_lab]
+            st.page_link(_p, label=_q, icon=_ic)
+        st.write("")
+
+st.divider()
+
+st.subheader("The tools in depth")
 for path, icon, label in MENU:
     st.page_link(path, label=f"**{label}**", icon=icon)
     st.markdown(PAGE_BLURBS[label])
@@ -305,7 +372,9 @@ with st.expander("Verify this page"):
     st.markdown(
         "One check per menu entry: the page each link names exists in the "
         "repository at exactly the path the frozen menu map states. If the map and "
-        "the repo ever disagree, this goes red before any user finds a dead link."
+        "the repo ever disagree, this goes red before any user finds a dead link. "
+        "Two more pin the router above: every menu entry appears in it exactly "
+        "once, and every router line is a distinct question."
     )
     if st.button("Run checks"):
         _results = self_test()
