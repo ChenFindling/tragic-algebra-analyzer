@@ -9338,6 +9338,22 @@ def baselines_self_test() -> list[tuple[str, bool, str]]:
                 and batch_row_from("rkfx", _rks, _rkm, []).dE_3y == _rkrow.dE_3y
                 and batch_csv_lines([]).split("\n")[0] == ",".join(BATCH_COLUMNS),
                 "a dated snapshot with its date in every row; the durable triage file unchanged"))
+    # ── check 70 (4 Oct 2026, the iv15 re-pin cycle): capture mode is a
+    #    read-only door — attaching a block never touches the verdict.
+    _cm_row = evaluate_internal(pin, s, "", today)
+    _cm_before = _cm_row.verdict
+    _cm_row.block = repin_block("internal", s, today)
+    _ssc_cm = open(__file__, encoding="utf-8").read()
+    out.append(("Capture mode: block attaches, verdict untouched, gate in the loop",
+                _cm_before == "PASS" and _cm_row.verdict == "PASS"
+                and _cm_row.block.startswith("Pin(") and "'internal'" in _cm_row.block
+                and all(repr(k) in _cm_row.block for k in s.core)
+                and ("if _capture" + "_mode:") in _ssc_cm
+                and ('repin_block("internal", _s' + '_cap, today)') in _ssc_cm,
+                "PASS before and after; the block is a Pin literal carrying every "
+                "core key the mirror rule wrote; "
+                "the Run-loop attach sits behind the checkbox gate"))
+
     return out
 
 
@@ -9368,6 +9384,9 @@ st.caption(f"{_n_int} internal pins ({sum(1 for p in PINS if p.pin_set == 'inter
            f"awaiting capture) · {_n_mas} master rows (Burry's NDX-97 ΔE, ±{MASTER_DE_TOL} pts "
            "over his window). Nothing fetches until Run.")
 
+_capture_mode = st.checkbox(
+    "Capture mode — also print a capture block for every internal row "
+    "(read-only: blocks are pasted to the session, never applied by this page)")
 if st.button("Run", type="primary"):
     tickers = list(dict.fromkeys(p.ticker for p in PINS))
     summaries: dict[str, Summary | None] = {}
@@ -9388,6 +9407,15 @@ if st.button("Run", type="primary"):
     # a future family is a dict entry, never a Run-loop rewrite.
     rows = [evaluate_row(p, summaries[p.ticker], errors.get(p.ticker, ""), today)
             for p in PINS]
+    # ── Capture mode (4 Oct 2026, the iv15 re-pin cycle): attach a
+    #    capture block to every internal row that has none, verdicts
+    #    untouched — the read-only door to the deliberate re-pin.
+    if _capture_mode:
+        for _r, _p in zip(rows, PINS):
+            _s_cap = summaries.get(_p.ticker)
+            if _r.pin_set == "internal" and not _r.block and _s_cap is not None \
+                    and _s_cap.window:
+                _r.block = repin_block("internal", _s_cap, today)
     st.session_state["baseline_rows"] = rows
 
 rows = st.session_state.get("baseline_rows")
