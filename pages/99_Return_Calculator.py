@@ -408,6 +408,31 @@ def fmt_years(y: float) -> str:
     return f"{y:.0f}" if y.is_integer() else f"{y:.2f}"
 
 
+def fmt_metric(x: float) -> str:
+    """Metric-box format (12 Oct 2026): st.metric truncates long values with an
+    ellipsis, so seven digits and up render compactly (2.26M, 4.51B) and the
+    exact figure moves to the caption below the row. Under a million nothing
+    changes. The exact value is never lost, only relocated."""
+    x = float(x)
+    ax = abs(x)
+    if ax < 1_000_000:
+        return f"{x:,.2f}"
+    for cut, suf in ((1e12, "T"), (1e9, "B"), (1e6, "M")):
+        if ax >= cut:
+            v = x / cut
+            return f"{v:,.2f}{suf}"
+    return f"{x:,.2f}"
+
+
+def metric_caption(pairs: list[tuple[str, float]]) -> str:
+    """The exact-figures line under a metric row: printed only when at least
+    one metric was compacted, naming every compacted figure in full."""
+    hit = [(lab, v) for lab, v in pairs if abs(float(v)) >= 1_000_000]
+    if not hit:
+        return ""
+    return "Exact: " + " · ".join(f"{lab} {v:,.2f}" for lab, v in hit)
+
+
 # ══════════════════════════════════════════════════════════════════════
 #  SELF-TEST
 # ══════════════════════════════════════════════════════════════════════
@@ -617,6 +642,24 @@ def self_test() -> list[tuple[str, bool, str]]:
                 abs((1.0 + combined_rate(0.07, 0.03)) / 1.03 - 1.0 - 0.07) < 1e-12,
                 "price-only growth recovered from the combined figure"))
 
+    # ── checks 49-50 (12 Oct 2026): metric compaction — long figures render
+    #    compact in the boxes, exact in the caption, never truncated.
+    out.append(("fmt_metric: compact at a million and up, exact below, signs kept",
+                fmt_metric(999_999.99) == "999,999.99"
+                and fmt_metric(2_264_483.12) == "2.26M"
+                and fmt_metric(4_510_000_000) == "4.51B"
+                and fmt_metric(1.5e12) == "1.50T"
+                and fmt_metric(-2_264_483.12) == "-2.26M"
+                and fmt_metric(123.4) == "123.40",
+                "boundary at 1,000,000; M/B/T; negatives compact the same way"))
+    _cap_hit = metric_caption([("ending", 2_264_483.12), ("put in", 100.0)])
+    _cap_quiet = metric_caption([("ending", 999_999.0), ("put in", 100.0)])
+    out.append(("metric_caption: names every compacted figure in full, silent otherwise",
+                _cap_hit == "Exact: ending 2,264,483.12"
+                and _cap_quiet == "",
+                "the exact value is relocated to the caption, never lost; small rows "
+                "print no caption"))
+
     return out
 
 
@@ -743,18 +786,25 @@ if form == FORM_FORWARD:
     if not refusal:
         row = forward_row("", start, _eff, int(years), contrib, per)
         _m = st.columns(4)
-        _m[0].metric("Ending amount", f"{row['Ending']:,.2f}")
-        _m[1].metric("Put in", f"{row['Put in']:,.2f}")
-        _m[2].metric("Gain", f"{row['Ending'] - row['Put in']:,.2f}")
+        _m[0].metric("Ending amount", fmt_metric(row['Ending']))
+        _m[1].metric("Put in", fmt_metric(row['Put in']))
+        _m[2].metric("Gain", fmt_metric(row['Ending'] - row['Put in']))
         _m[3].metric("Multiple", f"{row['Multiple']:,.2f}×")
+        _cap = metric_caption([("ending", row['Ending']), ("put in", row['Put in']),
+                               ("gain", row['Ending'] - row['Put in'])])
+        if _cap:
+            st.caption(_cap)
 elif form == FORM_RATE:
     refusal = check_rate(start, target, int(years), contrib, per)
     if not refusal:
         row = rate_row("", start, target, int(years), contrib, per)
         _m = st.columns(3)
         _m[0].metric("Required return", f"{row['Return %']:.2f}% / yr")
-        _m[1].metric("Put in", f"{row['Put in']:,.2f}")
+        _m[1].metric("Put in", fmt_metric(row['Put in']))
         _m[2].metric("Multiple", f"{row['Multiple']:,.2f}×")
+        _cap = metric_caption([("put in", row['Put in'])])
+        if _cap:
+            st.caption(_cap)
 elif form == FORM_YEARS:
     refusal = check_years(start, _eff, target, contrib, per)
     if not refusal:
@@ -763,7 +813,7 @@ elif form == FORM_YEARS:
         _m = st.columns(3)
         _m[0].metric("Years needed", f"{row['Years']:.2f}")
         _m[1].metric("Reached after", format_periods(_whole, per, short=True))
-        _m[2].metric("Balance then", f"{_bal:,.2f}")
+        _m[2].metric("Balance then", fmt_metric(_bal))
         st.caption(f"Reached after {format_periods(_whole, per)} — the first whole "
                    f"{'month' if per == PER_MONTH else 'year'} at or above the target — "
                    f"with a balance of {_bal:,.2f}.")
@@ -774,8 +824,11 @@ else:
         _m = st.columns(3)
         _m[0].metric("Required contribution",
                      f"{row['Contribution']:,.2f} / {'mo' if per == PER_MONTH else 'yr'}")
-        _m[1].metric("Put in", f"{row['Put in']:,.2f}")
+        _m[1].metric("Put in", fmt_metric(row['Put in']))
         _m[2].metric("Multiple", f"{row['Multiple']:,.2f}×")
+        _cap = metric_caption([("put in", row['Put in'])])
+        if _cap:
+            st.caption(_cap)
 if not refusal and dy_pct > 0:
     if form == FORM_RATE and row is not None:
         _g_only = (1.0 + row["Return %"] / 100.0) / (1.0 + dy_pct / 100.0) - 1.0
