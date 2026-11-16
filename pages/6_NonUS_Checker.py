@@ -4954,6 +4954,47 @@ def test_summary(results: list[tuple[str, bool, str]]) -> tuple[str, str]:
                      + (f" — and {len(bad) - 4} more" if len(bad) > 4 else ""))
 
 
+# ══════════════════════════════════════════════════════════════════════
+#  RECENT-POOL GUARD (APLD, 16 Nov 2026) — page-local
+# ══════════════════════════════════════════════════════════════════════
+# pool() drops excluded years BEFORE its emptiness check, so a filer
+# whose last three fiscal years are all excluded capital-event years
+# passed the body's len(years) >= 3 guard and pool_recent raised the
+# bare ValueError Streamlit redacts. APLD is the live exhibit: year-end
+# counts 95.9M -> 139.1M (+45%) -> 224.9M (+62%) -> the FY2026 raise,
+# so the whole last-3 window is excluded and its pool is empty. The fix
+# is page 14's guarded-pool precedent: the recent pool falls back to
+# the full-period figure with the gap NAMED — the radio refuses the
+# recent choice out loud (dE3_caption) and nothing is projected from a
+# window that measured nothing (the dE_ok gate). On the normal path the
+# returned object is pool_recent's own, so behavior is byte-identical
+# for every filer that rendered before. The watchlist loop and the
+# Baselines app were already guarded; this page's body and the bodies
+# of pages 6 and 9 were the exposed sites, each carrying this block
+# page-locally — no span byte moves.
+
+RECENT_GAP_CAPTION = "n/a — all 3 years excluded (capital events)"
+
+
+def recent_or_fallback(years: list[Year], pooled: Pooled) -> tuple[Pooled, bool]:
+    """(recent pool, gap). gap is True when the last-3 window pools
+    nothing after exclusions; recent is then the FULL-PERIOD pool, and
+    every caption that names it goes through dE3_caption so the figure
+    is never relabeled as a 3-year measurement."""
+    try:
+        return (pool_recent(years, 3) if len(years) >= 3 else pooled), False
+    except ValueError:
+        return pooled, True
+
+
+def dE3_caption(recent: Pooled, gap: bool) -> str:
+    """The recent-side caption, gap-aware: the gap sentence wins, else
+    the radio's own wording verbatim."""
+    if gap:
+        return RECENT_GAP_CAPTION
+    return f"{recent.dE:.1%}" if recent.dE_defined else "n/a — losses"
+
+
 def self_test() -> list[tuple[str, bool, str]]:
     out = []
     goog = [(2016, 19478, 6900, 3693, 3304, 97, 47), (2017, 12662, 7900, 4846, 4166, 78, 55),
@@ -6650,6 +6691,38 @@ def self_test() -> list[tuple[str, bool, str]]:
                 and ("if kind in (" + chr(34) + "success" + chr(34) + ", " + chr(34) + "info" + chr(34) + "):") in _scf[_vi:_fi + 1200],
                 "own-source scan: the flag block sits within 600 chars after the verdict render"))
 
+    # ── APLD guard checks (16 Nov 2026): a filer whose last three years
+    #    are all excluded capital events crashed the body's pool_recent
+    #    with the bare ValueError Streamlit redacts. The guard's two
+    #    claims: the fallback behaves, and the body actually wires it
+    #    (source-pinned — page bodies are invisible to import-time dry
+    #    runs, the NCI lesson).
+    _apy = [Year(fy=2019 + _i, N=100.0, price=10.0) for _i in range(3)] + [
+        Year(fy=2022 + _i, N=100.0, price=10.0,
+             excluded="share count rose — capital event") for _i in range(3)]
+    _app = pool(_apy)
+    try:
+        _apr, _apg = recent_or_fallback(_apy, _app)
+        _ap_ok = (_apg and _apr == _app
+                  and dE3_caption(_apr, _apg) == RECENT_GAP_CAPTION
+                  and "excluded" in RECENT_GAP_CAPTION)
+    except ValueError:
+        _ap_ok = False
+    _cly = [Year(fy=2019 + _i, N=100.0, price=10.0) for _i in range(6)]
+    _clr, _clg = recent_or_fallback(_cly, pool(_cly))
+    out.append(("APLD guard: an all-excluded last-3 window falls back to the full "
+                "pool with the gap named; a clean window is unchanged",
+                _ap_ok and not _clg and _clr == pool_recent(_cly, 3),
+                "gap: fallback == full pool, caption the gap sentence; "
+                "clean: pool_recent's own result"))
+    _g1 = _scf.find("recent, recent_gap = recent_or_fall" + "back(years, pooled)")
+    _g2 = _scf.find("captions=[dE3_cap" + "tion(recent, recent_gap")
+    _g3 = _scf.find("and not (use_recent and recent_" + "gap))")
+    out.append(("APLD guard: body wiring source-pinned — guarded pool, gap-aware "
+                "radio caption, projection gated off the gap",
+                _g1 >= 0 and _g2 >= 0 and _g3 >= 0,
+                "own-source scan: the three sites the guard must hold"))
+
     return out
 
 
@@ -7037,7 +7110,7 @@ if years and ticker and st.session_state.get("nu_tk") == ticker:
     _cs = {"USD": "$", "EUR": "€", "GBP": "£", "JPY": "¥"}.get(_ccy, _ccy + " ")
     PAGE_CCY = _cs
     pooled = pool(years)
-    recent = pool_recent(years, 3) if len(years) >= 3 else pooled
+    recent, recent_gap = recent_or_fallback(years, pooled)
     alerts: list[tuple[str, str]] = [("info", n) for n in notes]
 
     # ══ inputs ═══════════════════════════════════════════════════════
@@ -7046,13 +7119,14 @@ if years and ticker and st.session_state.get("nu_tk") == ticker:
 
     use_recent = st.radio(
         "Apply ΔE from", ["Last 3 years", "Full period"], horizontal=True,
-        captions=[f"{recent.dE:.1%}" if recent.dE_defined else "n/a — losses",
+        captions=[dE3_caption(recent, recent_gap),
                   f"{pooled.dE:.1%}" if pooled.dE_defined else "n/a — losses"],
         help="ΔE is the share of reported profit that actually reaches shareholders. The long "
              "window is the diagnostic; where capital policy has changed, the recent one is "
              "what will apply going forward.") == "Last 3 years"
     use_dE = recent.dE if use_recent else pooled.dE
-    dE_ok = dE_projectable(recent if use_recent else pooled)
+    dE_ok = (dE_projectable(recent if use_recent else pooled)
+             and not (use_recent and recent_gap))
     # The measurement above is left as filed; only what gets projected is held
     # to 100%. See the dE ceiling block near the top of the file.
     applied_dE = seed_dE(use_dE) if dE_ok else use_dE
@@ -7425,6 +7499,7 @@ if years and ticker and st.session_state.get("nu_tk") == ticker:
     else:
         q1.metric("Owners' earnings kept",
                   f"{pooled.dE:.1%}" if abs(pooled.dE) < 10 else "deeply negative",
+                  "last 3y: n/a (all excluded)" if recent_gap else
                   f"last 3y: {recent.dE:.1%}" if recent.dE_defined else "last 3y: n/a")
     q2.metric("True SBC cost", f"{_cs}{pooled.sum_omega:,.0f}M",
               f"GAAP says {_cs}{pooled.sum_G:,.0f}M")
@@ -7561,7 +7636,8 @@ if years and ticker and st.session_state.get("nu_tk") == ticker:
             f"forward net income  {fwd_N:,.0f}\n"
             f"ΔE applied          {applied_dE:.1%}"
             + (f" (capped from {use_dE:.1%})" if dE_capped else "   ")
-            + f"   (full {pooled.dE:.1%} / 3y {recent.dE:.1%})\n"
+            + f"   (full {pooled.dE:.1%} / 3y "
+            + (RECENT_GAP_CAPTION if recent_gap else f"{recent.dE:.1%}") + ")\n"
             f"median OE, 5y       {median_OE:,.0f}\n"
             f"owners' earnings    {OE:,.0f}   ({OE/shares:,.2f}/share)"
             # ARM, 26 Aug 2026: the block showed "ΔE applied -16.2%" beside
