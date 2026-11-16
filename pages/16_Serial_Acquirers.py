@@ -4476,10 +4476,23 @@ def iv_params(years: list["Year"], meta: dict,
     override that matches nothing must say so, never be skipped.
     """
     pooled = pool(years)
-    recent = pool_recent(years, 3) if len(years) >= 3 else pooled
+    # APLD (16 Nov 2026): pool() drops excluded years BEFORE its emptiness
+    # check, so a filer whose last three fiscal years are all excluded
+    # capital-event years passed the len guard and raised the bare
+    # ValueError here — through every body call site that threads this
+    # helper (tool 1's legs, stress and ladder calls were the live crash).
+    # Same shape as the pages' recent_or_fallback: the full-period pool
+    # stands in and the dE route is CLOSED, so the seed falls to the
+    # median rungs exactly as the page's radio does on its gap branch.
+    # Wherever the recent pool exists, behavior is byte-identical.
+    try:
+        recent = pool_recent(years, 3) if len(years) >= 3 else pooled
+        recent_gap = False
+    except ValueError:
+        recent, recent_gap = pooled, True
     no_counts = meta.get("sh_cov", (1, 1))[0] == 0
     use_dE = recent.dE
-    dE_ok = dE_projectable(recent) and not no_counts
+    dE_ok = dE_projectable(recent) and not no_counts and not recent_gap
     applied_dE = seed_dE(use_dE) if dE_ok else use_dE
     hist = sorted(y.OE for y in years[-5:])
     median_OE = hist[len(hist) // 2] if hist else 0.0
@@ -6104,6 +6117,25 @@ def self_test() -> list[tuple[str, bool, str]]:
                 and iv_at_growth(_ivcrm, 0.0, 8)
                 == intrinsic_value(IVParams(**{**_ivcrm.__dict__, "growth": 0.0}), 8),
                 "bit-equal at 10% and 8% — the page-9 shape, not just the 15 rung"))
+    # 209. APLD (16 Nov 2026): iv_params must survive a filer whose last
+    #      three fiscal years are all excluded capital events — pool()
+    #      empties the recent window after exclusions and raised through
+    #      every body call site. The guard stands the full-period pool in
+    #      and CLOSES the dE route, so the seed falls to the median rungs:
+    #      the fixture's dE route would give OE 90.0, the median rung 100.0.
+    _apy209 = ([Year(fy=2017 + _i, N=100.0, Cw=10.0, price=10.0) for _i in range(4)]
+               + [Year(fy=2021 + _i, N=100.0, price=10.0,
+                       excluded="share count rose — capital event") for _i in range(3)])
+    try:
+        _app209 = iv_params(_apy209, {"growth": 0.10, "shares": 50.0})
+        _ok209 = _app209.OE == 100.0
+    except ValueError:
+        _ok209, _app209 = False, None
+    out.append(("iv_params survives an all-excluded last-3 window "
+                "(APLD guard, 16 Nov 2026)",
+                _ok209,
+                "the recent pool empties after exclusions; the full-period pool "
+                "stands in, the dE route closes, the median rung seeds 100.0"))
 
     return out
 
